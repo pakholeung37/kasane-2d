@@ -133,6 +133,13 @@ func run():
     # Verify mesh view in preview
     var mv_1 = preview_1.get_mesh_view(MESH_ID)
     check(mv_1 != null, "Mesh view exists in preview 1")
+    var overlay = ClassDB.instantiate("KasaneSelectionOverlay")
+    preview_3.add_child(overlay)
+    overlay.set_preview(preview_3)
+    var model_material = preview_3.get_mesh_view(MESH_ID).material.get_instance_id()
+    overlay.select(MESH_ID)
+    overlay.set_show_vertices(true)
+    check(preview_3.get_mesh_view(MESH_ID).material.get_instance_id() == model_material, "Selection overlay leaves model material intact")
 
     # Destroy preview_1 with free()
     preview_1.free()
@@ -143,6 +150,39 @@ func run():
     check(doc.rename_mesh(MESH_ID, "mesh_renamed").ok, "Rename mesh with active previews")
     check(preview_2.get_last_result().ok, "Preview 2 refreshes cleanly on doc edit")
     check(preview_3.get_last_result().ok, "Preview 3 refreshes cleanly on doc edit")
+    var model_root = preview_3.get_mesh_view(MESH_ID).get_parent()
+    check(model_root != preview_3 and model_root.get_parent() == preview_3, "Model sorting has its own container")
+    check(model_root.get_index() < overlay.get_index(), "Refreshed model remains below selection overlay")
+    var before_topology = preview_3.get_render_stats()
+    var before_view_id = preview_3.get_mesh_view(MESH_ID).get_instance_id()
+    var four_vertex_mesh = mesh.duplicate(true)
+    four_vertex_mesh.vertex_ids = PackedInt64Array([1, 2, 3, 4])
+    four_vertex_mesh.base_positions = PackedVector2Array([Vector2(10, 10), Vector2(40, 12), Vector2(30, 40), Vector2(8, 36)])
+    four_vertex_mesh.uvs = PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(0.5, 1), Vector2(0, 1)])
+    four_vertex_mesh.triangles = PackedInt64Array([1, 2, 3, 1, 3, 4])
+    check(doc.replace_mesh(four_vertex_mesh).ok, "Replace mesh topology")
+    check(preview_3.get_last_result().ok, "Topology change refreshes preview")
+    check(preview_3.get_mesh_view(MESH_ID).get_instance_id() == before_view_id, "Topology change reuses preview node")
+    check(preview_3.get_render_stats().creations == before_topology.creations + 1, "Topology change rebuilds one mesh surface")
+    var before_texture = preview_3.get_render_stats()
+    var replacement = Image.create(16, 16, false, Image.FORMAT_RGBA8)
+    replacement.fill(Color.RED)
+    check(textures.set_texture(ASSET_ID, ImageTexture.create_from_image(replacement)).ok, "Replace preview texture")
+    check(preview_3.get_last_result().ok, "Texture replacement refreshes preview")
+    check(preview_3.get_mesh_view(MESH_ID).get_instance_id() == before_view_id, "Texture replacement reuses preview node")
+    check(preview_3.get_render_stats().creations == before_texture.creations + 1, "Texture replacement rebuilds one mesh surface")
+    var before_updates = preview_3.get_render_stats()
+    var before_memory = OS.get_static_memory_usage()
+    for i in 120:
+        var shift = float(i % 11) * 0.25
+        var moved = PackedVector2Array([Vector2(10 + shift, 10), Vector2(40 + shift, 12), Vector2(30 + shift, 40), Vector2(8 + shift, 36)])
+        if not doc.set_vertex_positions(MESH_ID, PackedInt64Array([1, 2, 3, 4]), moved).ok:
+            failures.append("Continuous vertex update failed at %d" % i)
+            break
+    var after_updates = preview_3.get_render_stats()
+    check(after_updates.creations == before_updates.creations, "Continuous vertex updates preserve mesh surface")
+    check(after_updates.uploads >= before_updates.uploads + 100, "Continuous vertex updates use dynamic uploads")
+    check(OS.get_static_memory_usage() - before_memory < 4 * 1024 * 1024, "Continuous vertex updates keep memory bounded")
 
     # Destroy preview_2 with queue_free() and await frames
     preview_2.queue_free()

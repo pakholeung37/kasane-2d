@@ -107,6 +107,9 @@ impl KasaneMeshView {
         if !status.is_ok() {
             return status_to_dict(&status);
         }
+        if next == self.positions {
+            return status_to_dict(&kasane_core::types::Status::ok());
+        }
         let mut upload = PackedByteArray::new();
         upload.resize(next.len() * 3 * 4);
         for (i, p) in next.iter().enumerate() {
