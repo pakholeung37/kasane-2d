@@ -13,6 +13,7 @@ pub use importer::{
     import_from_model3_json, DiagnosticSeverity, ImportDiagnostic, ImportResult,
 };
 pub use inspector::{
-    inspect_moc3, CanvasInfo, Moc3InspectionReport, Moc3Version, ModelCounts,
+    inspect_moc3, inspect_moc3_safety, CanvasInfo, Moc3InspectionReport, Moc3Version, ModelCounts,
+    UnsupportedFeature,
 };
 pub use types::{Moc3Artifact, TextureSlot};

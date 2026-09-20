@@ -658,16 +658,25 @@ fn test_structural_editing() {
 
 #[test]
 fn test_unsupported_features_rejected() {
-    // 1. mao_pro.moc3 has Glues (7) and BlendShapes (34)
+    // 1. mao_pro.moc3 has Glues (7) and BlendShapes (34 targets/tables), which are valid in M3B
     let root = workspace_root();
-    let mao_path = root.join("benchmarks/cubism-matrix/assets/live2d/mao/runtime/mao_pro.moc3");
-    if mao_path.exists() {
-        let bytes = fs::read(&mao_path).expect("Failed to read mao_pro.moc3");
-        let err =
-            inspect_moc3(&bytes).expect_err("mao_pro with Glues/BlendShapes must be rejected");
-        assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-        assert!(err.message.contains("Glue") || err.message.contains("BlendShape"));
-    }
+    let mao_path = root.join("demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3");
+    let mao_path_bench = root.join("benchmarks/cubism-matrix/assets/live2d/mao/runtime/mao_pro.moc3");
+    let target_path = if mao_path.exists() {
+        mao_path
+    } else {
+        mao_path_bench
+    };
+    assert!(target_path.exists(), "mao_pro.moc3 must exist for M3B acceptance");
+    let bytes = fs::read(&target_path).expect("Failed to read mao_pro.moc3");
+    let report = inspect_moc3(&bytes).expect("mao_pro must pass structural inspection in M3B");
+    assert_eq!(report.version, Moc3Version::Version50);
+    assert_eq!(report.counts.glues, 7);
+    assert_eq!(report.counts.parameters, 128);
+    assert_eq!(report.counts.art_meshes, 260);
+    assert_eq!(report.counts.bs_glues, 0);
+    assert_eq!(report.counts.offscreens, 0);
+    assert!(report.unsupported_features.is_empty());
 
     // 2. Unknown version rejection
     let bad_ver_bytes = create_m1_fixture_doc();
@@ -678,15 +687,44 @@ fn test_unsupported_features_rejected() {
 
     // 3. Cyclic parameter rejection
     let doc = create_m1_fixture_doc();
-    // Simulate cyclic parameter in MOC3 by modifying repeat section
     let encoded = encode_moc3(&doc).unwrap();
-    let mut bytes = encoded.bytes;
-    let offsets = &inspect_moc3(&bytes).unwrap().section_offsets;
+    let offsets = &inspect_moc3(&encoded.bytes).unwrap().section_offsets;
+    let counts_off = offsets[0] as usize;
     let rep_off = offsets[54] as usize;
-    bytes[rep_off] = 1; // set repeat = 1
-    let err = inspect_moc3(&bytes).expect_err("Cyclic parameter must be rejected");
+
+    let mut cyclic_bytes = encoded.bytes.clone();
+    cyclic_bytes[rep_off] = 1; // set repeat = 1
+    let err = inspect_moc3(&cyclic_bytes).expect_err("Cyclic parameter must be rejected");
     assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-    assert!(err.message.contains("repeat"));
+    assert!(err.message.contains("repeat") || err.message.contains("cyclic"));
+
+    // 4. BlendShape Glue rejection (bs_glues > 0)
+    let mut bs_glue_bytes = encoded.bytes.clone();
+    bs_glue_bytes.resize(bs_glue_bytes.len() + 2048, 0);
+    bs_glue_bytes[counts_off + 34 * 4] = 1;
+    let err = inspect_moc3(&bs_glue_bytes).expect_err("BlendShape Glue must be rejected");
+    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
+    assert!(err.message.contains("BlendShape Glue"));
+
+    // 5. Offscreen rejection (offscreens > 0)
+    let mut offscreen_bytes = encoded.bytes.clone();
+    offscreen_bytes.resize(offscreen_bytes.len() + 2048, 0);
+    offscreen_bytes[counts_off + 35 * 4] = 1;
+    let err = inspect_moc3(&offscreen_bytes).expect_err("Offscreen must be rejected");
+    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
+    assert!(err.message.contains("Offscreen"));
+
+    // 6. Multiple unsupported features reported together (F01 requirement)
+    let mut multi_bytes = encoded.bytes.clone();
+    multi_bytes.resize(multi_bytes.len() + 2048, 0);
+    multi_bytes[rep_off] = 1;
+    multi_bytes[counts_off + 34 * 4] = 2;
+    multi_bytes[counts_off + 35 * 4] = 3;
+    let err = inspect_moc3(&multi_bytes).expect_err("All unsupported features must be reported");
+    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
+    assert!(err.message.contains("cyclic") || err.message.contains("repeat"));
+    assert!(err.message.contains("BlendShape Glue"));
+    assert!(err.message.contains("Offscreen"));
 }
 
 #[test]

@@ -234,4 +234,102 @@ impl KasaneProjectIO {
         }
         out
     }
+
+    #[func]
+    pub fn inspect_model(&mut self, path: GString) -> Dictionary {
+        let path_str = path.to_string();
+        let path_buf = PathBuf::from(&path_str);
+        let moc_path = if path_str.ends_with(".model3.json") {
+            match std::fs::read_to_string(&path_buf) {
+                Ok(content) => {
+                    let parsed: Result<serde_json::Value, _> = serde_json::from_str(&content);
+                    match parsed {
+                        Ok(json) => {
+                            if let Some(moc_rel) = json
+                                .get("FileReferences")
+                                .and_then(|f| f.get("Moc"))
+                                .and_then(|m| m.as_str())
+                            {
+                                path_buf.parent().unwrap_or(&path_buf).join(moc_rel)
+                            } else {
+                                return status_to_dict(&Status::error(
+                                    "INVALID_MODEL3_JSON",
+                                    "Missing FileReferences.Moc",
+                                ));
+                            }
+                        }
+                        Err(e) => {
+                            return status_to_dict(&Status::error(
+                                "INVALID_MODEL3_JSON",
+                                e.to_string(),
+                            ))
+                        }
+                    }
+                }
+                Err(e) => return status_to_dict(&Status::error("IO_ERROR", e.to_string())),
+            }
+        } else {
+            path_buf
+        };
+
+        let bytes = match std::fs::read(&moc_path) {
+            Ok(b) => b,
+            Err(e) => return status_to_dict(&Status::error("MOC3_IO_ERROR", e.to_string())),
+        };
+
+        match kasane_moc3::inspect_moc3_safety(&bytes) {
+            Ok(report) => {
+                let mut out = Dictionary::new();
+                out.set("ok", true);
+                out.set("code", "");
+                out.set("message", "");
+                out.set("version", report.version_number as i64);
+                out.set("is_compatible", report.unsupported_features.is_empty());
+
+                let mut canvas_dict = Dictionary::new();
+                canvas_dict.set("width", report.canvas.width as f64);
+                canvas_dict.set("height", report.canvas.height as f64);
+                canvas_dict.set("origin_x", report.canvas.origin_x as f64);
+                canvas_dict.set("origin_y", report.canvas.origin_y as f64);
+                canvas_dict.set("pixels_per_unit", report.canvas.pixels_per_unit as f64);
+                canvas_dict.set("flag", report.canvas.flag as i64);
+                out.set("canvas", &canvas_dict.to_variant());
+
+                let mut counts_dict = Dictionary::new();
+                counts_dict.set("parts", report.counts.parts as i64);
+                counts_dict.set("deformers", report.counts.deformers as i64);
+                counts_dict.set("warps", report.counts.warps as i64);
+                counts_dict.set("rotations", report.counts.rotations as i64);
+                counts_dict.set("art_meshes", report.counts.art_meshes as i64);
+                counts_dict.set("parameters", report.counts.parameters as i64);
+                counts_dict.set("glues", report.counts.glues as i64);
+                counts_dict.set("glue_info", report.counts.glue_info as i64);
+                counts_dict.set("blend_bindings", report.counts.blend_bindings as i64);
+                counts_dict.set("blend_key_tables", report.counts.blend_key_tables as i64);
+                counts_dict.set("bs_warps", report.counts.bs_warps as i64);
+                counts_dict.set("bs_art_meshes", report.counts.bs_art_meshes as i64);
+                counts_dict.set("bs_parts", report.counts.bs_parts as i64);
+                counts_dict.set("bs_rotations", report.counts.bs_rotations as i64);
+                counts_dict.set("bs_constraints", report.counts.bs_constraints as i64);
+                counts_dict.set("bs_glues", report.counts.bs_glues as i64);
+                counts_dict.set("offscreens", report.counts.offscreens as i64);
+                out.set("counts", &counts_dict.to_variant());
+
+                let mut issues_arr = Array::<Variant>::new();
+                for issue in &report.unsupported_features {
+                    let mut issue_dict = Dictionary::new();
+                    issue_dict.set(
+                        "category",
+                        &GString::from(issue.category.as_str()).to_variant(),
+                    );
+                    issue_dict.set("count", issue.count as i64);
+                    issue_dict.set("detail", &GString::from(issue.detail.as_str()).to_variant());
+                    issues_arr.push(&issue_dict.to_variant());
+                }
+                out.set("unsupported_features", &issues_arr);
+                out
+            }
+            Err(s) => status_to_dict(&s),
+        }
+    }
 }

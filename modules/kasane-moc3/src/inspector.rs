@@ -83,6 +83,13 @@ pub struct ModelCounts {
     pub bs_offscreens: i32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UnsupportedFeature {
+    pub category: String,
+    pub count: usize,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct Moc3InspectionReport {
     pub version: Moc3Version,
@@ -91,6 +98,7 @@ pub struct Moc3InspectionReport {
     pub counts: ModelCounts,
     pub canvas: CanvasInfo,
     pub section_offsets: Vec<u32>,
+    pub unsupported_features: Vec<UnsupportedFeature>,
 }
 
 fn read_i32(buf: &[u8], offset: usize) -> Result<i32, Status> {
@@ -123,7 +131,7 @@ fn read_f32(buf: &[u8], offset: usize) -> Result<f32, Status> {
     Ok(f32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()))
 }
 
-pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
+fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     if bytes.len() < 64 {
         return Err(Status::error(
             "BUFFER_TOO_SMALL",
@@ -161,25 +169,6 @@ pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     }
 
     let version = Moc3Version::from_u8(version_raw);
-
-    // Call PurismCore consistency verification if compiled with it
-    #[cfg(has_purism_core)]
-    {
-        // PurismCore expects non-const pointer because of in-place checks (does not modify if needs_bswap is false)
-        let mut buffer_copy = bytes.to_vec();
-        let r = unsafe {
-            csmHasMocConsistency(
-                buffer_copy.as_mut_ptr() as *mut c_void,
-                buffer_copy.len() as c_uint,
-            )
-        };
-        if r != 1 {
-            return Err(Status::error(
-                "FILE_CORRUPT",
-                "PurismCore consistency check failed (moc3 is corrupt or inconsistent)",
-            ));
-        }
-    }
 
     let offset_count = 160;
     let header_size = 64 + offset_count * 4;
@@ -276,80 +265,7 @@ pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         ));
     }
 
-    // Check for unsupported features and explicitly reject
-    // 1. Glue
-    if counts.glues > 0 || counts.glue_info > 0 || counts.glue_keyforms > 0 {
-        return Err(Status::error(
-            "UNSUPPORTED_FEATURE",
-            format!(
-                "Model contains Glue features (glues={}, glue_info={}, glue_keyforms={}); Glue is out of scope for this milestone",
-                counts.glues, counts.glue_info, counts.glue_keyforms
-            ),
-        ));
-    }
-
-    // 2. BlendShape
-    let bs_count = counts.bs_warps
-        + counts.bs_art_meshes
-        + counts.bs_parts
-        + counts.bs_rotations
-        + counts.bs_glues
-        + counts.blend_key_tables
-        + counts.blend_bindings
-        + counts.bs_constraints
-        + counts.bs_constraint_idx
-        + counts.bs_constraint_vals
-        + counts.bs_offscreens;
-    if bs_count > 0 {
-        return Err(Status::error(
-            "UNSUPPORTED_FEATURE",
-            format!(
-                "Model contains BlendShape features (bs_warps={}, bs_art_meshes={}, bs_parts={}, bs_rotations={}, blend_key_tables={}); BlendShape is out of scope for this milestone",
-                counts.bs_warps, counts.bs_art_meshes, counts.bs_parts, counts.bs_rotations, counts.blend_key_tables
-            ),
-        ));
-    }
-
-    // 3. Offscreen
-    if counts.offscreens > 0 || counts.offscreen_keyforms > 0 || counts.bs_offscreens > 0 {
-        return Err(Status::error(
-            "UNSUPPORTED_FEATURE",
-            format!(
-                "Model contains Offscreen features (offscreens={}, offscreen_keyforms={}); Offscreen is out of scope for this milestone",
-                counts.offscreens, counts.offscreen_keyforms
-            ),
-        ));
-    }
-
-    // 4. Cyclic parameter check (param_src.repeat)
-    // Section 54 is param_src.repeat
-    if counts.parameters > 0 && section_offsets.len() > 54 {
-        let repeat_off = section_offsets[54] as usize;
-        let id_off = section_offsets[50] as usize;
-        if repeat_off + counts.parameters as usize * 4 <= bytes.len() {
-            for p in 0..counts.parameters as usize {
-                let rep = read_i32(bytes, repeat_off + p * 4)?;
-                if rep != 0 {
-                    let mut param_id = format!("Param{p}");
-                    if id_off + (p + 1) * 64 <= bytes.len() {
-                        let id_slice = &bytes[id_off + p * 64..id_off + (p + 1) * 64];
-                        let len = id_slice.iter().position(|&c| c == 0).unwrap_or(64);
-                        if let Ok(s) = std::str::from_utf8(&id_slice[..len]) {
-                            param_id = s.to_string();
-                        }
-                    }
-                    return Err(Status::error(
-                        "UNSUPPORTED_FEATURE",
-                        format!(
-                            "Parameter '{param_id}' has repeat enabled (cyclic parameters are out of scope for this milestone)"
-                        ),
-                    ));
-                }
-            }
-        }
-    }
-
-    // Read canvas info (section 1)
+    // Read canvas info (section 1) before feature checking
     let canvas_off = section_offsets[1] as usize;
     if canvas_off + 24 > bytes.len() {
         return Err(Status::error(
@@ -372,6 +288,85 @@ pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         ));
     }
 
+    // Collect all unsupported features in a single pass without failing on the first one
+    let mut unsupported_features = Vec::new();
+
+    // 1. BlendShape Glue (Mao has 0; out of scope for M3B)
+    if counts.bs_glues > 0 {
+        unsupported_features.push(UnsupportedFeature {
+            category: "blend_shape_glue".into(),
+            count: counts.bs_glues as usize,
+            detail: format!(
+                "Model contains {} BlendShape Glues (BlendShape Glue is out of scope for this milestone)",
+                counts.bs_glues
+            ),
+        });
+    }
+
+    // 2. Offscreen (offscreens, offscreen_keyforms, bs_offscreens)
+    let offscreen_total = counts.offscreens + counts.offscreen_keyforms + counts.bs_offscreens;
+    if offscreen_total > 0 {
+        unsupported_features.push(UnsupportedFeature {
+            category: "offscreen".into(),
+            count: offscreen_total as usize,
+            detail: format!(
+                "Model contains Offscreen features (offscreens={}, offscreen_keyforms={}, bs_offscreens={}; Offscreen is out of scope for this milestone)",
+                counts.offscreens, counts.offscreen_keyforms, counts.bs_offscreens
+            ),
+        });
+    }
+
+    // 3. Cyclic parameter check (param_src.repeat)
+    // Section 54 is param_src.repeat
+    if counts.parameters > 0 && section_offsets.len() > 54 {
+        let repeat_off = section_offsets[54] as usize;
+        let id_off = section_offsets[50] as usize;
+        if repeat_off + counts.parameters as usize * 4 <= bytes.len() {
+            let mut cyclic_params = Vec::new();
+            for p in 0..counts.parameters as usize {
+                let rep = read_i32(bytes, repeat_off + p * 4)?;
+                if rep != 0 {
+                    let mut param_id = format!("Param{p}");
+                    if id_off + (p + 1) * 64 <= bytes.len() {
+                        let id_slice = &bytes[id_off + p * 64..id_off + (p + 1) * 64];
+                        let len = id_slice.iter().position(|&c| c == 0).unwrap_or(64);
+                        if let Ok(s) = std::str::from_utf8(&id_slice[..len]) {
+                            param_id = s.to_string();
+                        }
+                    }
+                    cyclic_params.push(param_id);
+                }
+            }
+            if !cyclic_params.is_empty() {
+                unsupported_features.push(UnsupportedFeature {
+                    category: "cyclic_parameter".into(),
+                    count: cyclic_params.len(),
+                    detail: format!(
+                        "Parameter(s) with repeat enabled: {} (cyclic parameters are out of scope for this milestone)",
+                        cyclic_params.join(", ")
+                    ),
+                });
+            }
+        }
+    }
+
+    #[cfg(has_purism_core)]
+    if unsupported_features.is_empty() {
+        let mut buffer_copy = bytes.to_vec();
+        let r = unsafe {
+            csmHasMocConsistency(
+                buffer_copy.as_mut_ptr() as *mut c_void,
+                buffer_copy.len() as c_uint,
+            )
+        };
+        if r != 1 {
+            return Err(Status::error(
+                "FILE_CORRUPT",
+                "PurismCore consistency check failed (moc3 is corrupt or inconsistent)",
+            ));
+        }
+    }
+
     Ok(Moc3InspectionReport {
         version,
         version_number: version_raw,
@@ -386,5 +381,26 @@ pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
             flag,
         },
         section_offsets,
+        unsupported_features,
     })
+}
+
+pub fn inspect_moc3_safety(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
+    inspect_moc3_internal(bytes)
+}
+
+pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
+    let report = inspect_moc3_safety(bytes)?;
+    if !report.unsupported_features.is_empty() {
+        let details: Vec<String> = report
+            .unsupported_features
+            .iter()
+            .map(|u| format!("[{}] {}", u.category, u.detail))
+            .collect();
+        return Err(Status::error(
+            "UNSUPPORTED_FEATURE",
+            format!("Model contains unsupported features: {}", details.join("; ")),
+        ));
+    }
+    Ok(report)
 }
