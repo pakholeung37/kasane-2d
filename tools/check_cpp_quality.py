@@ -33,7 +33,7 @@ def executable(name, override):
 
 def owned_sources():
     paths = set()
-    for base in (ROOT / "modules/kasane-core", ROOT / "modules/kasane-document", ROOT / "modules/gd-kasane/src"):
+    for base in (ROOT / "modules/kasane-core", ROOT / "modules/kasane-document", ROOT / "modules/kasane-gd/src"):
         for extension in ("*.cpp", "*.hpp"):
             paths.update(path for path in base.rglob(extension) if "vendor" not in path.parts)
     purism = ROOT / "modules/purism-core"
@@ -72,7 +72,7 @@ def check_tidy(clang_tidy, build_dir, godot_build_dir):
          sorted((ROOT / "modules/kasane-core/tests").glob("*.cpp")) +
          sorted((ROOT / "modules/kasane-document/src").glob("*.cpp")) +
          sorted((ROOT / "modules/kasane-document/tests").glob("*.cpp"))),
-        (godot_build_dir, sorted((ROOT / "modules/gd-kasane/src").glob("*.cpp"))),
+        (godot_build_dir, sorted((ROOT / "modules/kasane-gd/src").glob("*.cpp"))),
     ]
     extra = []
     if sys.platform == "darwin":
@@ -92,7 +92,7 @@ def main():
     parser.add_argument("--format-only", action="store_true")
     parser.add_argument("--tidy-only", action="store_true")
     parser.add_argument("--compile-commands", type=Path, default=ROOT / "target/cmake/core-debug")
-    parser.add_argument("--godot-compile-commands", type=Path, default=ROOT / "modules/gd-kasane")
+    parser.add_argument("--godot-compile-commands", type=Path, default=ROOT / "modules/kasane-gd")
     parser.add_argument("--clang-format", default=os.environ.get("CLANG_FORMAT"))
     parser.add_argument("--clang-tidy", default=os.environ.get("CLANG_TIDY"))
     args = parser.parse_args()

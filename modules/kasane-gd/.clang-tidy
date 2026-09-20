@@ -1,4 +1,4 @@
 Checks: '-*,clang-analyzer-core.*,bugprone-use-after-move,bugprone-dangling-handle,bugprone-sizeof-expression,bugprone-suspicious-memset-usage'
 WarningsAsErrors: '*'
-HeaderFilterRegex: '.*modules/gd-kasane/src/.*'
+HeaderFilterRegex: '.*modules/kasane-gd/src/.*'
 FormatStyle: none

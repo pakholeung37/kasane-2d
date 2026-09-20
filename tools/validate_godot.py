@@ -16,19 +16,19 @@ ROOT = Path(__file__).resolve().parents[1]
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--godot', type=Path, default=Path('/Applications/Godot_mono.app/Contents/MacOS/Godot'))
-    p.add_argument('--library', type=Path, default=ROOT/'modules/gd-kasane/build/bin/libgd_kasane.macos.template_debug.arm64.dylib')
+    p.add_argument('--library', type=Path, default=ROOT/'modules/kasane-gd/build/bin/libkasane_gd.macos.template_debug.arm64.dylib')
     p.add_argument('--output-dir', type=Path, default=ROOT/'target/kasane/godot-boundary')
     args = p.parse_args()
     project = args.output_dir.resolve()
     project.mkdir(parents=True, exist_ok=True)
     if not args.godot.is_file() or not args.library.is_file():
-        print('Missing Godot executable or built gd-kasane library', file=sys.stderr)
+        print('Missing Godot executable or built kasane-gd library', file=sys.stderr)
         return 1
     library = project/args.library.name
     shutil.copyfile(args.library, library)
-    shutil.copyfile(ROOT/'modules/gd-kasane/tests/document_boundary.gd', project/'test.gd')
+    shutil.copyfile(ROOT/'modules/kasane-gd/tests/document_boundary.gd', project/'test.gd')
     (project/'project.godot').write_text('config_version=5\n[application]\nconfig/name="Kasane Boundary Test"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
-    (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="gd_kasane_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+library.name+'"\n')
+    (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="kasane_gd_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+library.name+'"\n')
     # All fixtures are built in memory. Register this one extension directly;
     # no editor import or filesystem resource scan is needed for this harness.
     # First-scan editor shutdown currently crashes on this host even with the

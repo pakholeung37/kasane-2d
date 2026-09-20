@@ -19,9 +19,9 @@ jobs:
       - name: Configure compilation databases
         run: |
           cmake --preset core-debug
-          target/quality-venv/bin/python -m SCons -C modules/gd-kasane platform=linux arch=x86_64 target=template_debug compiledb
+          target/quality-venv/bin/python -m SCons -C modules/kasane-gd platform=linux arch=x86_64 target=template_debug compiledb
       - name: Build Godot adapter with strict warnings
-        run: target/quality-venv/bin/python -m SCons -C modules/gd-kasane platform=linux arch=x86_64 target=template_debug -j4
+        run: target/quality-venv/bin/python -m SCons -C modules/kasane-gd platform=linux arch=x86_64 target=template_debug -j4
       - name: Format and static analysis
         run: |
           python3 tools/check_cpp_quality.py \

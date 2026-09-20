@@ -27,13 +27,13 @@ def main():
         report['native']=dict(status=native['status'],checks=len(native['checks']),source_sha256=native['source_sha256'])
         if native['status']!='passed':raise RuntimeError('Native project acceptance failed')
         project=base/'harness';project.mkdir()
-        library=ROOT/'modules/gd-kasane/build/bin/libgd_kasane.macos.template_debug.arm64.dylib'
+        library=ROOT/'modules/kasane-gd/build/bin/libkasane_gd.macos.template_debug.arm64.dylib'
         report['library_sha256']=hashlib.sha256(library.read_bytes()).hexdigest()
         shutil.copyfile(library,project/library.name)
-        shutil.copyfile(ROOT/'modules/gd-kasane/tests/project_files.gd',project/'test.gd')
-        shutil.copyfile(ROOT/'modules/gd-kasane/tests/project_capture.gd',project/'capture.gd')
+        shutil.copyfile(ROOT/'modules/kasane-gd/tests/project_files.gd',project/'test.gd')
+        shutil.copyfile(ROOT/'modules/kasane-gd/tests/project_capture.gd',project/'capture.gd')
         (project/'project.godot').write_text('config_version=5\n[application]\nconfig/name="Native Project Adapter"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
-        (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="gd_kasane_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+library.name+'"\n')
+        (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="kasane_gd_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+library.name+'"\n')
         (project/'.godot').mkdir();(project/'.godot/extension_list.cfg').write_text('res://kasane.gdextension\n')
         adapter=base/'adapter';adapter.mkdir()
         run([args.godot,'--headless','--path',project,'--script','res://test.gd','--',base/'native/moved',adapter],'adapter')

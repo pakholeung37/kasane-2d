@@ -7,7 +7,7 @@
       "cppStandard": "c++20",
       "compileCommands": [
         "${workspaceFolder}/target/cmake/core-make/compile_commands.json",
-        "${workspaceFolder}/modules/gd-kasane/compile_commands.json"
+        "${workspaceFolder}/modules/kasane-gd/compile_commands.json"
       ],
       "includePath": [
         "${workspaceFolder}/modules/kasane-core/include",
@@ -21,7 +21,7 @@
       "cppStandard": "c++20",
       "compileCommands": [
         "${workspaceFolder}/target/cmake/core-debug/compile_commands.json",
-        "${workspaceFolder}/modules/gd-kasane/compile_commands.json"
+        "${workspaceFolder}/modules/kasane-gd/compile_commands.json"
       ],
       "includePath": [
         "${workspaceFolder}/modules/kasane-core/include",
@@ -34,7 +34,7 @@
       "cppStandard": "c++20",
       "compileCommands": [
         "${workspaceFolder}/target/cmake/core-debug/compile_commands.json",
-        "${workspaceFolder}/modules/gd-kasane/compile_commands.json"
+        "${workspaceFolder}/modules/kasane-gd/compile_commands.json"
       ],
       "includePath": [
         "${workspaceFolder}/modules/kasane-core/include",

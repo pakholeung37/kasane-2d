@@ -31,6 +31,6 @@ for filename in Path('../kasane-core/core_sources.txt').read_text().splitlines()
     name = Path(filename).stem
     sources += owned.SharedObject('build/' + name, '../kasane-core/src/' + filename)
 # Internal build artifact. Editor packaging belongs to apps/editor (M5).
-target = 'build/bin/libgd_kasane' + owned['suffix'] + owned['SHLIBSUFFIX']
+target = 'build/bin/libkasane_gd' + owned['suffix'] + owned['SHLIBSUFFIX']
 library = owned.SharedLibrary(target=target, source=sources)
 Default(library)

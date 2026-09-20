@@ -34,7 +34,7 @@ CubismModel → 运行时适配器 ─┘
 2. 把 `internal_cubism_renderer_2d.cpp` 中对模型的读取移到适配器；将 resource 中对 `GDCubismUserModel` 的 owner 读取改为显式配置输入。
 3. 迁移 shader 资源路径、材质选择、遮罩图集和批处理。提取代码与资源为公共依赖，保留来源说明。
 4. 先由原运行时适配器驱动公共实现，对照旧路径；再接入 Document 输出。
-5. 将 `gd-kasane` 的生产预览切换到公共 renderer，demo 调用同一正式实现。旧 MeshView 只保留有明确回归用途的部分。
+5. 将 `kasane-gd` 的生产预览切换到公共 renderer，demo 调用同一正式实现。旧 MeshView 只保留有明确回归用途的部分。
 
 位置更新必须复用 ArrayMesh/RID，不能每次删节点重建。拓扑和遮罩关系变更重建受影响资源；批处理不改变绘制顺序。
 

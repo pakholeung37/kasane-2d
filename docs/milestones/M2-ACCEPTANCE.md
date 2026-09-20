@@ -10,7 +10,7 @@
 target/kasane/buildenv/bin/python tools/validate_core.py
 # 原生持久化验收：不启动 Godot
 target/kasane/buildenv/bin/python tools/validate_native_project.py
-target/kasane/buildenv/bin/python -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
+target/kasane/buildenv/bin/python -m SCons -C modules/kasane-gd platform=macos arch=arm64 target=template_debug -j8
 # 原生验收 + 薄绑定 + 真实 GPU
 target/kasane/buildenv/bin/python tools/validate_project.py
 target/kasane/buildenv/bin/python tools/validate_godot.py

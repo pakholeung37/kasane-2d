@@ -1,4 +1,4 @@
-# gd-kasane
+# kasane-gd
 
 Internal Godot bindings for Kasane Editor, not a user-installed addon.
 
@@ -26,7 +26,7 @@ against identical GPU thresholds during M1 acceptance.
 
 ```sh
 # Requires libpng, OpenSSL and pkg-config in addition to the compiler and SCons.
-python3 -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
+python3 -m SCons -C modules/kasane-gd platform=macos arch=arm64 target=template_debug -j8
 python3 tools/validate_godot.py
 # Requires freshly built Core probes, the official SDK, and a real GPU:
 python3 tools/validate_project.py

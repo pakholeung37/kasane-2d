@@ -1,6 +1,6 @@
 # M1 验收与复现
 
-2026-09-20：在提交 `871c5b158a98f8f87c899187935279ec0831656a` 上重新执行独立验收，通过。Core 全新构建的 8 项 CTest（含 Purism unit、验证器负例与 C99 bundle）、59 项 Godot 集成检查、84 项真实 GPU 检查全部通过；gd-cubism 与 gd-kasane 的 SCons 构建成功。双 Core 最大数值误差分别为 0 与 `7.15256e-7`。环境为 macOS arm64 / Apple M4 / Godot 4.7.2 / OpenGL Compatibility。报告位于 `target/kasane/core-regression/report.json`、`target/kasane/godot-boundary/report.json`、`target/kasane/gpu-regression/report.json`。本次沿用下述范围与阈值；首次动态导入退出问题仍不计为通过。
+2026-09-20：在提交 `871c5b158a98f8f87c899187935279ec0831656a` 上重新执行独立验收，通过。Core 全新构建的 8 项 CTest（含 Purism unit、验证器负例与 C99 bundle）、59 项 Godot 集成检查、84 项真实 GPU 检查全部通过；gd-cubism 与 kasane-gd 的 SCons 构建成功。双 Core 最大数值误差分别为 0 与 `7.15256e-7`。环境为 macOS arm64 / Apple M4 / Godot 4.7.2 / OpenGL Compatibility。报告位于 `target/kasane/core-regression/report.json`、`target/kasane/godot-boundary/report.json`、`target/kasane/gpu-regression/report.json`。本次沿用下述范围与阈值；首次动态导入退出问题仍不计为通过。
 
 2026-09-19：本机 M1 统一验收通过。代码创建、编辑、内存求值、MOC3 导出及运行包路径已贯通。原始证据保存在 `target/kasane/runs/<run-id>/report.json`；这是当时的验收快照，后续回归以各项独立检查的结果为准。
 
@@ -16,7 +16,7 @@ target/kasane/buildenv/bin/python -m pip install -r tools/requirements-validatio
 # 系统需要 CMake、C/C++ 编译器和 libpng 开发库；SDK 路径按本机安装位置调整。
 target/kasane/buildenv/bin/python tools/validate_core.py
 target/kasane/buildenv/bin/python -m SCons -C modules/gd-cubism platform=macos arch=arm64 target=template_release CUBISM_SDK_ROOT="$PWD/third_party/CubismSdkForNative-5-r.5" -j8
-target/kasane/buildenv/bin/python -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
+target/kasane/buildenv/bin/python -m SCons -C modules/kasane-gd platform=macos arch=arm64 target=template_debug -j8
 target/kasane/buildenv/bin/python tools/validate_godot.py
 target/kasane/buildenv/bin/python tools/validate_gpu.py
 ```
@@ -26,7 +26,7 @@ target/kasane/buildenv/bin/python tools/validate_gpu.py
 检查内容：
 
 1. 构建 kasane-core、编码器和通用发布器；运行 CTest（包含两个 Core、Purism unit、验证器负例与 C99 bundle smoke）。Purism 外部模型 conformance 需另外提供模型与参考数据。
-2. 重建官方 Core 的 gd-cubism 参考播放器及 gd-kasane。
+2. 重建官方 Core 的 gd-cubism 参考播放器及 kasane-gd。
 3. Godot headless 源数据、预览生命周期、工程快照和失效原子性检查。
 4. 启动真实 GPU 窗口，比较现有 gd-cubism 官方 Core 播放与直接消费 Document 的 KasaneDocumentPreview。
 

@@ -81,7 +81,7 @@ Purism 原运行时和 Kasane 求值器调用同一份函数。提取不新增�
 python3 tools/validate_core.py
 
 # 安装 SCons 的 Python 环境；示例使用本地构建环境。
-target/kasane/buildenv/bin/python -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
+target/kasane/buildenv/bin/python -m SCons -C modules/kasane-gd platform=macos arch=arm64 target=template_debug -j8
 python3 tools/validate_godot.py
 ```
 

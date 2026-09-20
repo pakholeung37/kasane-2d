@@ -2,7 +2,7 @@
 
 包含两张程序生成 PNG、多参数 Keyform、嵌套 Warp/Rotation、Part、颜色、混合和遮罩。可复制整个目录到任意本地路径，无需 `.import` 文件。
 
-在已加载 gd-kasane 的 Godot 应用或 headless 脚本中：
+在已加载 kasane-gd 的 Godot 应用或 headless 脚本中：
 
 ```gdscript
 var document = KasaneDocumentBridge.new()

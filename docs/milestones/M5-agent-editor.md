@@ -8,7 +8,7 @@
 
 正式入口置于 `apps/editor/`，交付可直接启动的桌面应用及可复现的构建、导出说明。用户不需要安装 Godot、创建 Godot 项目或安装 addon。
 
-应用构建负责将 `gd-kasane` 原生库、GDExtension 加载配置、公共 renderer 资源与应用脚本打包。开发环境的模块产物位于 `modules/gd-kasane/build/bin/`；不向用户分发此目录作为产品，不提供通用 addon 安装流程。正式代码不引用 `demos/` 的脚本或 fixture。
+应用构建负责将 `kasane-gd` 原生库、GDExtension 加载配置、公共 renderer 资源与应用脚本打包。开发环境的模块产物位于 `modules/kasane-gd/build/bin/`；不向用户分发此目录作为产品，不提供通用 addon 安装流程。正式代码不引用 `demos/` 的脚本或 fixture。
 
 本里程碑交付 Godot 项目、应用导出配置、构建打包入口及目标平台的应用产物。开发启动和打包应用使用同一份代码；验收必须启动打包产物，不能仅在 Godot 编辑器里运行场景。
 

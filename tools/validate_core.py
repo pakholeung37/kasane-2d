@@ -32,7 +32,7 @@ def git(*args):
 def source_fingerprint():
     digest = hashlib.sha256()
     for repository, paths in ((ROOT, ('CMakeLists.txt', 'CMakePresets.json', '.github/workflows',
-                                      'modules/kasane-core', 'modules/kasane-document', 'modules/gd-kasane', 'samples', 'tools')),
+                                      'modules/kasane-core', 'modules/kasane-document', 'modules/kasane-gd', 'samples', 'tools')),
                               (ROOT/'modules/purism-core', ('.',))):
         names = subprocess.check_output(['git', 'ls-files', '-co', '--exclude-standard', '-z', '--', *paths],
                                         cwd=repository).split(b'\0')

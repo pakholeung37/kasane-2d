@@ -39,15 +39,15 @@ def main():
             (project/asset['source']).write_bytes(data)
         (project/'gpu-source.json').write_text(json.dumps(fixture))
         (project/'roundtrip.json').unlink(missing_ok=True)
-        shutil.copyfile(ROOT/'modules/gd-kasane/tests/gpu_regression.gd', project/'test.gd')
+        shutil.copyfile(ROOT/'modules/kasane-gd/tests/gpu_regression.gd', project/'test.gd')
         addon = project/'addons/gd_cubism'
         shutil.copytree(ROOT/'modules/gd-cubism/addons/gd_cubism/res', addon/'res', dirs_exist_ok=True)
         framework = 'libgd_cubism.cubism.macos.release.framework'
         shutil.copytree(ROOT/'modules/gd-cubism/addons/gd_cubism/bin'/framework, addon/'bin'/framework, dirs_exist_ok=True)
         (addon/'gd_cubism.gdextension').write_text('[configuration]\nentry_symbol="gd_cubism_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://addons/gd_cubism/bin/'+framework+'"\n')
-        lib = 'libgd_kasane.macos.template_debug.arm64.dylib'
-        shutil.copyfile(ROOT/'modules/gd-kasane/build/bin'/lib, project/lib)
-        (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="gd_kasane_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+lib+'"\n')
+        lib = 'libkasane_gd.macos.template_debug.arm64.dylib'
+        shutil.copyfile(ROOT/'modules/kasane-gd/build/bin'/lib, project/lib)
+        (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="kasane_gd_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+lib+'"\n')
         (project/'project.godot').write_text('config_version=5\n[application]\nconfig/name="Kasane GPU Regression"\n[display]\nwindow/size/viewport_width=640\nwindow/size/viewport_height=480\n[rendering]\nrenderer/rendering_method="gl_compatibility"\ntextures/default_filters/use_nearest_mipmap_filter=false\n')
         (project/'.godot').mkdir(exist_ok=True)
         (project/'.godot/extension_list.cfg').write_text('res://kasane.gdextension\nres://addons/gd_cubism/gd_cubism.gdextension\n')

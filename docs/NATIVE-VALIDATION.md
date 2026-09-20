@@ -30,7 +30,7 @@ both tools and libFuzzer. Run:
 
 ```sh
 cmake --preset core-debug
-target/kasane/buildenv/bin/python -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug compiledb
+target/kasane/buildenv/bin/python -m SCons -C modules/kasane-gd platform=macos arch=arm64 target=template_debug compiledb
 python3 tools/check_cpp_quality.py
 ```
 

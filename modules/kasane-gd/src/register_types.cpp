@@ -24,7 +24,7 @@ static void terminate(ModuleInitializationLevel) {
 }
 
 extern "C" {
-GDExtensionBool GDE_EXPORT gd_kasane_library_init(GDExtensionInterfaceGetProcAddress get_proc_address,
+GDExtensionBool GDE_EXPORT kasane_gd_library_init(GDExtensionInterfaceGetProcAddress get_proc_address,
                                                   GDExtensionClassLibraryPtr library,
                                                   GDExtensionInitialization *initialization) {
     GDExtensionBinding::InitObject init(get_proc_address, library, initialization);

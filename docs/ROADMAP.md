@@ -65,7 +65,7 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 | 现有代码 | 复用内容 | 必须补齐或改变的边界 |
 |---|---|---|
 | [kasane-core](../../modules/kasane-core/include/kasane/document.hpp) | Document、稳定 ID、几何校验、批量修改 | 参数、绑定、Keyform 和符合导出语义的模型；现有 Warp 不能直接视为 Cubism 等价实现 |
-| [gd-kasane](../../modules/gd-kasane/src/document_bridge.hpp) | Godot 数据句柄、脚本绑定、源快照 | 数据绑定脱离场景节点；文件、素材、预览不再集中在 Bridge |
+| [kasane-gd](../../modules/kasane-gd/src/document_bridge.hpp) | Godot 数据句柄、脚本绑定、源快照 | 数据绑定脱离场景节点；文件、素材、预览不再集中在 Bridge |
 | [PurismCore 格式实现](../../modules/purism-core/src/moc3.h) | 文件结构、校验、加载与求值算法 | Document 与文件结构的双向映射、MOC3 写出；运行时内存布局不直接成为编辑模型 |
 | [gd-cubism renderer](../../modules/gd-cubism/src/private/internal_cubism_renderer_2d.cpp) | 几何上传、材质、遮罩、顺序、批处理 | 绘制代码不再直接读取 CubismModel；去除对播放器 owner 的依赖 |
 | [运行时对照](../../benchmarks/cubism-matrix/README.md) | Purism / 官方 Core 和 Godot / Native 对照设施 | 加入导出文件、导入往返和编辑预览的一致性验证 |
