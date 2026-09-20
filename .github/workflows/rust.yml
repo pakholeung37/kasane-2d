@@ -1,0 +1,39 @@
+name: Rust migration
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@1.94.0
+        with:
+          components: rustfmt, clippy
+      - name: Format
+        run: cargo fmt --check
+      - name: Static analysis
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Regression tests
+        run: cargo test --workspace --locked
+      - name: Build extension
+        run: cargo build --release -p kasane-godot --locked
+      - name: Install C++ compatibility dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libpng-dev libssl-dev
+      - name: Build migration probes
+        if: runner.os == 'Linux'
+        run: |
+          cmake -S . -B target/migration-cpp -G Ninja -DCMAKE_BUILD_TYPE=Release -DKASANE_MOC3_CONFORMANCE=OFF
+          cmake --build target/migration-cpp --target kasane_document_tool --parallel 4
+          cargo build -p kasane-project --example project_roundtrip --locked
+      - name: Check C++ and Rust format and lock compatibility
+        if: runner.os == 'Linux'
+        run: python3 tools/validate_rust_migration.py --cpp-tool target/migration-cpp/modules/kasane-core/document/kasane_document_tool

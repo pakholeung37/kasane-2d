@@ -13,10 +13,20 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def get_default_library():
+    release_rust = ROOT / 'target/release/libkasane_godot.dylib'
+    if release_rust.is_file():
+        return release_rust
+    debug_rust = ROOT / 'target/debug/libkasane_godot.dylib'
+    if debug_rust.is_file():
+        return debug_rust
+    return ROOT / 'modules/kasane-gd/build/bin/libkasane_gd.macos.template_debug.arm64.dylib'
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--godot', type=Path, default=Path('/Applications/Godot_mono.app/Contents/MacOS/Godot'))
-    p.add_argument('--library', type=Path, default=ROOT/'modules/kasane-gd/build/bin/libkasane_gd.macos.template_debug.arm64.dylib')
+    p.add_argument('--library', type=Path, default=get_default_library())
     p.add_argument('--output-dir', type=Path, default=ROOT/'target/kasane/godot-boundary')
     args = p.parse_args()
     project = args.output_dir.resolve()

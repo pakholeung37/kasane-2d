@@ -1,0 +1,18 @@
+[package]
+name = "kasane-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Core document model, geometry, deformers and evaluation for Kasane 2D"
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+
+[[bench]]
+name = "eval_benchmark"
+harness = false

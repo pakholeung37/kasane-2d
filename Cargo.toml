@@ -1,0 +1,21 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kasane-core", "crates/kasane-godot",
+    "crates/kasane-moc3",
+    "crates/kasane-project",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.94"
+license = "MIT"
+authors = ["Kasane 2D Contributors"]
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+sha2 = "0.10"
+png = "0.17"

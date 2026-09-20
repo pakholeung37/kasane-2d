@@ -1,0 +1,97 @@
+use godot::classes::{image::Format, Image, ImageTexture, Texture2D};
+use godot::prelude::*;
+use std::collections::HashMap;
+
+use kasane_core::types::Status;
+
+use crate::conversions::{error_dict, status_to_dict, Dictionary};
+use crate::document_bridge::KasaneDocumentBridge;
+
+#[derive(GodotClass)]
+#[class(init, base=RefCounted)]
+pub struct KasaneTextureStore {
+    base: Base<RefCounted>,
+    textures: HashMap<String, Gd<Texture2D>>,
+    content_hashes: HashMap<String, String>,
+}
+
+#[godot_api]
+impl KasaneTextureStore {
+    #[signal]
+    fn changed();
+
+    #[func]
+    pub fn set_texture(&mut self, id: GString, texture: Option<Gd<Texture2D>>) -> Dictionary {
+        let Some(tex) = texture else {
+            return error_dict("INVALID_TEXTURE", "Provide a loaded texture.");
+        };
+        if tex.get_width() <= 0 || tex.get_height() <= 0 {
+            return error_dict("INVALID_TEXTURE", "Provide a loaded texture.");
+        }
+        let id_str = id.to_string();
+        self.content_hashes.remove(&id_str);
+        self.textures.insert(id_str, tex);
+        self.base_mut().emit_signal("changed", &[]);
+        status_to_dict(&Status::ok())
+    }
+
+    #[func]
+    pub fn load_asset(&mut self, doc: Option<Gd<KasaneDocumentBridge>>, id: GString) -> Dictionary {
+        let status = self.resolve_asset(doc, id);
+        self.base_mut().emit_signal("changed", &[]);
+        status_to_dict(&status)
+    }
+
+    pub fn resolve_asset(&mut self, doc: Option<Gd<KasaneDocumentBridge>>, id: GString) -> Status {
+        let Some(d) = doc else {
+            return Status::error("MISSING_DOCUMENT", "Provide a Document.");
+        };
+        let d_bind = d.bind();
+        let id_str = id.to_string();
+        if d_bind.session().document().get_asset(&id_str).is_none() {
+            return Status::error("MISSING_ASSET", id_str);
+        }
+        let bytes = match d_bind.session().read_asset(&id_str) {
+            Ok(b) => b,
+            Err(s) => {
+                self.textures.remove(&id_str);
+                self.content_hashes.remove(&id_str);
+                return s;
+            }
+        };
+        if self.content_hashes.get(&id_str) != Some(&bytes.sha256) {
+            let mut packed = PackedByteArray::new();
+            packed.resize(bytes.rgba.len());
+            for (i, &b) in bytes.rgba.iter().enumerate() {
+                packed[i] = b;
+            }
+            let image = Image::create_from_data(
+                bytes.width as i32,
+                bytes.height as i32,
+                false,
+                Format::RGBA8,
+                &packed,
+            );
+            if let Some(mut img) = image {
+                let _ = img.generate_mipmaps();
+                if let Some(tex) = ImageTexture::create_from_image(&img) {
+                    self.textures.insert(id_str.clone(), tex.upcast());
+                    self.content_hashes.insert(id_str, bytes.sha256);
+                }
+            }
+        }
+        Status::ok()
+    }
+
+    #[func]
+    pub fn get_texture(&self, id: GString) -> Option<Gd<Texture2D>> {
+        self.textures.get(&id.to_string()).cloned()
+    }
+
+    #[func]
+    pub fn clear(&mut self) {
+        self.textures.clear();
+        self.content_hashes.clear();
+        self.base_mut().emit_signal("changed", &[]);
+    }
+}

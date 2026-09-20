@@ -1,8 +1,11 @@
 # 当前原型代码与目标边界
 
-本文仅记录仍存在的 C++ 实现。目标和验收以 [工程路线图](ROADMAP.md) 为准；现有接口和文件格式允许重构。
+> [!NOTE]
+> 项目已增加 Rust 核心、持久化、MOC3 与 GDExtension 实现，并修复首轮审查发现的兼容性和持久化回归。已验证范围、构建条件和仍待验收的事项见 **[Rust 迁移状态与修复记录](REFACTORING-REPORT.md)**。现有 C++ 路径仍保留；下文为历史边界与应用集成目标。
 
-## 当前实现
+本文记录历史 C++ 实现与目标边界。目标和验收以 [工程路线图](ROADMAP.md) 为准；现有接口和文件格式允许重构。
+
+## 历史 C++ 实现
 
 - `kasane-core::Document` 保存源几何、稳定 ID、素材描述及变形关系，提供批量修改和现有 Rotation / 简单 Warp 求值，不依赖 Godot。
 - `kasane-gd` 是 Editor 的内部 C++ 绑定代码。`KasaneDocumentBridge` 是 RefCounted 文档对象；预览节点、纹理存储和工程读写由独立对象负责。

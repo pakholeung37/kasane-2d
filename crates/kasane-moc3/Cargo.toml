@@ -1,0 +1,21 @@
+[package]
+name = "kasane-moc3"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MOC3 5.0 binary encoder and exporter for Kasane 2D"
+
+[dependencies]
+kasane-core = { path = "../kasane-core" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[build-dependencies]
+cc = "1.0"
+
+[[bench]]
+name = "moc3_benchmark"
+harness = false
