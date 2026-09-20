@@ -207,11 +207,16 @@ impl KasaneProjectIO {
         let path_buf = PathBuf::from(path.to_string());
         let mut tex_map = std::collections::HashMap::new();
         for (k, v) in texture_map.iter_shared() {
-            if let Ok(slot) = k.try_to::<i64>() {
-                if let Ok(tex_path) = v.try_to::<GString>() {
-                    tex_map.insert(slot as usize, PathBuf::from(tex_path.to_string()));
-                }
+            let Ok(slot) = k.try_to::<i64>() else {
+                return status_to_dict(&Status::error("INVALID_TEXTURE_MAP", "Texture slots must be nonnegative integers."));
+            };
+            let Ok(tex_path) = v.try_to::<GString>() else {
+                return status_to_dict(&Status::error("INVALID_TEXTURE_MAP", "Texture paths must be strings."));
+            };
+            if slot < 0 || usize::try_from(slot).is_err() {
+                return status_to_dict(&Status::error("INVALID_TEXTURE_MAP", "Texture slot is out of range."));
             }
+            tex_map.insert(slot as usize, PathBuf::from(tex_path.to_string()));
         }
         let (imported, report) = doc.bind_mut().session_mut().import_bare_moc3(&path_buf, &tex_map);
         let mut out = project_result_dict(&imported);

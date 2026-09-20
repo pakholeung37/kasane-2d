@@ -246,6 +246,21 @@ func run():
     var stress_end_objects = Performance.get_monitor(Performance.OBJECT_COUNT)
     check(abs(stress_end_objects - stress_start_objects) < 25, "Object count remains bounded after 50 stress iterations")
 
+    # New project is an atomic replacement, including the saved path and handles.
+    var before_new = doc.get_document_summary()
+    var previous_state = doc.capture_state()
+    var previous_mesh = doc.get_mesh(MESH_ID)
+    check(not doc.new_project(DOC_ID, Vector2(-1, 100)).ok, "Reject invalid new canvas")
+    check(doc.get_document_summary() == before_new, "Failed new preserves project")
+    check(previous_mesh.is_valid(), "Failed new preserves handles")
+    check(doc.new_project(DOC_ID, Vector2(800, 600)).ok, "New project succeeds")
+    var after_new = doc.get_document_summary()
+    check(after_new.generation == before_new.generation + 1, "New advances generation")
+    check(after_new.path.is_empty() and after_new.modified, "New clears saved path")
+    check(not previous_mesh.is_valid(), "New invalidates previous mesh")
+    check(not doc.restore_state(previous_state).ok, "New rejects previous snapshot")
+    check(after_new.meshes.is_empty(), "New starts without objects")
+
     # Report results
     var report = {
         "status": "passed" if failures.is_empty() else "failed",

@@ -290,8 +290,8 @@ pub fn binding_from_dict(d: &Dictionary) -> Result<MeshBinding, Status> {
             Some(v) => v,
             None => return Err(fail()),
         };
-        let positions = if let Ok(packed) = pos_val.try_to::<PackedVector2Array>() {
-            packed_to_vectors(&packed)
+        let positions = if pos_val.get_type() == VariantType::PACKED_VECTOR2_ARRAY {
+            packed_to_vectors(&pos_val.to::<PackedVector2Array>())
         } else if let Ok(arr) = pos_val.try_to::<Array>() {
             let mut pts = Vec::with_capacity(arr.len());
             for j in 0..arr.len() {

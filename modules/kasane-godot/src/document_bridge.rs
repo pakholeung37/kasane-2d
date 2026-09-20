@@ -35,6 +35,7 @@ pub struct KasaneDocumentBridge {
     session: DocumentSession,
     generation: u64,
     preview_values: HashMap<String, f32>,
+    object_epochs: HashMap<String, u64>,
 }
 
 #[godot_api]
@@ -45,6 +46,7 @@ impl IRefCounted for KasaneDocumentBridge {
             session: DocumentSession::new(),
             generation: 1,
             preview_values: HashMap::new(),
+            object_epochs: HashMap::new(),
         }
     }
 }
@@ -63,6 +65,11 @@ impl KasaneDocumentBridge {
 
     pub fn increment_generation(&mut self) {
         self.generation += 1;
+        self.object_epochs.clear();
+    }
+
+    pub fn object_epoch(&self, id: &str) -> u64 {
+        *self.object_epochs.get(id).unwrap_or(&0)
     }
 
     pub fn session(&self) -> &DocumentSession {
@@ -144,6 +151,38 @@ impl KasaneDocumentBridge {
         status_to_dict(&status)
     }
 
+    /// Validate a replacement before discarding the active project and its path.
+    #[func]
+    pub fn new_project(
+        &mut self,
+        id: GString,
+        canvas_size: Vector2,
+        #[opt(default = Vector2::ZERO)] origin: Vector2,
+        #[opt(default = 1.0)] pixels_per_unit: f64,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let mut next = DocumentSession::new();
+        let status = next.document_mut().initialize(
+            id.to_string(),
+            Canvas::new(canvas_size.x, canvas_size.y,
+                Vec2::new(origin.x, origin.y), pixels_per_unit as f32),
+        );
+        if !status.is_ok() {
+            return status_to_dict(&status);
+        }
+        self.session = next;
+        self.increment_generation();
+        self.preview_values.clear();
+        let mut out = status_to_dict(&status);
+        out.set("generation", self.generation as i64);
+        out.set("revision", self.session.document().revision() as i64);
+        out.set("change_kind", "structure");
+        self.base_mut().emit_signal("changed", &[out.to_variant()]);
+        out
+    }
+
     #[func]
     pub fn add_image_asset(
         &mut self,
@@ -174,7 +213,7 @@ impl KasaneDocumentBridge {
         self.apply(edit)
     }
 
-    fn write_mesh_internal(&mut self, d: Dictionary, replace: bool) -> Dictionary {
+    fn write_mesh_internal(&mut self, d: Dictionary, replace: bool, binding: Option<Dictionary>) -> Dictionary {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document bridge requires the main thread.");
         }
@@ -193,6 +232,16 @@ impl KasaneDocumentBridge {
                     "INVALID_FIELD",
                     "Missing field or incorrect field type; see Document specification.",
                 );
+            }
+        }
+        for (key, expected) in [
+            ("vertex_ids", VariantType::PACKED_INT64_ARRAY),
+            ("base_positions", VariantType::PACKED_VECTOR2_ARRAY),
+            ("uvs", VariantType::PACKED_VECTOR2_ARRAY),
+            ("triangles", VariantType::PACKED_INT64_ARRAY),
+        ] {
+            if d.get(key).unwrap().get_type() != expected {
+                return error_dict("INVALID_FIELD", &format!("{key} requires its declared Packed array type"));
             }
         }
         let Ok(id) = d.get("id").unwrap().try_to::<GString>() else {
@@ -280,7 +329,13 @@ impl KasaneDocumentBridge {
         }
         mesh.triangles = tri_ids.as_chunks::<3>().0.to_vec();
 
-        let edit = if replace {
+        let edit = if let Some(raw) = binding {
+            let binding = match binding_from_dict(&raw) {
+                Ok(binding) => binding,
+                Err(status) => return status_to_dict(&status),
+            };
+            self.session.document_mut().replace_mesh_with_keyforms(mesh, binding)
+        } else if replace {
             self.session.document_mut().replace_mesh(mesh)
         } else {
             self.session.document_mut().create_mesh(mesh)
@@ -290,12 +345,17 @@ impl KasaneDocumentBridge {
 
     #[func]
     pub fn create_mesh(&mut self, description: Dictionary) -> Dictionary {
-        self.write_mesh_internal(description, false)
+        self.write_mesh_internal(description, false, None)
     }
 
     #[func]
     pub fn replace_mesh(&mut self, description: Dictionary) -> Dictionary {
-        self.write_mesh_internal(description, true)
+        self.write_mesh_internal(description, true, None)
+    }
+
+    #[func]
+    pub fn replace_mesh_with_keyforms(&mut self, description: Dictionary, binding: Dictionary) -> Dictionary {
+        self.write_mesh_internal(description, true, Some(binding))
     }
 
     #[func]
@@ -308,6 +368,7 @@ impl KasaneDocumentBridge {
         handle.bind_mut().attach(
             self.base().instance_id().to_i64() as u64,
             self.generation,
+            self.object_epoch(&id.to_string()),
             id,
         );
         Some(handle)
@@ -324,6 +385,34 @@ impl KasaneDocumentBridge {
         };
         let edit = self.session.document_mut().create_parameter(p);
         self.apply(edit)
+    }
+
+    #[func]
+    pub fn replace_parameter(&mut self, description: Dictionary) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let p = match parameter_from_dict(&description) {
+            Ok(p) => p,
+            Err(s) => return status_to_dict(&s),
+        };
+        let edit = self.session.document_mut().replace_parameter(p);
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn references_to(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        if !self.session.document().contains_id(&id.to_string()) {
+            return error_dict("MISSING_OBJECT", &id.to_string());
+        }
+        let mut out = status_to_dict(&Status::ok());
+        let refs = PackedStringArray::from_iter(self.session.document()
+            .references_to(&id.to_string()).iter().map(GString::from));
+        out.set("referrers", &refs);
+        out
     }
 
     #[func]
@@ -389,6 +478,9 @@ impl KasaneDocumentBridge {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
         let edit = self.session.document_mut().erase_object(&id.to_string());
+        if edit.status.is_ok() {
+            *self.object_epochs.entry(id.to_string()).or_default() += 1;
+        }
         self.apply(edit)
     }
 
@@ -405,7 +497,7 @@ impl KasaneDocumentBridge {
         }
         let t = Transform {
             id: id.to_string(),
-            runtime_id: "Rotation".to_string(),
+            runtime_id: format!("Rotation_{}", id.to_string().replace('-', "")),
             name: name.to_string(),
             part_id: String::new(),
             parent_id: String::new(),
@@ -456,7 +548,7 @@ impl KasaneDocumentBridge {
         }
         let t = Transform {
             id: id.to_string(),
-            runtime_id: "Warp".to_string(),
+            runtime_id: format!("Warp_{}", id.to_string().replace('-', "")),
             name: name.to_string(),
             part_id: String::new(),
             parent_id: String::new(),
@@ -482,6 +574,9 @@ impl KasaneDocumentBridge {
         let Some(old) = self.session.document().get_transform(&id.to_string()) else {
             return error_dict("MISSING_TRANSFORM", &id.to_string());
         };
+        if old.kind != TransformKind::Rotation {
+            return error_dict("WRONG_TRANSFORM_KIND", "Use a Rotation deformer.");
+        }
         let mut t = old.clone();
         t.rotation.origin = Vec2::new(center.x, center.y);
         t.rotation.angle = angle as f32;
@@ -497,6 +592,9 @@ impl KasaneDocumentBridge {
         let Some(old) = self.session.document().get_transform(&id.to_string()) else {
             return error_dict("MISSING_TRANSFORM", &id.to_string());
         };
+        if old.kind != TransformKind::Warp {
+            return error_dict("WRONG_TRANSFORM_KIND", "Use a Warp deformer.");
+        }
         let mut t = old.clone();
         t.points = packed_to_vectors(&points);
         let edit = self.session.document_mut().replace_transform(t);
@@ -604,6 +702,7 @@ impl KasaneDocumentBridge {
         handle.bind_mut().attach(
             self.base().instance_id().to_i64() as u64,
             self.generation,
+            self.object_epoch(&id.to_string()),
             id,
         );
         Some(handle)
@@ -1030,6 +1129,27 @@ impl KasaneDocumentBridge {
         out
     }
 
+    /// Lightweight execution/observation metadata; does not copy model keyforms.
+    #[func]
+    pub fn get_document_state(&self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let doc = self.session.document();
+        let mut out = status_to_dict(&Status::ok());
+        out.set("id", doc.id());
+        out.set("initialized", doc.initialized());
+        out.set("generation", self.generation as i64);
+        out.set("revision", doc.revision() as i64);
+        out.set("modified", doc.modified());
+        out.set("transaction_active", doc.transaction_active());
+        out.set("path", self.session.manifest().to_string_lossy().as_ref());
+        out.set("canvas_size", Vector2::new(doc.canvas().width, doc.canvas().height));
+        out.set("canvas_origin", Vector2::new(doc.canvas().origin.x, doc.canvas().origin.y));
+        out.set("pixels_per_unit", doc.canvas().pixels_per_unit as f64);
+        out
+    }
+
     #[func]
     pub fn get_document_summary(&self) -> Dictionary {
         if !is_main_thread() {
@@ -1046,7 +1166,13 @@ impl KasaneDocumentBridge {
         );
         out.set("revision", doc.revision() as i64);
         out.set("asset_count", doc.asset_order().len() as i64);
+        let mut assets = Array::new();
+        for id in doc.asset_order() {
+            assets.push(&self.get_asset_snapshot(GString::from(id.as_str())));
+        }
+        out.set("assets", &assets);
         out.set("modified", doc.modified());
+        out.set("path", self.session.manifest().to_string_lossy().as_ref());
         out.set("transaction_active", doc.transaction_active());
         out.set("generation", self.generation as i64);
 
@@ -1153,6 +1279,12 @@ impl KasaneDocumentBridge {
                 "TRANSACTION_ACTIVE",
                 "Commit or cancel the transaction first.",
             );
+        }
+        let doc = self.session.document();
+        let removed: Vec<String> = doc.mesh_order().iter().chain(doc.transform_order())
+            .filter(|id| !b.document.contains_id(id)).cloned().collect();
+        for id in removed {
+            *self.object_epochs.entry(id).or_default() += 1;
         }
         self.session.document_mut().restore_from(&b.document);
         drop(b);

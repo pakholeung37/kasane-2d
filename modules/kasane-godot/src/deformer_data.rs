@@ -10,14 +10,16 @@ pub struct KasaneDeformerData {
     base: Base<RefCounted>,
     owner_id: u64,
     generation: u64,
+    epoch: u64,
     id: GString,
 }
 
 #[godot_api]
 impl KasaneDeformerData {
-    pub fn attach(&mut self, owner: u64, generation: u64, id: GString) {
+    pub fn attach(&mut self, owner: u64, generation: u64, epoch: u64, id: GString) {
         self.owner_id = owner;
         self.generation = generation;
+        self.epoch = epoch;
         self.id = id;
     }
 
@@ -27,7 +29,9 @@ impl KasaneDeformerData {
         }
         let instance_id = InstanceId::try_from_i64(self.owner_id as i64)?;
         let bridge = Gd::<KasaneDocumentBridge>::try_from_instance_id(instance_id).ok()?;
-        if bridge.bind().generation() == self.generation {
+        if bridge.bind().generation() == self.generation
+            && bridge.bind().object_epoch(&self.id.to_string()) == self.epoch
+        {
             Some(bridge)
         } else {
             None

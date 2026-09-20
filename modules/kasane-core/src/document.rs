@@ -807,6 +807,32 @@ impl Document {
         self.changed(ChangeKind::Structure, vec![key], Vec::new())
     }
 
+    /// Replace bound topology and its complete keyform set as one validated edit.
+    pub fn replace_mesh_with_keyforms(&mut self, mesh: Mesh, binding: MeshBinding) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
+        }
+        let Some(old_binding) = self.binding_for_mesh(&mesh.id) else {
+            return self.failed(Status::error("MISSING_BINDING", &mesh.id));
+        };
+        if binding.id != old_binding.id || binding.mesh_id != mesh.id {
+            return self.failed(Status::error("INVALID_BINDING", "Preserve the binding and mesh IDs"));
+        }
+        let mesh_id = mesh.id.clone();
+        let binding_id = binding.id.clone();
+        let mut candidate = self.clone();
+        let removed = candidate.erase_object(&binding_id);
+        if !removed.status.is_ok() { return self.failed(removed.status); }
+        let replaced = candidate.replace_mesh(mesh);
+        if !replaced.status.is_ok() { return self.failed(replaced.status); }
+        let rebound = candidate.create_binding(binding);
+        if !rebound.status.is_ok() { return self.failed(rebound.status); }
+        self.meshes = candidate.meshes;
+        self.vertex_slots = candidate.vertex_slots;
+        self.bindings = candidate.bindings;
+        self.changed(ChangeKind::Structure, vec![mesh_id.clone()], vec![mesh_id, binding_id])
+    }
+
     pub fn render_indices(&self, id: &str) -> Result<Vec<u32>, Status> {
         let mesh = self
             .get_mesh(id)

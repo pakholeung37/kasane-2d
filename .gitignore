@@ -22,3 +22,7 @@ apps/**/export_credentials.cfg
 tests/.godot/
 tests/*.uid
 
+
+# Generated dependencies for opening the editor source project in Godot.
+apps/editor/native/
+apps/editor/kasane.gdextension

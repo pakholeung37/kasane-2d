@@ -31,7 +31,7 @@ Agent 通过进程内 GDScript 直接操作模型。人的界面用于查看、�
 
 Godot 是应用实现技术。Document、求值、Rust renderer 和运行时绑定是应用内部依赖，不作为要求用户安装的产品交付。Editor 的构建和打包负责携带原生库、加载配置和运行资源；不建设面向任意 Godot 项目的 addon 分发机制。
 
-已建立 [Editor / Viewer 应用壳](../apps/)，可分别启动并展示检查面板、导航画布和功能占位；尚未接入 Document、文件读写、运行时和公共 renderer。应用壳不构成 M5/M6 验收；原生库可构建也不代表建模功能已经可用。旧脚本宿主、Action、演示及原型测试已删除，按新 Document 接口实现应用能力。
+[Editor](../apps/editor/README.md) 已接入 Document、文件读写、PNG 建模、脚本执行和公共 renderer，并完成 macOS arm64 独立打包验收。Viewer 仍为应用壳，M6 尚未实施。
 
 ## 3. 必须贯通的数据流
 
@@ -93,7 +93,7 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 
 ## 6. 里程碑索引与依赖
 
-旧 P1–P4 编排废止。M1–M4 已完成本机验收；M1 与 M2 的历史证据分别见 [M1 验收](archive/M1-ACCEPTANCE.md)和 [M2 验收](archive/M2-ACCEPTANCE.md)，M4 见 [验收记录](milestones/M4-ACCEPTANCE.md)。M5/M6 的完整功能仍为**待实施、未验收**；独立入口与最小界面骨架已提前建立，功能依赖与验收顺序保持不变。
+旧 P1–P4 编排废止。M1–M4 已完成本机验收；M1 与 M2 的历史证据分别见 [M1 验收](archive/M1-ACCEPTANCE.md)和 [M2 验收](archive/M2-ACCEPTANCE.md)，M4 见 [验收记录](milestones/M4-ACCEPTANCE.md)。M5 已完成 macOS arm64 验收，见 [M5 验收记录](milestones/M5-ACCEPTANCE.md)。M6 仍为**待实施、未验收**。
 
 | 里程碑 | 交付结果 | 依赖 |
 |---|---|---|
