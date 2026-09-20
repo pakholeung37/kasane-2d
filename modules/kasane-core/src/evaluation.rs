@@ -452,7 +452,14 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
 
         d.uvs.reserve(mesh.uvs.len());
         for uv in &mesh.uvs {
-            d.uvs.push(Vec2::new(uv.x, 1.0 - uv.y));
+            d.uvs.push(Vec2::new(
+                uv.x,
+                if doc.canvas().flag & 1 == 0 {
+                    uv.y
+                } else {
+                    1.0 - uv.y
+                },
+            ));
         }
 
         match doc.render_indices(id) {
@@ -463,6 +470,9 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         // Swap triangle indices winding for runtime
         for i in (0..d.indices.len()).step_by(3) {
             d.indices.swap(i + 1, i + 2);
+            if doc.canvas().flag & 1 == 0 {
+                d.indices.swap(i, i + 2);
+            }
         }
 
         let b = doc.binding_for_mesh(id);
@@ -512,6 +522,13 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 }
             }
 
+            // MOC3 applies canvas Y reversal after the entire deformer chain.
+            if doc.canvas().flag & 1 == 0 {
+                for p in &mut d.positions {
+                    p.y = -p.y;
+                }
+            }
+
             let s = validate_positions(&d.positions);
             if !s.is_ok() {
                 return Status::error(s.code, format!("{}.evaluated_positions", id));
@@ -532,113 +549,46 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         frame.drawables.push(d);
     }
 
-    // Part groups preserve contiguous subtrees.
-    let mut rank = 0i32;
-    let parts = doc.sorted_parts();
-
-    fn sort_group(
-        parent: &str,
-        doc: &Document,
-        parts: &[String],
-        part_orders: &HashMap<String, i32>,
-        enabled_parts: &HashMap<String, bool>,
-        drawables: &mut [Drawable],
-        rank: &mut i32,
-    ) {
-        #[derive(Debug)]
-        struct Item {
-            order: i32,
-            mesh: i32,
-            part: String,
-        }
-
-        let mut items = Vec::new();
-        for (i, d) in drawables.iter().enumerate() {
-            if doc.get_mesh(&d.id).unwrap().part_id == parent {
-                items.push(Item {
-                    order: d.draw_order,
-                    mesh: i as i32,
-                    part: String::new(),
-                });
-            }
-        }
-        for id in parts {
-            if doc.get_part(id).unwrap().parent_id == parent {
-                items.push(Item {
-                    order: part_orders[id],
-                    mesh: -1,
-                    part: id.clone(),
-                });
-            }
-        }
-
-        let mut minimum = 0.0f32;
-        for (i, d) in drawables.iter().enumerate() {
-            let m = doc.get_mesh(&d.id).unwrap();
-            if m.part_id != parent {
-                continue;
-            }
-            let base = m.draw_order.unwrap_or(i as f32);
-            minimum = minimum.min(base);
-            if let Some(b) = doc.binding_for_mesh(&m.id) {
-                for f in &b.keyforms {
-                    minimum = minimum.min(f.draw_order.unwrap_or(base));
-                }
-            }
-        }
-        for id in parts {
-            let p = doc.get_part(id).unwrap();
-            if p.parent_id != parent {
-                continue;
-            }
-            minimum = minimum.min(p.draw_order);
-            if let Some(b) = doc.binding_for_scene(id) {
-                for f in &b.keyforms {
-                    minimum = minimum.min(f.draw_order);
-                }
-            }
-        }
-
-        for item in &mut items {
-            let is_enabled = if item.mesh >= 0 {
-                drawables[item.mesh as usize].enabled
-            } else {
-                enabled_parts[&item.part]
-            };
-            if !is_enabled {
-                item.order = minimum.floor() as i32;
-            }
-        }
-
-        items.sort_by_key(|item| item.order);
-
-        for item in items {
-            if item.mesh >= 0 {
-                drawables[item.mesh as usize].render_order = *rank;
-                *rank += 1;
-            } else {
-                sort_group(
-                    &item.part,
-                    doc,
-                    parts,
-                    part_orders,
-                    enabled_parts,
-                    drawables,
-                    rank,
-                );
-            }
+    let groups = crate::draw_order::resolved_groups(doc);
+    let totals = crate::draw_order::descendant_counts(&groups);
+    let slots: HashMap<&str, usize> = frame
+        .drawables
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.id.as_str(), i))
+        .collect();
+    let mut orders = HashMap::new();
+    for group in &groups {
+        let mut items: Vec<(&str, i32)> = group
+            .items
+            .iter()
+            .map(|id| {
+                let (order, enabled) = if let Some(&slot) = slots.get(id.as_str()) {
+                    let d = &frame.drawables[slot];
+                    (d.draw_order, d.enabled)
+                } else {
+                    (part_orders[id], enabled_parts[id])
+                };
+                (
+                    id.as_str(),
+                    if enabled {
+                        order.clamp(group.min_order, group.max_order)
+                    } else {
+                        group.min_order
+                    },
+                )
+            })
+            .collect();
+        items.sort_by_key(|item| item.1);
+        let mut rank = orders.get(group.owner.as_str()).copied().unwrap_or(0);
+        for (id, _) in items {
+            orders.insert(id, rank);
+            rank += totals.get(id).copied().unwrap_or(1) as i32;
         }
     }
-
-    sort_group(
-        "",
-        doc,
-        &parts,
-        &part_orders,
-        &enabled_parts,
-        &mut frame.drawables,
-        &mut rank,
-    );
+    for d in &mut frame.drawables {
+        d.render_order = orders[d.id.as_str()];
+    }
 
     *out = frame;
     Status::ok()

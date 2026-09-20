@@ -60,6 +60,7 @@ int main(int argc, char **argv) {
                           << ",\"draw_order\":" << csmGetDrawableDrawOrders(model)[i]
                           << ",\"render_order\":" << csmGetRenderOrders(model)[i]
                           << ",\"opacity\":" << csmGetDrawableOpacities(model)[i]
+                          << ",\"visible\":" << ((csmGetDrawableDynamicFlags(model)[i] & csmIsVisible) ? "true" : "false")
                           << ",\"double_sided\":" << ((flags & csmIsDoubleSided) ? "true" : "false")
                           << ",\"inverted_mask\":" << ((flags & csmIsInvertedMask) ? "true" : "false")
                           << ",\"blend_mode\":"

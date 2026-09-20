@@ -49,6 +49,7 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
                 height: 480.0,
                 origin: Vec2::new(271.0, 193.0),
                 pixels_per_unit: 100.0,
+                flag: 1,
             }
         )
         .is_ok());
@@ -996,4 +997,221 @@ fn a_failed_new_asset_write_can_be_retried_without_reusing_partial_bytes() {
         .open(&destination)
         .0
         .resources_complete());
+}
+
+#[test]
+fn test_project_detachment_lifecycle() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let src_fixture = root.join("tests/fixtures/external_v50");
+
+    let tmp = TestDirectory::new();
+    let source_dir = tmp.0.join("external_source");
+    fs::create_dir_all(&source_dir).unwrap();
+
+    // 1. Copy fixture into source_dir
+    let src_model3 = source_dir.join("model.model3.json");
+    fs::copy(src_fixture.join("model.model3.json"), &src_model3).unwrap();
+    fs::copy(
+        src_fixture.join("model.moc3"),
+        source_dir.join("model.moc3"),
+    )
+    .unwrap();
+    fs::copy(
+        src_fixture.join("texture_00.png"),
+        source_dir.join("texture_00.png"),
+    )
+    .unwrap();
+
+    // 2. Import into a session
+    let mut session = DocumentSession::new();
+    let (imp_res, report) = session.import_model3(&src_model3);
+    assert!(imp_res.status.is_ok(), "{:?}", imp_res);
+    assert!(report.is_some());
+    let rep = report.unwrap();
+    assert_eq!(rep.moc_version, 5);
+
+    // 3. Save as project.kasane
+    let project_path = tmp.0.join("detached_project");
+    let save_res = session.save(&project_path);
+    assert!(save_res.status.is_ok(), "{:?}", save_res);
+
+    // 4. Detachment: completely remove source_dir
+    fs::remove_dir_all(&source_dir).unwrap();
+    assert!(!source_dir.exists());
+
+    // 5. Reopen the project from project_path without source files
+    let mut reopened_session = DocumentSession::new();
+    let open_res = reopened_session.open(&project_path);
+    assert!(open_res.status.is_ok(), "{:?}", open_res);
+    assert!(open_res.resources_complete());
+
+    // Verify document structure intact
+    let doc = reopened_session.document();
+    assert!(!doc.mesh_order().is_empty());
+    assert!(!doc.parameter_order().is_empty());
+    assert!(!doc.asset_order().is_empty());
+
+    // 6. Edit the reopened project
+    let param_id = doc.parameter_order()[0].clone();
+    let mut p = doc.get_parameter(&param_id).unwrap().clone();
+    p.default_value = (p.minimum + p.maximum) / 2.0;
+    let edit_res = reopened_session.document_mut().replace_parameter(p);
+    assert!(edit_res.status.is_ok(), "{:?}", edit_res);
+
+    // 7. Re-export MOC3 package from reopened session
+    let export_dir = tmp.0.join("re_exported_package");
+    let exp_res = reopened_session.export_package(&export_dir);
+    assert!(exp_res.status.is_ok(), "{:?}", exp_res);
+
+    let exported_moc3 = export_dir.join("model.moc3");
+    assert!(exported_moc3.exists());
+    let moc3_bytes = fs::read(&exported_moc3).unwrap();
+    let inspection = kasane_moc3::inspect_moc3(&moc3_bytes).expect("Exported MOC3 inspect failed");
+    assert_eq!(inspection.version, kasane_moc3::Moc3Version::Version50);
+
+    let exported_tex = export_dir.join("textures/0.png");
+    assert!(exported_tex.exists());
+    let tex_bytes = fs::read(&exported_tex).unwrap();
+    assert!(!tex_bytes.is_empty());
+}
+
+#[test]
+fn import_rejects_cycles_without_replacing_session() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let source = fs::read(root.join("tests/fixtures/external_v50/model.moc3")).unwrap();
+    let offsets = kasane_moc3::inspect_moc3(&source).unwrap().section_offsets;
+    let tmp = TestDirectory::new();
+    let path = tmp.0.join("bad.moc3");
+    let mut session = DocumentSession::new();
+    let (result, _) =
+        session.import_model3(&root.join("tests/fixtures/external_v50/model.model3.json"));
+    assert!(result.status.is_ok());
+    let baseline = encode_project(session.document()).unwrap();
+    let revision = session.document().revision();
+    for (section, parent) in [(9, 0i32), (16, 0), (16, 1)] {
+        let mut bytes = source.clone();
+        let offset = offsets[section] as usize;
+        bytes[offset..offset + 4].copy_from_slice(&parent.to_le_bytes());
+        fs::write(&path, &bytes).unwrap();
+        let (result, report) = session.import_bare_moc3(&path, &std::collections::HashMap::new());
+        assert_eq!(result.status.code, "RELATIONSHIP_CYCLE");
+        assert!(report.is_none());
+        assert_eq!(encode_project(session.document()).unwrap(), baseline);
+        assert_eq!(session.document().revision(), revision);
+    }
+}
+
+#[test]
+fn import_reports_truncated_pngs_for_both_entry_points() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let fixture = root.join("tests/fixtures/external_v50");
+    let tmp = TestDirectory::new();
+    let png = fs::read(fixture.join("texture_00.png")).unwrap();
+    fs::copy(fixture.join("model.moc3"), tmp.0.join("model.moc3")).unwrap();
+    fs::copy(
+        fixture.join("model.model3.json"),
+        tmp.0.join("model.model3.json"),
+    )
+    .unwrap();
+    for length in [24, png.len() - 12] {
+        let path = tmp.0.join("texture_00.png");
+        fs::write(&path, &png[..length]).unwrap();
+        assert!(decode_png(&png[..length]).is_err());
+        let map = std::collections::HashMap::from([(0, path)]);
+        for result in [
+            kasane_moc3::import_from_bare_moc3(&fs::read(tmp.0.join("model.moc3")).unwrap(), &map)
+                .unwrap(),
+            kasane_moc3::import_from_model3_file(&tmp.0.join("model.model3.json")).unwrap(),
+        ] {
+            assert!(!result.textures_complete);
+            assert!(result
+                .diagnostics
+                .iter()
+                .any(|d| d.code == "CORRUPT_TEXTURE"));
+        }
+        let mut session = DocumentSession::new();
+        let (result, _) = session.import_model3(&tmp.0.join("model.model3.json"));
+        assert!(result.status.is_ok());
+        assert!(!result.resources_complete());
+        let (result, _) = session.import_bare_moc3(&tmp.0.join("model.moc3"), &map);
+        assert!(result.status.is_ok());
+        assert!(!result.resources_complete());
+    }
+}
+
+#[test]
+fn imported_canvas_and_drawing_groups_survive_save_reopen() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let tmp = TestDirectory::new();
+    let path = tmp.0.join("original.moc3");
+    fs::copy(
+        root.join("modules/purism-core/testdata/moc3/3d8e869a678a1dac.moc3"),
+        &path,
+    )
+    .unwrap();
+    let texture = tmp.0.join("original.png");
+    create_test_png(&texture);
+    let mut session = DocumentSession::new();
+    let (result, _) = session.import_bare_moc3(&path, &HashMap::from([(0, texture.clone())]));
+    assert!(result.status.is_ok());
+    assert_eq!(session.document().canvas().flag, 0);
+    assert_eq!(session.document().draw_order_groups().unwrap().len(), 1);
+    assert!(!session.document().part_order().is_empty());
+    let mut before = DrawableFrame::default();
+    assert!(evaluate_frame(session.document(), &HashMap::new(), &mut before).is_ok());
+    let before_bytes = encode_moc3(session.document()).unwrap().bytes;
+    let destination = tmp.0.join("saved");
+    assert!(session.save(&destination).status.is_ok());
+    fs::remove_file(&path).unwrap();
+    fs::remove_file(&texture).unwrap();
+    let mut reopened = DocumentSession::new();
+    assert!(reopened.open(&destination).resources_complete());
+    assert_eq!(
+        reopened.document().draw_order_groups(),
+        session.document().draw_order_groups()
+    );
+    assert_eq!(reopened.document().canvas().flag, 0);
+    assert!(!reopened.document().modified());
+    let mut after = DrawableFrame::default();
+    assert!(evaluate_frame(reopened.document(), &HashMap::new(), &mut after).is_ok());
+    assert_eq!(before.drawables, after.drawables);
+    assert_eq!(
+        before_bytes,
+        encode_moc3(reopened.document()).unwrap().bytes
+    );
+
+    // Drawing-group edits participate in saved-content tracking and validate atomically.
+    let mut groups = reopened.document().draw_order_groups().unwrap().to_vec();
+    groups[0].items.swap(0, 1);
+    assert!(reopened
+        .document_mut()
+        .replace_draw_order_groups(groups.clone())
+        .status
+        .is_ok());
+    assert!(reopened.document().modified());
+    let baseline = encode_project(reopened.document()).unwrap();
+    let duplicate = groups[0].items[0].clone();
+    groups[0].items.push(duplicate);
+    assert!(!reopened
+        .document_mut()
+        .replace_draw_order_groups(groups)
+        .status
+        .is_ok());
+    assert_eq!(baseline, encode_project(reopened.document()).unwrap());
 }

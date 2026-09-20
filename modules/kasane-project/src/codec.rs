@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fmt;
 
+use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform,
     Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind,
@@ -277,12 +278,20 @@ impl From<BindingAxisWire> for BindingAxis {
     }
 }
 
+fn default_canvas_flag() -> u8 {
+    1
+}
+
 #[derive(Serialize, Deserialize)]
 struct DocumentWire {
     id: String,
     canvas: [f32; 2],
     canvas_origin: [f32; 2],
     pixels_per_unit: f32,
+    #[serde(default = "default_canvas_flag")]
+    canvas_flag: u8,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    draw_order_groups: Option<Vec<DrawOrderGroup>>,
     assets: Vec<ImageAsset>,
     meshes: Vec<MeshWire>,
     parts: Vec<Part>,
@@ -443,6 +452,8 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             canvas: [c.width, c.height],
             canvas_origin: [c.origin.x, c.origin.y],
             pixels_per_unit: c.pixels_per_unit,
+            canvas_flag: c.flag,
+            draw_order_groups: document.draw_order_groups().map(|g| g.to_vec()),
             assets: assets_wire,
             meshes: meshes_wire,
             parts: parts_wire,
@@ -535,11 +546,12 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
     }
 
     let mut candidate = Document::new();
-    let canvas = Canvas::new(
+    let canvas = Canvas::with_flag(
         doc.canvas[0],
         doc.canvas[1],
         Vec2::new(doc.canvas_origin[0], doc.canvas_origin[1]),
         doc.pixels_per_unit,
+        doc.canvas_flag,
     );
     let s = candidate.initialize(doc.id, canvas);
     if !s.is_ok() {
@@ -770,6 +782,12 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         }
     }
 
+    if let Some(groups) = doc.draw_order_groups {
+        let result = candidate.replace_draw_order_groups(groups);
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
     candidate.mark_saved();
     Ok(candidate)
 }

@@ -62,21 +62,6 @@ fn write_positions(
     Ok(())
 }
 
-fn descendant_count(doc: &Document, parts: &[String], parent: &str) -> i32 {
-    let mut count = 0;
-    for id in doc.mesh_order() {
-        if doc.get_mesh(id).unwrap().part_id == parent {
-            count += 1;
-        }
-    }
-    for id in parts {
-        if doc.get_part(id).unwrap().parent_id == parent {
-            count += descendant_count(doc, parts, id);
-        }
-    }
-    count
-}
-
 pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
     if doc.transaction_active() {
         return Err(Status::error(
@@ -184,7 +169,6 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
     l.counts[5] = checked(doc.parameter_order().len(), "parameters")? as u32;
     l.counts[0] = checked(parts.len(), "parts")? as u32;
     l.counts[1] = checked(transforms.len(), "deformers")? as u32;
-    l.counts[18] = checked(parts.len() + 1, "groups")? as u32; // Root draw group.
 
     let c = doc.canvas();
     {
@@ -195,7 +179,7 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         canvas.extend_from_slice(&c.width.to_le_bytes());
         canvas.extend_from_slice(&c.height.to_le_bytes());
         canvas.resize(24, 0);
-        canvas[20] = 1; // Positions/winding already use runtime Y direction.
+        canvas[20] = c.flag; // Core applies this direction to stored geometry, UVs and winding.
     }
 
     l.integer("binding_src.key_table_idx_off", 0)?;
@@ -441,66 +425,48 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         l.counts[if warp { 7 } else { 8 }] += stored as u32;
     }
 
-    // One group per Part, in parent-first order, plus root.
-    let mut groups = vec![String::new()];
-    groups.extend_from_slice(&parts);
-
-    for parent in &groups {
+    let groups = kasane_core::draw_order::resolved_groups(doc);
+    let totals = kasane_core::draw_order::descendant_counts(&groups);
+    let group_slots: HashMap<&str, usize> = groups
+        .iter()
+        .enumerate()
+        .map(|(i, g)| (g.owner.as_str(), i))
+        .collect();
+    for group in &groups {
         let first = l.field("draw_group_obj_src.idx")?.len() / 4;
-        let mut lo = 0.0f32;
-        let mut hi = 0.0f32;
-
-        for (i, d) in drawables.iter().enumerate() {
-            let m = doc.get_mesh(&d.id).unwrap();
-            if m.part_id != *parent {
-                continue;
-            }
-            let order = m.draw_order.unwrap_or(i as f32);
-            lo = lo.min(order);
-            hi = hi.max(order);
-            if let Some(b) = doc.binding_for_mesh(&m.id) {
-                for f in &b.keyforms {
-                    let k_order = f.draw_order.unwrap_or(order);
-                    lo = lo.min(k_order);
-                    hi = hi.max(k_order);
-                }
-            }
-            l.integer("draw_group_obj_src.type", 0)?;
-            l.integer("draw_group_obj_src.idx", i as i32)?;
-            l.integer("draw_group_obj_src.self_group_idx", -1)?;
+        for id in &group.items {
+            let is_part = doc.get_part(id).is_some();
+            l.integer("draw_group_obj_src.type", if is_part { 1 } else { 0 })?;
+            l.integer(
+                "draw_group_obj_src.idx",
+                if is_part {
+                    index_of(&parts, id)
+                } else {
+                    index_of(doc.mesh_order(), id)
+                },
+            )?;
+            l.integer(
+                "draw_group_obj_src.self_group_idx",
+                if is_part {
+                    checked(group_slots[id.as_str()], "draw_group")?
+                } else {
+                    -1
+                },
+            )?;
         }
-
-        for (i, pid) in parts.iter().enumerate() {
-            let p = doc.get_part(pid).unwrap();
-            if p.parent_id != *parent {
-                continue;
-            }
-            lo = lo.min(p.draw_order);
-            hi = hi.max(p.draw_order);
-            if let Some(b) = doc.binding_for_scene(pid) {
-                for f in &b.keyforms {
-                    lo = lo.min(f.draw_order);
-                    hi = hi.max(f.draw_order);
-                }
-            }
-            l.integer("draw_group_obj_src.type", 1)?;
-            l.integer("draw_group_obj_src.idx", i as i32)?;
-            l.integer("draw_group_obj_src.self_group_idx", (i + 1) as i32)?;
-        }
-
         l.integer("draw_group_src.obj_off", checked(first, "draw_group")?)?;
-        let obj_len = checked(
-            l.field("draw_group_obj_src.idx")?.len() / 4 - first,
-            "draw_group",
+        l.integer(
+            "draw_group_src.obj_len",
+            checked(group.items.len(), "draw_group")?,
         )?;
-        l.integer("draw_group_src.obj_len", obj_len)?;
         l.integer(
             "draw_group_src.obj_total_count",
-            descendant_count(doc, &parts, parent),
+            checked(totals[group.owner.as_str()], "draw_group")?,
         )?;
-        l.integer("draw_group_src.min_order", lo.floor() as i32)?;
-        l.integer("draw_group_src.max_order", hi.ceil() as i32)?;
+        l.integer("draw_group_src.min_order", group.min_order)?;
+        l.integer("draw_group_src.max_order", group.max_order)?;
     }
+    l.counts[18] = checked(groups.len(), "draw_groups")? as u32;
 
     l.counts[19] = checked(l.field("draw_group_obj_src.idx")?.len() / 4, "draw_items")? as u32;
 
@@ -613,12 +579,28 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
 
         for p in &d.uvs {
             l.scalar("uv_src.xy", p.x)?;
-            l.scalar("uv_src.xy", p.y)?;
+            l.scalar(
+                "uv_src.xy",
+                if doc.canvas().flag & 1 == 0 {
+                    1.0 - p.y
+                } else {
+                    p.y
+                },
+            )?;
         }
 
         let idx_field = l.field("idx_src.idx")?;
-        for &v in &d.indices {
-            idx_field.extend_from_slice(&(v as u16).to_le_bytes());
+        // evaluate_frame exposes revived runtime winding. Undo the canvas
+        // reversal here because Core applies it while reviving the file.
+        for triangle in d.indices.chunks_exact(3) {
+            let stored = if doc.canvas().flag & 1 == 0 {
+                [triangle[2], triangle[1], triangle[0]]
+            } else {
+                [triangle[0], triangle[1], triangle[2]]
+            };
+            for v in stored {
+                idx_field.extend_from_slice(&(v as u16).to_le_bytes());
+            }
         }
     }
 

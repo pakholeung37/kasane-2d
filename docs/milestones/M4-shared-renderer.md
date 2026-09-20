@@ -1,64 +1,65 @@
-# M4：提取公共 Godot renderer
+# M4：Rust 原生公共 Godot renderer
 
-状态：待实施，未验收。提取可先进行；原生接入验收依赖 M1 求值输出。返回 [总路线图](../ROADMAP.md)。
+状态：实施中。随模块向 Rust 全面迁移，主导权收归 `kasane-godot`（纯 Rust GDExtension）；暂不强行将 C++ `gd-cubism` 接入该实现，`gd-cubism` 保留作为 GPU 像素级验收的独立外部基准（Ground Truth Oracle）。返回 [总路线图](../ROADMAP.md)。
 
 ## 1. 交付结果
 
-Document 求值结果和 MOC3 运行结果使用同一份实际 Godot 绘制代码。公共层复用 gd-cubism 的材质、遮罩和资源更新能力，不要求原生模型构造 CubismModel。
+在 `kasane-godot` 中定型纯 Rust 实现的 Godot 2D 渲染核心（基于成熟的 `KasaneDocumentPreview` 与 `KasaneMeshView`）。
 
-## 2. 边界
+1. **直接驱动编辑模型**：直接消费 `kasane-core::evaluate_frame()` 产出的内存数据（`DrawableFrame`），消除向 MOC3 编码的额外开销与延迟，实现高帧率交互预览。
+2. **纯 Rust 统一渲染管线**：在 Rust 侧完整管理材质 Shader、Multiply / Screen 颜色、混合模式、正反向剪贴遮罩、动态顶点缓冲与图层排序。
+3. **预留运行模型接入路径**：保留通过 C99 FFI 直接接入 `purism-core`（`csmUpdateModel`）的驱动接口，为 M6 独立 Viewer 提供不依赖 C++ GDExtension 的纯 Rust 闭环渲染能力。
+4. **解耦 C++ 播放器**：暂不将 `gd-cubism` 作为该渲染器的被动消费者接入，避免跨 GDExtension 封包开销与双语言维护负担；`gd-cubism` 维持独立，作为成熟游戏播放框架与自动化验证裁判存在。
+
+## 2. 架构与边界
 
 ```text
-Document 求值 → 原生适配器 ─┐
-                           ├→ 绘制数据 → 公共 Godot renderer
-CubismModel → 运行时适配器 ─┘
+Document (编辑态) ──> kasane-core::evaluate_frame() ─┐
+                                                     ├─> 统一绘制契约 (DrawableFrame) ─> Rust 公共 Renderer (kasane-godot)
+MOC3 (运行态/Viewer) ──> purism-core (C FFI) ────────┘
+
+[独立外部验证基准 (Oracle)]
+gd-cubism (C++) ──> GPU 自动化像素比对 (validate_gpu.py) ──> 确保零色差、零形状误差
 ```
 
-公共层可以依赖 Godot，不能包含 CubismModel、Document、编辑器选择、历史或脚本宿主。由同一份源码/库提供实现；不要求新增独立 GDExtension 或跨引擎框架。
+公共渲染器由 `kasane-godot` 独占实现与维护。公共层可以依赖 Godot API（`godot-rust`），但不得包含撤销重做（UndoRedo）、编辑器选择、历史记录或脚本宿主。
 
-| 输入契约 | 内容 |
-|---|---|
-| Drawable 身份 | 稳定 ID；内存索引仅作适配内部映射 |
-| 几何 | 最终位置、UV、稠密三角形索引 |
-| 纹理 | 纹理引用、采样和透明度约定；资源寿命明确 |
-| 外观 | 可见性、顺序、透明度、multiply / screen color、三种混合 |
-| 遮罩 | 遮罩源 ID 集合、反向标记；组合规则与原 renderer 一致 |
-| 坐标 | 统一画布单位、原点、Y 方向和 UV 方向，各适配器只转换一次 |
-| 更新 | 添加/删除、拓扑、位置、材质、顺序、遮罩变化分别表达 |
+| 输入契约 | 内容 | 对应数据类型 |
+|---|---|---|
+| **Drawable 身份** | 稳定 ID；内部映射与外部覆盖层查找 | `String` / `id` |
+| **几何** | 最终顶点位置、UV、稠密三角形索引 | `Vec<Vec2>` / `Vec<u32>` |
+| **纹理** | 纹理引用、采样过滤与透明度约定 | `Texture2D` / `ImageAsset` |
+| **外观** | 可见性、全局 Render Order、透明度、Multiply / Screen 颜色、三种混合 | `BlendMode`, `[f32; 4]`, `f32` |
+| **遮罩** | 遮罩源 ID 集合、反向标记（Inverted Mask） | `Vec<String>`, `bool` |
+| **更新类型** | 动态位置刷新（高频）、拓扑/材质变更（低频）、增删节点 | 区分处理，复用 GPU 资源 |
 
-输入数组在提交期间有效，renderer 不保留上游可变裸指针。GPU 资源由 renderer 管理；移除对象与关闭模型释放其资源。
+输入数据在提交当前帧有效，renderer 不保留上游可变裸指针。GPU 资源由 renderer 管理；移除对象与关闭模型时完全释放对应资源。
 
-## 3. 提取顺序
+## 3. 实施与定型顺序
 
-1. 在改动前保存旧路径的数值、GPU 和资源计数基线。
-2. 把 `internal_cubism_renderer_2d.cpp` 中对模型的读取移到适配器；将 resource 中对 `GDCubismUserModel` 的 owner 读取改为显式配置输入。
-3. 迁移 shader 资源路径、材质选择、遮罩图集和批处理。提取代码与资源为公共依赖，保留来源说明。
-4. 先由原运行时适配器驱动公共实现，对照旧路径；再接入 Document 输出。
-5. 将 `kasane-gd` 的生产预览切换到公共 renderer，demo 调用同一正式实现。旧 MeshView 只保留有明确回归用途的部分。
-
-位置更新必须复用 ArrayMesh/RID，不能每次删节点重建。拓扑和遮罩关系变更重建受影响资源；批处理不改变绘制顺序。
-
-原 renderer 的自定义 shader 等未迁移能力必须列出；对应模型保留旧运行路径并明确标识。不能移除现有功能后把普通混合显示称为迁移成功。
+1. **固化动态顶点缓冲复用**：完善 `KasaneMeshView`，在拓扑不变时严格复用 `ArrayMesh` 与 RID，仅更新顶点缓冲（`FLAG_USE_DYNAMIC_UPDATE`），避免每帧分配销毁节点。
+2. **定型材质与着色器规范**：提取标准 Live2D 着色器为公共 shader 资源，确保 `Multiply` / `Screen` 颜色公式、Normal / Additive / Multiplicative 混合模式行为与官方规范严格等价。
+3. **完善剪贴遮罩管线**：维护多图层正向与反向遮罩隔离（SubViewport / Stencil 机制），避免跨帧残影与缩放锯齿。
+4. **独立编辑覆盖层（Overlay Layer）**：高亮框、旋转手柄、网格控制点通过独立的 CanvasItem 覆盖层绘制，按稳定 ID 匹配当前几何，不修改底层模型材质或数据源。
+5. **巩固自动化 GPU 门禁**：复用并维护 `tools/validate_gpu.py` 与 `tests/gpu_regression.gd`，持续以官方 Core + C++ `gd-cubism` 为外部基准做逐像素比对（84 项检查通过）。
 
 ## 4. 观察一致性
 
-renderer 记录最后成功提交的输入版本和错误；截图必须等待该版本对应的颜色与遮罩都就绪。现有遮罩存在跨帧纹理/变换状态，不能仅等待一次 `frame_post_draw` 就假定完整。
+renderer 记录最后成功提交的输入版本和错误；截图与视觉比对必须等待对应帧的颜色与遮罩计算就绪。现有遮罩存在多视口更新依赖，必须等待对应 Viewport 渲染完成后再判定有效性。
 
 定位与高亮使用独立覆盖层，按稳定 ID 找到求值几何，不修改模型材质或源数据。截图默认不含覆盖层。
 
-## 5. 验收
+## 5. 验收标准
 
 遵守 [统一验收规则](../VALIDATION.md)。
 
 | 用例 | 必须验证 |
 |---|---|
-| 旧路径 / 公共路径 | 同一外部模型相同参数下数值与 GPU 图像对照 |
-| 原生 / 运行模型 | M1 Document 与导出 MOC3 在同一 renderer 中画面一致 |
-| 外观组合 | 多纹理、排序、透明度、颜色、三种混合、普通/反向遮罩 |
-| 动态更新 | 连续移动遮罩与相机无陈旧帧被标记为当前截图 |
-| 资源复用 | 固定拓扑连续更新位置，surface/RID 和 texture 不被逐帧重建 |
-| 结构变更 | 新增/删除、换拓扑、换遮罩后无残影、悬空资源；关闭重开可用 |
-| 批处理 | 开关 batching 的画面一致；保留既有排序和遮罩分配回归 |
-| 模块隔离 | 原生绘制依赖图中无 Cubism SDK/模型文件，运行播放不依赖编辑器 |
+| **GPU 视觉回归** | 以 `validate_gpu.py` 为基准，84 项 GPU 检查全部通过（单通道最大误差 $\le 0.001688$，全图均值差异为 0） |
+| **外观组合** | 多纹理、排序、透明度、乘色/滤色、三种混合模式、普通/反向遮罩正常呈现 |
+| **资源复用** | 固定拓扑连续更新位置，surface/RID 和 texture 不被逐帧重建，RSS 内存平稳收敛 |
+| **结构变更** | 新增/删除网格、换拓扑、换遮罩后无残影、悬空节点与资源泄漏；关闭工程干净释放 |
+| **双路径隔离** | 编辑预览不依赖 MOC3 导出与 C++ `gd-cubism`；运行播放不依赖编辑器设施 |
+| **崩溃与边界安全** | 快速切换参数、窗口缩放、视口隐藏与重入借用均安全无 panic |
 
-交付公共实现、两种适配器、shader 资源、更新/寿命契约和迁移前后报告。只给两个旧 renderer 包相同方法名不算共享完成。
+交付物包含：`kasane-godot` 内定型的公共渲染组件、Shader 资源、GPU 自动化比对套件与测试报告。

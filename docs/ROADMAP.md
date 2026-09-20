@@ -99,7 +99,7 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 |---|---|---|
 | [M1 Document 与 MOC3 导出](milestones/M1-document-moc3.md) | **已验收**：代码建模、内存求值、MOC3/资源包导出与双 Core/GPU 对照 | 现有 core / 运行时 |
 | [M2 工程持久化](milestones/M2-project-files.md) | **已验收**：保存、搬移、重开工程后继续修改和导出 | M1 数据契约；可随 M1 实施 |
-| [M3 MOC3 导入与再编辑](milestones/M3-moc3-import.md) | 导入外部模型，编辑源结构，保存重开，再导出 | M1、M2 |
+| [M3 MOC3 导入与再编辑](milestones/M3-moc3-import.md) | **已验收**：导入外部模型，编辑源结构，保存重开，再导出 | M1、M2 |
 | [M4 公共 Godot renderer](milestones/M4-shared-renderer.md) | 编辑数据与运行模型使用同一份实际绘制实现 | 可先提取；验收使用 M1 求值输出 |
 | [M5 Agent-first editor](milestones/M5-agent-editor.md) | 正式 Godot 应用内用 GDScript 完成建模、检查、保存、导入导出 | M1–M4 |
 | [M6 MOC3 viewer](milestones/M6-viewer.md) | 独立 Godot 浏览应用，不加载编辑器数据与编辑设施 | M4、现有运行时；安排在 M5 后 |

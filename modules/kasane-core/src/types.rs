@@ -40,12 +40,30 @@ impl Vec2 {
 
 pub type VertexId = u32;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+fn default_canvas_flag() -> u8 {
+    1
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Canvas {
     pub width: f32,
     pub height: f32,
     pub origin: Vec2,
     pub pixels_per_unit: f32,
+    #[serde(default = "default_canvas_flag")]
+    pub flag: u8,
+}
+
+impl Default for Canvas {
+    fn default() -> Self {
+        Self {
+            width: 0.0,
+            height: 0.0,
+            origin: Vec2::default(),
+            pixels_per_unit: 1.0,
+            flag: 1,
+        }
+    }
 }
 
 impl Canvas {
@@ -55,6 +73,17 @@ impl Canvas {
             height,
             origin,
             pixels_per_unit,
+            flag: 1,
+        }
+    }
+
+    pub fn with_flag(width: f32, height: f32, origin: Vec2, pixels_per_unit: f32, flag: u8) -> Self {
+        Self {
+            width,
+            height,
+            origin,
+            pixels_per_unit,
+            flag,
         }
     }
 }

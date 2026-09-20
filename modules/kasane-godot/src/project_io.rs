@@ -159,4 +159,74 @@ impl KasaneProjectIO {
         let res = doc.bind().session().export_package(&p);
         project_result_dict(&res)
     }
+
+    #[func]
+    pub fn import_model3(
+        &mut self,
+        document: Option<Gd<KasaneDocumentBridge>>,
+        path: GString,
+    ) -> Dictionary {
+        if let Err(s) = Self::ready(document.as_ref()) {
+            return status_to_dict(&s);
+        }
+        let mut doc = document.unwrap();
+        let path_buf = PathBuf::from(path.to_string());
+        let (imported, report) = doc.bind_mut().session_mut().import_model3(&path_buf);
+        let mut out = project_result_dict(&imported);
+        if imported.status.is_ok() {
+            doc.bind_mut().increment_generation();
+            doc.bind_mut().preview_values_mut().clear();
+            let rev = doc.bind().session().document().revision() as i64;
+            out.set("revision", rev);
+            if let Some(rep) = report {
+                out.set("moc_version", rep.moc_version as i64);
+                let mut unimported_arr = Array::<Variant>::new();
+                for s in rep.unimported_attachments {
+                    unimported_arr.push(&GString::from(s.as_str()).to_variant());
+                }
+                out.set("unimported_attachments", &unimported_arr);
+            }
+            doc.bind_mut()
+                .base_mut()
+                .emit_signal("changed", &[out.to_variant()]);
+        }
+        out
+    }
+
+    #[func]
+    pub fn import_moc3(
+        &mut self,
+        document: Option<Gd<KasaneDocumentBridge>>,
+        path: GString,
+        texture_map: Dictionary,
+    ) -> Dictionary {
+        if let Err(s) = Self::ready(document.as_ref()) {
+            return status_to_dict(&s);
+        }
+        let mut doc = document.unwrap();
+        let path_buf = PathBuf::from(path.to_string());
+        let mut tex_map = std::collections::HashMap::new();
+        for (k, v) in texture_map.iter_shared() {
+            if let Ok(slot) = k.try_to::<i64>() {
+                if let Ok(tex_path) = v.try_to::<GString>() {
+                    tex_map.insert(slot as usize, PathBuf::from(tex_path.to_string()));
+                }
+            }
+        }
+        let (imported, report) = doc.bind_mut().session_mut().import_bare_moc3(&path_buf, &tex_map);
+        let mut out = project_result_dict(&imported);
+        if imported.status.is_ok() {
+            doc.bind_mut().increment_generation();
+            doc.bind_mut().preview_values_mut().clear();
+            let rev = doc.bind().session().document().revision() as i64;
+            out.set("revision", rev);
+            if let Some(rep) = report {
+                out.set("moc_version", rep.moc_version as i64);
+            }
+            doc.bind_mut()
+                .base_mut()
+                .emit_signal("changed", &[out.to_variant()]);
+        }
+        out
+    }
 }

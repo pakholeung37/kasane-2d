@@ -45,6 +45,7 @@ fn fixture() -> Document {
                 height: 480.0,
                 origin: Vec2::new(271.0, 193.0),
                 pixels_per_unit: 100.0,
+                flag: 1,
             }
         )
         .is_ok());

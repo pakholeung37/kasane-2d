@@ -1,3 +1,4 @@
+use crate::draw_order::{validate_groups, DrawOrderGroup};
 use std::collections::{HashMap, HashSet};
 
 use crate::geometry::{validate_positions, validate_render_mesh};
@@ -28,7 +29,9 @@ pub fn valid_uuid(id: &str) -> bool {
 }
 
 pub fn validate_appearance(a: &Appearance, id: &str) -> Status {
-    if !a.opacity.is_finite() || a.opacity < 0.0 || a.opacity > 1.0 {
+    // MOC3 keyform opacity can exceed 1 (e.g. authored 1.00005).
+    // Core interpolates it without clamping; retain that value for roundtrips.
+    if !a.opacity.is_finite() || a.opacity < 0.0 {
         return Status::error("INVALID_OPACITY", id);
     }
     for &c in a.multiply.iter().chain(a.screen.iter()) {
@@ -90,6 +93,7 @@ pub struct Document {
 
     scene_bindings: HashMap<String, SceneBinding>,
     scene_binding_order: Vec<String>,
+    draw_order_groups: Option<Vec<DrawOrderGroup>>,
 
     saved_content: Option<Box<DocumentContent>>,
 }
@@ -112,6 +116,7 @@ struct DocumentContent {
     binding_order: Vec<String>,
     scene_bindings: HashMap<String, SceneBinding>,
     scene_binding_order: Vec<String>,
+    draw_order_groups: Option<Vec<DrawOrderGroup>>,
 }
 
 impl Document {
@@ -185,6 +190,7 @@ impl Document {
             binding_order: self.binding_order.clone(),
             scene_bindings: self.scene_bindings.clone(),
             scene_binding_order: self.scene_binding_order.clone(),
+            draw_order_groups: self.draw_order_groups.clone(),
         }
     }
 
@@ -705,6 +711,20 @@ impl Document {
         self.meshes.insert(key.clone(), mesh);
         self.vertex_slots.insert(key.clone(), slots);
         self.mesh_order.push(key.clone());
+        if let Some(groups) = &mut self.draw_order_groups {
+            // New meshes join their Part's drawing group, or the nearest
+            // grouped ancestor. A flat imported drawing remains flat.
+            let mut owner = self.meshes[&key].part_id.clone();
+            while !groups.iter().any(|g| g.owner == owner) {
+                owner = self.parts[&owner].parent_id.clone();
+            }
+            groups
+                .iter_mut()
+                .find(|g| g.owner == owner)
+                .unwrap()
+                .items
+                .push(key.clone());
+        }
         self.changed(ChangeKind::Structure, vec![key], Vec::new())
     }
 
@@ -1153,10 +1173,10 @@ impl Document {
                 );
             }
         }
-        if b.axes.is_empty() || b.axes.len() > 3 {
+        if b.axes.is_empty() || b.axes.len() > 16 {
             return Status::error(
                 "INVALID_BINDING",
-                format!("{}: this increment supports 1..3 axes", b.id),
+                format!("{}: bindings support 1..16 axes", b.id),
             );
         }
         let mut total = 1usize;
@@ -1368,7 +1388,7 @@ impl Document {
                 return Status::error("BINDING_CONFLICT", &b.target_id);
             }
         }
-        if b.axes.is_empty() || b.axes.len() > 3 {
+        if b.axes.is_empty() || b.axes.len() > 16 {
             return Status::error("INVALID_BINDING", &b.id);
         }
         let mut total = 1usize;
@@ -1519,6 +1539,25 @@ impl Document {
     }
 
     // --- References & Erase ---
+    pub fn draw_order_groups(&self) -> Option<&[DrawOrderGroup]> {
+        self.draw_order_groups.as_deref()
+    }
+
+    pub fn replace_draw_order_groups(&mut self, groups: Vec<DrawOrderGroup>) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error(
+                "TRANSACTION_ACTIVE",
+                "Commit or cancel first",
+            ));
+        }
+        let groups = match validate_groups(self, &groups) {
+            Ok(groups) => groups,
+            Err(status) => return self.failed(status),
+        };
+        self.draw_order_groups = Some(groups);
+        self.changed(ChangeKind::Structure, self.mesh_order.clone(), Vec::new())
+    }
+
     pub fn references_to(&self, id: &str) -> Vec<String> {
         let mut refs = Vec::new();
         for m in &self.mesh_order {
@@ -1560,6 +1599,13 @@ impl Document {
                 refs.push(key.clone());
             }
         }
+        if let Some(groups) = &self.draw_order_groups {
+            for group in groups {
+                if group.owner == id {
+                    refs.extend(group.items.iter().cloned());
+                }
+            }
+        }
         refs.sort();
         refs.dedup();
         refs
@@ -1596,6 +1642,12 @@ impl Document {
             || self.get_part(id).is_some()
         {
             meshes = self.mesh_order.clone();
+        }
+        if let Some(groups) = &mut self.draw_order_groups {
+            groups.retain(|group| group.owner != id);
+            for group in groups {
+                group.items.retain(|item| item != id);
+            }
         }
         self.transforms.remove(id);
         self.parts.remove(id);

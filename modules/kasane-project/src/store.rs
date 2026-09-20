@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -6,6 +7,7 @@ use crate::filesystem::{self as io, FileSystem, NativeFileSystem, Publication};
 
 use kasane_core::types::{ImageAsset, Status};
 use kasane_core::Document;
+use kasane_moc3::{import_from_bare_moc3, import_from_model3_json, ImportReport};
 
 use crate::codec::{decode_project, encode_project};
 use crate::package::{publish_with_filesystem, PackageOptions};
@@ -275,6 +277,88 @@ impl DocumentStore {
         let result = publication_result(Publication::finish(files, root));
         Ok((result, snapshot))
     }
+
+    pub fn import_model3(
+        &self,
+        path: &Path,
+    ) -> (ProjectResult, Option<DocumentSnapshot>, Option<ImportReport>) {
+        let content = match fs::read_to_string(path) {
+            Ok(c) => c,
+            Err(e) => {
+                return (
+                    ProjectResult::failed("PROJECT_IO", &format!("{}: {}", path.display(), e)),
+                    None,
+                    None,
+                );
+            }
+        };
+        let base_dir = path.parent().unwrap_or_else(|| Path::new("."));
+        let res = match import_from_model3_json(&content, base_dir) {
+            Ok(r) => r,
+            Err(s) => return (ProjectResult::from_status(s), None, None),
+        };
+
+        let mut project_result = ProjectResult::ok();
+        for d in &res.diagnostics {
+            project_result.diagnostics.push(ResourceDiagnostic {
+                asset_id: d.code.clone(),
+                code: d.code.clone(),
+                message: d.message.clone(),
+            });
+        }
+        for w in &res.report.warnings {
+            project_result.warnings.push(w.clone());
+        }
+
+        let snapshot = DocumentSnapshot {
+            document: res.document,
+            manifest: PathBuf::new(),
+            manifest_sha256: String::new(),
+        };
+
+        (project_result, Some(snapshot), Some(res.report))
+    }
+
+    pub fn import_bare_moc3(
+        &self,
+        moc3_path: &Path,
+        texture_map: &HashMap<usize, PathBuf>,
+    ) -> (ProjectResult, Option<DocumentSnapshot>, Option<ImportReport>) {
+        let bytes = match fs::read(moc3_path) {
+            Ok(b) => b,
+            Err(e) => {
+                return (
+                    ProjectResult::failed("PROJECT_IO", &format!("{}: {}", moc3_path.display(), e)),
+                    None,
+                    None,
+                );
+            }
+        };
+        let res = match import_from_bare_moc3(&bytes, texture_map) {
+            Ok(r) => r,
+            Err(s) => return (ProjectResult::from_status(s), None, None),
+        };
+
+        let mut project_result = ProjectResult::ok();
+        for d in &res.diagnostics {
+            project_result.diagnostics.push(ResourceDiagnostic {
+                asset_id: d.code.clone(),
+                code: d.code.clone(),
+                message: d.message.clone(),
+            });
+        }
+        for w in &res.report.warnings {
+            project_result.warnings.push(w.clone());
+        }
+
+        let snapshot = DocumentSnapshot {
+            document: res.document,
+            manifest: PathBuf::new(),
+            manifest_sha256: String::new(),
+        };
+
+        (project_result, Some(snapshot), Some(res.report))
+    }
 }
 
 pub struct DocumentSession {
@@ -355,6 +439,44 @@ impl DocumentSession {
             self.manifest_sha256 = s.manifest_sha256;
         }
         result
+    }
+
+    pub fn import_model3(&mut self, path: &Path) -> (ProjectResult, Option<ImportReport>) {
+        if self.document.transaction_active() {
+            return (
+                ProjectResult::failed("TRANSACTION_ACTIVE", "Commit or cancel edits first"),
+                None,
+            );
+        }
+        let (result, snapshot, report) = self.store.import_model3(path);
+        if result.status.is_ok() {
+            let s = snapshot.unwrap();
+            self.document = s.document;
+            self.manifest = s.manifest;
+            self.manifest_sha256 = s.manifest_sha256;
+        }
+        (result, report)
+    }
+
+    pub fn import_bare_moc3(
+        &mut self,
+        moc3_path: &Path,
+        texture_map: &HashMap<usize, PathBuf>,
+    ) -> (ProjectResult, Option<ImportReport>) {
+        if self.document.transaction_active() {
+            return (
+                ProjectResult::failed("TRANSACTION_ACTIVE", "Commit or cancel edits first"),
+                None,
+            );
+        }
+        let (result, snapshot, report) = self.store.import_bare_moc3(moc3_path, texture_map);
+        if result.status.is_ok() {
+            let s = snapshot.unwrap();
+            self.document = s.document;
+            self.manifest = s.manifest;
+            self.manifest_sha256 = s.manifest_sha256;
+        }
+        (result, report)
     }
 
     pub fn diagnose(&self) -> Vec<ResourceDiagnostic> {
