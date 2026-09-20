@@ -1,5 +1,7 @@
 # M1 验收与复现
 
+2026-09-20：在提交 `871c5b158a98f8f87c899187935279ec0831656a` 上重新执行独立验收，通过。Core 全新构建的 8 项 CTest（含 Purism unit、验证器负例与 C99 bundle）、59 项 Godot 集成检查、84 项真实 GPU 检查全部通过；gd-cubism 与 gd-kasane 的 SCons 构建成功。双 Core 最大数值误差分别为 0 与 `7.15256e-7`。环境为 macOS arm64 / Apple M4 / Godot 4.7.2 / OpenGL Compatibility。报告位于 `target/kasane/core-regression/report.json`、`target/kasane/godot-boundary/report.json`、`target/kasane/gpu-regression/report.json`。本次沿用下述范围与阈值；首次动态导入退出问题仍不计为通过。
+
 2026-09-19：本机 M1 统一验收通过。代码创建、编辑、内存求值、MOC3 导出及运行包路径已贯通。原始证据保存在 `target/kasane/runs/<run-id>/report.json`；这是当时的验收快照，后续回归以各项独立检查的结果为准。
 
 本次结果：7 项 CTest、59 项 Godot 集成检查、84 项 GPU 检查与 C99 bundle 均通过。两个 Core 各比较 7712 项数值；Purism 最大误差 0，官方 Core 最大误差 `7.15256e-7` 运行单位，最大位置误差 `0.000071526` 原画像素。三个状态的图像及局部裁剪逐像素一致；独立解析像素预期最大通道误差 `0.002048`，低于 `2/255`。
