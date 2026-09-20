@@ -3,6 +3,7 @@
 #include <kasane/model.hpp>
 #include <kasane/legacy_deformer.hpp>
 #include <unordered_map>
+#include <memory>
 
 namespace kasane {
 enum class ChangeKind { none, metadata, positions, structure };
@@ -41,11 +42,12 @@ class Document {
 
     uint64_t revision() const { return revision_; }
 
-    bool modified() const { return current_state_id_ != saved_state_id_; }
+    bool modified() const;
+    bool same_content(const Document &) const;
 
     bool transaction_active() const { return transaction_active_; }
 
-    void mark_saved() { saved_state_id_ = current_state_id_; }
+    void mark_saved();
 
     const std::vector<std::string> &asset_order() const { return asset_order_; }
 
@@ -152,7 +154,7 @@ class Document {
     std::vector<VertexPositionUpdate> staged_updates_;
     uint64_t next_state_id_ = 1;
     uint64_t current_state_id_ = 0;
-    uint64_t saved_state_id_ = 0;
+    std::shared_ptr<const Document> saved_content_;
     bool contains_id(const std::string &id) const;
 
     bool mutation_blocked() const { return transaction_active_; }

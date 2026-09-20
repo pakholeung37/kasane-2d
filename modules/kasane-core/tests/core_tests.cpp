@@ -91,6 +91,20 @@ int main() {
     CHECK(!doc.render_indices("missing", indices).ok() && indices == std::vector<uint32_t>({123}));
     CHECK(doc.get_mesh(MESH)->base_positions[0] == values[0]);
 
+    // Clean state follows content, including edits that return to the saved value.
+    doc.mark_saved();
+    const auto saved_name = doc.get_mesh(MESH)->name;
+    CHECK(doc.rename_mesh(MESH, "temporary").status.ok() && doc.modified());
+    CHECK(doc.rename_mesh(MESH, saved_name).status.ok() && !doc.modified());
+    const auto saved_source = doc;
+    CHECK(doc.rename_mesh(MESH, "second save").status.ok());
+    doc.mark_saved();
+    const auto second_save = doc;
+    doc.restore_from(saved_source);
+    CHECK(doc.modified());
+    doc.restore_from(second_save);
+    CHECK(!doc.modified());
+
     // Multiple commands commit atomically and occupy one history step.
     doc.mark_saved();
     CHECK(!doc.modified());

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 #include "texture_store.hpp"
 #include <godot_cpp/core/class_db.hpp>
-#include <godot_cpp/classes/resource_loader.hpp>
+#include <godot_cpp/classes/image.hpp>
+#include <godot_cpp/classes/image_texture.hpp>
 using namespace godot;
 
 namespace kasane_gd {
@@ -16,25 +17,40 @@ void KasaneTextureStore::_bind_methods() {
 Dictionary KasaneTextureStore::set_texture(const String &id, const Ref<Texture2D> &texture) {
     if (texture.is_null() || texture->get_width() <= 0 || texture->get_height() <= 0)
         return error("INVALID_TEXTURE", "Provide a loaded texture.");
+    content_hashes_.erase(utf8(id));
     textures_[utf8(id)] = texture;
     emit_signal("changed");
     return result({});
 }
 
 Dictionary KasaneTextureStore::load_asset(const Ref<KasaneDocumentBridge> &doc, const String &id) {
+    auto status = resolve_asset(doc, id);
+    emit_signal("changed");
+    return result(status);
+}
+
+kasane::Status KasaneTextureStore::resolve_asset(const Ref<KasaneDocumentBridge> &doc, const String &id) {
     if (doc.is_null())
-        return error("MISSING_DOCUMENT", "Provide a Document.");
-    const auto *asset = doc->source().get_asset(utf8(id));
+        return kasane::Status::error("MISSING_DOCUMENT", "Provide a Document.");
+    auto asset = doc->source().get_asset(utf8(id));
     if (!asset)
-        return error("MISSING_ASSET", "Asset does not exist.");
-    const auto source = string(asset->source);
-    if (!ResourceLoader::get_singleton()->exists(source, "Texture2D"))
-        return error("MISSING_RESOURCE", "Asset texture could not be loaded.");
-    Ref<Texture2D> texture = ResourceLoader::get_singleton()->load(source, "Texture2D");
-    if (texture.is_null() || texture->get_width() != int64_t(asset->width) ||
-        texture->get_height() != int64_t(asset->height))
-        return error("RESOURCE_MISMATCH", "Loaded texture dimensions do not match source metadata.");
-    return set_texture(id, texture);
+        return kasane::Status::error("MISSING_ASSET", utf8(id));
+    kasane::AssetData bytes;
+    if (auto s = doc->document_session().read_asset(utf8(id), bytes); !s.ok()) {
+        textures_.erase(utf8(id));
+        content_hashes_.erase(utf8(id));
+        return s;
+    }
+    if (content_hashes_[utf8(id)] != bytes.sha256) {
+        PackedByteArray pixels;
+        pixels.resize(bytes.rgba.size());
+        std::copy(bytes.rgba.begin(), bytes.rgba.end(), pixels.ptrw());
+        auto image = Image::create_from_data(bytes.width, bytes.height, false, Image::FORMAT_RGBA8, pixels);
+        image->generate_mipmaps();
+        textures_[utf8(id)] = ImageTexture::create_from_image(image);
+        content_hashes_[utf8(id)] = bytes.sha256;
+    }
+    return {};
 }
 
 Ref<Texture2D> KasaneTextureStore::get_texture(const String &id) const {
@@ -44,6 +60,7 @@ Ref<Texture2D> KasaneTextureStore::get_texture(const String &id) const {
 
 void KasaneTextureStore::clear() {
     textures_.clear();
+    content_hashes_.clear();
     emit_signal("changed");
 }
 } // namespace kasane_gd

@@ -10,14 +10,15 @@ func _initialize():
     run.call_deferred()
 
 func run():
+    var files = OS.get_cmdline_user_args()[0]
     ProjectSettings.set_setting("gd_cubism/rendering/batching", false)
     var doc = ClassDB.instantiate("KasaneDocumentBridge")
     var io = ClassDB.instantiate("KasaneProjectIO")
-    require_result(io.open_project(doc, "res://gpu-source.json"), "open fixture")
+    require_result(io.open_project(doc, (files + "/gpu-source.json")), "open fixture")
     var textures = ClassDB.instantiate("KasaneTextureStore")
-    var source = JSON.parse_string(FileAccess.get_file_as_string("res://gpu-source.json")).document
+    var source = JSON.parse_string(FileAccess.get_file_as_string((files + "/gpu-source.json"))).document
     for asset in source.assets:
-        var image = Image.load_from_file("res://package/" + asset.source)
+        var image = Image.load_from_file(files + "/" + asset.source)
         image.generate_mipmaps()
         require_result(textures.set_texture(asset.id, ImageTexture.create_from_image(image)), "texture")
     var viewports = []
@@ -44,8 +45,8 @@ func run():
                   {"value":1.0,"scale":0.9,"offset":[25,20]},
                   {"value":-1.0,"scale":1.05,"offset":[-10,-8]}]
     var roundtrip = ClassDB.instantiate("KasaneDocumentBridge")
-    require_result(io.save_project(doc, "res://roundtrip.json"), "save")
-    require_result(io.open_project(roundtrip, "res://roundtrip.json"), "reopen")
+    require_result(io.save_project(doc, (files + "/roundtrip.json")), "save")
+    require_result(io.open_project(roundtrip, (files + "/roundtrip.json")), "reopen")
     for i in states.size():
         var state = states[i]
         var offset = Vector2(state.offset[0], state.offset[1])

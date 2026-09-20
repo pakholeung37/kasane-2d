@@ -7,6 +7,7 @@ const PARAM = "44444444-4444-4444-8444-444444444444"
 const BINDING = "55555555-5555-4555-8555-555555555555"
 var failures = []
 var checks = 0
+var files = ""
 
 func check(condition, message):
     checks += 1
@@ -24,11 +25,12 @@ func shifted(points, offset):
     return output
 
 func run():
+    files = OS.get_cmdline_user_args()[0]
     var doc = ClassDB.instantiate("KasaneDocumentBridge")
     check(doc is RefCounted and not doc is Node, "Document must exist without a scene node")
     check(not doc.has_method("open_project") and not doc.has_method("rebuild_preview"), "Document must not own I/O or preview")
     check(doc.initialize(DOC, Vector2(100, 100), Vector2(50, 50), 100).ok, "initialize")
-    check(doc.add_image_asset(ASSET, "texture", "res://does-not-exist.png", 8, 8).ok, "Source metadata must not load texture")
+    check(doc.add_image_asset(ASSET, "texture", (files + "/boundary-texture.png"), 8, 8).ok, "Source metadata must not load texture")
     var positions = PackedVector2Array([Vector2(10, 10), Vector2(40, 12), Vector2(30, 40)])
     var mesh = {"id": MESH, "runtime_id": "ArtMesh", "name": "mesh", "texture_asset_id": ASSET,
         "vertex_ids": PackedInt64Array([71, 4, 91]), "base_positions": positions,
@@ -44,8 +46,11 @@ func run():
                      {"keys": [0], "positions": positions}, {"keys": [1], "positions": shifted(positions, 20)}]}
     check(doc.write_binding(binding).ok, "create keyforms")
     var io = ClassDB.instantiate("KasaneProjectIO")
-    var path = "user://boundary-project.json"
-    check(io.save_project(doc, path).ok, "Source persistence does not load texture")
+    var path = (files + "/boundary-project.json")
+    var fixture_image = Image.create(8, 8, false, Image.FORMAT_RGBA8)
+    fixture_image.fill(Color.RED)
+    fixture_image.save_png((files + "/boundary-texture.png"))
+    check(io.save_project(doc, path).ok, "Save directory project with verified PNG")
     check(not doc.get_document_summary().modified, "saved state")
     var revision = doc.get_document_summary().revision
     var frame = doc.set_preview_values({PARAM: 0.5})
@@ -65,7 +70,7 @@ func run():
     for preview in [preview_a, preview_b]:
         preview.set_texture_store(textures)
         preview.set_document(doc)
-        check(not preview.get_last_result().ok, "Missing preview texture is reported independently")
+        check(preview.get_last_result().ok, "Packaged PNG loads directly without import cache")
     check(doc.rename_mesh(MESH, "renamed while texture missing").ok, "Preview failure cannot fail a committed source edit")
     var image = Image.create(8, 8, false, Image.FORMAT_RGBA8)
     image.fill(Color(1, 0, 0, 1))
@@ -80,7 +85,7 @@ func run():
     check(preview_b.get_last_result().ok, "Remaining preview keeps working")
     check(io.save_project(doc, path).ok, "Persist parameter and keyform data")
     var clone = ClassDB.instantiate("KasaneDocumentBridge")
-    check(io.open_project(clone, path).ok, "Open source with unavailable images and no preview")
+    check(io.open_project(clone, path).ok, "Open packaged source without a preview")
     check(clone.get_document_summary().bindings.size() == 1, "Binding survives source round trip")
     check(clone.get_frame().parameters[0].value == 0, "Preview values are not persisted")
     check(is_equal_approx(clone.get_frame().drawables[0].positions[0].x, -0.32), "Edited keyform survives source round trip")
@@ -90,11 +95,11 @@ func run():
     var valid_handle = clone.get_mesh(MESH)
     var invalid = JSON.parse_string(FileAccess.get_file_as_string(path))
     invalid.document.bindings[0].keyforms.pop_back()
-    var file = FileAccess.open("user://invalid.json", FileAccess.WRITE)
+    var file = FileAccess.open((files + "/invalid.json"), FileAccess.WRITE)
     file.store_string(JSON.stringify(invalid))
     file.close()
     revision = clone.get_document_summary().revision
-    check(not io.open_project(clone, "user://invalid.json").ok, "Reject incomplete keyforms on open")
+    check(not io.open_project(clone, (files + "/invalid.json")).ok, "Reject incomplete keyforms on open")
     check(clone.get_document_summary().revision == revision and valid_handle.is_valid(), "Failed open preserves live source and handles")
     var deletion = clone.erase_object(PARAM)
     check(not deletion.ok and BINDING in deletion.referrers, "Reference-aware deletion")
@@ -132,9 +137,9 @@ func run():
     check(mesh_snapshot.properties.part_id == part_id and mesh_snapshot.properties.deformer_id == rotation_id and mesh_snapshot.properties.blend_mode == 2 and is_equal_approx(mesh_snapshot.properties.appearance.opacity, 0.8), "mesh snapshot exposes drawing properties")
     check(clone.replace_mesh(mesh_snapshot).ok and clone.get_mesh_snapshot(MESH).properties == mesh_snapshot.properties, "geometry replacement preserves formal properties")
     check(clone.get_document_summary().transforms.size() == 2 and clone.get_document_summary().scene_bindings.size() == 1, "formal source traversal")
-    check(io.save_project(clone, "user://formal.json").ok, "save formal source")
+    check(io.save_project(clone, (files + "/formal.json")).ok, "save formal source")
     var formal = ClassDB.instantiate("KasaneDocumentBridge")
-    check(io.open_project(formal, "user://formal.json").ok, "reopen formal source")
+    check(io.open_project(formal, (files + "/formal.json")).ok, "reopen formal source")
     for value in [-1, 0, 1]:
         var before = clone.set_preview_values({PARAM:value})
         var after = formal.set_preview_values({PARAM:value})

@@ -1,6 +1,8 @@
 # M2：Document 工程持久化
 
-状态：待实施，未验收。依赖：M1 数据契约；可随 M1 实施。返回 [总路线图](../ROADMAP.md)。
+状态：已实施，2026-09-20 本机功能验收通过。依赖：M1 数据契约；可随 M1 实施。返回 [总路线图](../ROADMAP.md)。
+
+实现与字段说明见 [M2 格式](M2-FORMAT.md)，复现入口、对照证据和限制见 [M2 验收](M2-ACCEPTANCE.md)。
 
 ## 1. 交付结果
 
@@ -35,7 +37,7 @@
 
 ## 4. 实施与模块
 
-- 从 `document_bridge.cpp` 提取编解码、文件发布和资源路径解析；编解码可在无场景树时测试。
+- 持久化实现位于独立的 `kasane-document` 原生模块：DocumentSession、JSON codec、资源校验及可注入 FileSystem；测试无需 Godot。Godot project_io 仅做参数与结果适配。
 - 解码通过 Document 校验建立对象，不能靠直接填充私有字段绕过引用和 Keyform 约束。
 - 外部 PNG 通过图片解码加载，不能要求 Godot 编辑器先生成 `.import` 文件。
 - 数据快照用于撤销时以源数据为准；纹理缓存可共享，文件复制等外部副作用不作为撤销承诺。

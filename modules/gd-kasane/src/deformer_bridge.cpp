@@ -16,7 +16,7 @@ Dictionary KasaneDocumentBridge::create_rotation(const String &id, const String 
     d.name = utf8(name);
     d.center = {float(center.x), float(center.y)};
     d.angle_degrees = float(angle);
-    return apply(document_.create_deformer(std::move(d)));
+    return apply(session_.document().create_deformer(std::move(d)));
 }
 
 Dictionary KasaneDocumentBridge::create_warp(const String &id, const String &name, Vector2 origin,
@@ -32,41 +32,42 @@ Dictionary KasaneDocumentBridge::create_warp(const String &id, const String &nam
     d.size = {float(size.x), float(size.y)};
     d.columns = uint32_t(columns);
     d.rows = uint32_t(rows);
-    return apply(document_.create_deformer(std::move(d)));
+    return apply(session_.document().create_deformer(std::move(d)));
 }
 
 Dictionary KasaneDocumentBridge::set_rotation(const String &id, Vector2 center, double angle) {
     MAIN_THREAD();
-    return apply(document_.set_rotation(utf8(id), {float(center.x), float(center.y)}, float(angle)));
+    return apply(
+        session_.document().set_rotation(utf8(id), {float(center.x), float(center.y)}, float(angle)));
 }
 
 Dictionary KasaneDocumentBridge::set_warp_points(const String &id, const PackedVector2Array &points) {
     MAIN_THREAD();
-    return apply(document_.set_warp_points(utf8(id), vectors(points)));
+    return apply(session_.document().set_warp_points(utf8(id), vectors(points)));
 }
 
 Dictionary KasaneDocumentBridge::set_deform_parent(const String &id, const String &parent) {
     MAIN_THREAD();
-    return apply(document_.set_parent(utf8(id), utf8(parent)));
+    return apply(session_.document().set_parent(utf8(id), utf8(parent)));
 }
 
 Dictionary KasaneDocumentBridge::set_organization_parent(const String &id, const String &parent) {
     MAIN_THREAD();
-    return apply(document_.set_parent(utf8(id), utf8(parent), true));
+    return apply(session_.document().set_parent(utf8(id), utf8(parent), true));
 }
 
 Dictionary KasaneDocumentBridge::get_deformer_snapshot(const String &id) const {
     MAIN_THREAD();
-    const auto *d = document_.get_deformer(utf8(id));
+    const auto *d = session_.document().get_deformer(utf8(id));
     if (!d)
         return error("MISSING_DEFORMER", "Deformer does not exist.");
     auto out = result({});
     out["id"] = id;
     out["name"] = string(d->name);
     out["kind"] = d->kind == kasane::DeformerKind::rotation ? "rotation" : "warp";
-    out["deform_parent"] = string(document_.parent_of(utf8(id)));
-    out["organization_parent"] = string(document_.parent_of(utf8(id), true));
-    out["revision"] = document_.revision();
+    out["deform_parent"] = string(session_.document().parent_of(utf8(id)));
+    out["organization_parent"] = string(session_.document().parent_of(utf8(id), true));
+    out["revision"] = session_.document().revision();
     if (d->kind == kasane::DeformerKind::rotation) {
         out["center"] = Vector2(d->center.x, d->center.y);
         out["angle_degrees"] = d->angle_degrees;
@@ -82,7 +83,7 @@ Dictionary KasaneDocumentBridge::get_deformer_snapshot(const String &id) const {
 
 Ref<KasaneDeformerData> KasaneDocumentBridge::get_deformer(const String &id) const {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id() ||
-        !document_.get_deformer(utf8(id)))
+        !session_.document().get_deformer(utf8(id)))
         return {};
     Ref<KasaneDeformerData> handle;
     handle.instantiate();

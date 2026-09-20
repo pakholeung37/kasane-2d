@@ -4,6 +4,29 @@
 #include <unordered_set>
 
 namespace kasane {
+bool Document::same_content(const Document &other) const {
+    return id_ == other.id_ && canvas_ == other.canvas_ && assets_ == other.assets_ &&
+           meshes_ == other.meshes_ && deformers_ == other.deformers_ && parameters_ == other.parameters_ &&
+           bindings_ == other.bindings_ && transforms_ == other.transforms_ && parts_ == other.parts_ &&
+           scene_bindings_ == other.scene_bindings_ && asset_order_ == other.asset_order_ &&
+           mesh_order_ == other.mesh_order_ && deformer_order_ == other.deformer_order_ &&
+           parameter_order_ == other.parameter_order_ && binding_order_ == other.binding_order_ &&
+           transform_order_ == other.transform_order_ && part_order_ == other.part_order_ &&
+           scene_binding_order_ == other.scene_binding_order_ &&
+           deformation_parents_ == other.deformation_parents_ &&
+           organization_parents_ == other.organization_parents_;
+}
+
+bool Document::modified() const {
+    return saved_content_ ? !same_content(*saved_content_) : initialized();
+}
+
+void Document::mark_saved() {
+    auto snapshot = std::make_shared<Document>(*this);
+    snapshot->saved_content_.reset();
+    saved_content_ = std::move(snapshot);
+}
+
 bool valid_uuid(const std::string &id) {
     if (id.size() != 36)
         return false;
@@ -250,7 +273,9 @@ Status Document::cancel_transaction() {
 void Document::restore_from(const Document &source) {
     const auto next_revision = revision_ + 1;
     const auto next_state = next_state_id_;
+    auto saved = saved_content_;
     *this = source;
+    saved_content_ = std::move(saved);
     revision_ = next_revision;
     next_state_id_ = next_state;
     advance_state();

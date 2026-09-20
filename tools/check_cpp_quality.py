@@ -33,9 +33,9 @@ def executable(name, override):
 
 def owned_sources():
     paths = set()
-    for base in (ROOT / "modules/kasane-core", ROOT / "modules/gd-kasane/src"):
+    for base in (ROOT / "modules/kasane-core", ROOT / "modules/kasane-document", ROOT / "modules/gd-kasane/src"):
         for extension in ("*.cpp", "*.hpp"):
-            paths.update(base.rglob(extension))
+            paths.update(path for path in base.rglob(extension) if "vendor" not in path.parts)
     purism = ROOT / "modules/purism-core"
     tracked = subprocess.check_output(["git", "ls-files", "-z", "*.c", "*.h"], cwd=purism)
     for raw in tracked.split(b"\0"):
@@ -69,7 +69,9 @@ def check_tidy(clang_tidy, build_dir, godot_build_dir):
         raise RuntimeError(f"Missing {godot_database}; run SCons compiledb first")
     groups = [
         (build_dir, sorted((ROOT / "modules/kasane-core/src").glob("*.cpp")) +
-         sorted((ROOT / "modules/kasane-core/tests").glob("*.cpp"))),
+         sorted((ROOT / "modules/kasane-core/tests").glob("*.cpp")) +
+         sorted((ROOT / "modules/kasane-document/src").glob("*.cpp")) +
+         sorted((ROOT / "modules/kasane-document/tests").glob("*.cpp"))),
         (godot_build_dir, sorted((ROOT / "modules/gd-kasane/src").glob("*.cpp"))),
     ]
     extra = []

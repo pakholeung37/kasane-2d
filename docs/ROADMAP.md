@@ -1,6 +1,6 @@
 # Kasane Editor 工程路线图
 
-更新：2026-09-19。本文定义工程目标与交付依赖；各里程碑独立成文。
+更新：2026-09-20。本文定义工程目标与交付依赖；各里程碑独立成文。
 
 ## 1. 工程目标
 
@@ -93,12 +93,12 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 
 ## 6. 里程碑索引与依赖
 
-旧 P1–P4 编排废止。M1 已完成并通过本机统一验收，包含嵌套变形、绘制/遮罩、运行包与 GPU 证据，见 [验收说明](M1-ACCEPTANCE.md)。M2–M6 的完整功能仍为**待实施、未验收**。按本轮先搭建所有应用壳的范围，M5/M6 的独立入口与最小界面骨架已提前建立，功能依赖与验收顺序保持不变。
+旧 P1–P4 编排废止。M1 已完成并通过本机统一验收，包含嵌套变形、绘制/遮罩、运行包与 GPU 证据，见 [验收说明](M1-ACCEPTANCE.md)。M2 已完成目录工程、素材打包、跨进程往返及搬移后双 Core / GPU 验收，见 [M2 验收](milestones/M2-ACCEPTANCE.md)。M3–M6 的完整功能仍为**待实施、未验收**。按本轮先搭建所有应用壳的范围，M5/M6 的独立入口与最小界面骨架已提前建立，功能依赖与验收顺序保持不变。
 
 | 里程碑 | 交付结果 | 依赖 |
 |---|---|---|
 | [M1 Document 与 MOC3 导出](milestones/M1-document-moc3.md) | **已验收**：代码建模、内存求值、MOC3/资源包导出与双 Core/GPU 对照 | 现有 core / 运行时 |
-| [M2 工程持久化](milestones/M2-project-files.md) | 保存、搬移、重开工程后继续修改和导出 | M1 数据契约；可随 M1 实施 |
+| [M2 工程持久化](milestones/M2-project-files.md) | **已验收**：保存、搬移、重开工程后继续修改和导出 | M1 数据契约；可随 M1 实施 |
 | [M3 MOC3 导入与再编辑](milestones/M3-moc3-import.md) | 导入外部模型，编辑源结构，保存重开，再导出 | M1、M2 |
 | [M4 公共 Godot renderer](milestones/M4-shared-renderer.md) | 编辑数据与运行模型使用同一份实际绘制实现 | 可先提取；验收使用 M1 求值输出 |
 | [M5 Agent-first editor](milestones/M5-agent-editor.md) | 正式 Godot 应用内用 GDScript 完成建模、检查、保存、导入导出 | M1–M4 |

@@ -816,14 +816,14 @@ int main(int argc, char **argv) {
         Document bad;
         CHECK(!bad.initialize(id(1), {640, 480, {0, 0}, 0}).ok());
         CHECK(!bad.initialize(id(1), {640, 480, {NAN, 0}, 100}).ok());
-        const auto output = argc > 1 ? std::filesystem::path(argv[1]) : std::filesystem::path{};
+        const auto output = argc > 1 ? std::filesystem::absolute(argv[1]) : std::filesystem::path{};
         if (!output.empty())
             std::filesystem::create_directories(output);
         verify_keyforms(output);
         verify_scene(output);
         verify_package(output);
         if (argc > 1) {
-            auto dir = std::filesystem::path(argv[1]);
+            auto dir = std::filesystem::absolute(argv[1]);
             std::filesystem::create_directories(dir);
             std::ofstream moc(dir / "model.moc3", std::ios::binary);
             moc.write(reinterpret_cast<const char *>(initial.bytes.data()), initial.bytes.size());

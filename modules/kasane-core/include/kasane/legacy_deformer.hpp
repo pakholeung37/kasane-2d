@@ -9,6 +9,7 @@ namespace kasane {
 enum class DeformerKind { rotation, warp };
 
 struct Deformer {
+    bool operator==(const Deformer &) const = default;
     std::string id, name;
     DeformerKind kind = DeformerKind::rotation;
     Vec2 center{};

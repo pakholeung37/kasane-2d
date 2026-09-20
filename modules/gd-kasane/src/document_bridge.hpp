@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include <kasane/evaluation.hpp>
+#include <kasane/project.hpp>
 #include "mesh_data.hpp"
 #include "deformer_data.hpp"
 #include <godot_cpp/classes/ref_counted.hpp>
@@ -20,7 +21,7 @@ class KasaneDocumentState : public godot::RefCounted {
 
 class KasaneDocumentBridge : public godot::RefCounted {
     GDCLASS(KasaneDocumentBridge, godot::RefCounted)
-    kasane::Document document_;
+    kasane::DocumentSession session_;
     uint64_t generation_ = 1;
     friend class KasaneProjectIO;
     kasane::PreviewValues preview_values_;
@@ -52,12 +53,13 @@ class KasaneDocumentBridge : public godot::RefCounted {
     godot::Ref<KasaneDocumentState> capture_state() const;
     godot::Dictionary restore_state(const godot::Ref<KasaneDocumentState> &state);
 
+    const kasane::DocumentSession &document_session() const { return session_; }
+
     uint64_t generation() const { return generation_; }
 
-    const kasane::Document &source() const { return document_; }
+    const kasane::Document &source() const { return session_.document(); }
 
     kasane::Status evaluate(kasane::DrawableFrame &out) const;
-    void replace_source(const kasane::Document &);
     godot::Dictionary get_frame() const;
     godot::Dictionary set_preview_values(const godot::Dictionary &values);
     godot::Dictionary write_part(const godot::Dictionary &, bool replace = false);

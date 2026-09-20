@@ -1,7 +1,7 @@
 # Native validation
 
 Run these commands from the repository root. The root CMake presets include all
-Kasane source, codec, package and Purism unit tests. They do not need the
+Kasane source, codec, package, native project and Purism unit tests. They do not need the
 proprietary Cubism SDK or external model fixtures.
 
 ```sh
@@ -10,8 +10,10 @@ cmake --build --preset core-debug --parallel
 ctest --preset core-debug
 ```
 
+Native project builds require libpng and OpenSSL Crypto (plus pkg-config for SCons).
+
 The `core-asan` preset runs the same tests with ASan and UBSan. The
-`memory-core` preset excludes the PNG-backed package when libpng is unavailable.
+`memory-core` preset excludes the package/project modules and their libpng/OpenSSL dependencies.
 On hosts without Ninja, use `core-make` with the same configure/build/test
 commands.
 CI runs GCC Debug and Clang ASan/UBSan on Linux. Warnings are enabled for owned
@@ -33,9 +35,9 @@ python3 tools/check_cpp_quality.py
 ```
 
 Use `--compile-commands target/cmake/core-make` when using the Makefiles preset.
-The format gate checks 109 owned C/C++ files, excluding generated and vendor
+The format gate checks owned C/C++ files, excluding generated and vendor
 sources. Any formatting edit required by clang-format fails the gate.
-The selected tidy defect checks cover 23 Kasane and Godot translation units.
+The selected tidy defect checks cover Kasane core, project and Godot translation units.
 Its two compilation databases come from CMake and SCons.
 
 `validation_negative_controls` is part of CTest. It requires zero cases,
@@ -70,3 +72,5 @@ memory management edits, also run `core-asan`. Godot adapter edits require the
 headless boundary check, and renderer edits require the GPU regression check
 on the supported machine. Run the full suite periodically even when a change
 appears isolated.
+
+Native persistence acceptance (no Godot process): `python3 tools/validate_native_project.py`. Build probes with `validate_core.py` first; the acceptance runner also requires the local official Core SDK. `validate_project.py` combines this native acceptance with thin Godot binding and real GPU checks. Native CTest itself does not require the official SDK.

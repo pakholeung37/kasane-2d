@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 #include "document_preview.hpp"
+#include "project_results.hpp"
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/shader.hpp>
 #include <godot_cpp/classes/shader_material.hpp>
@@ -70,6 +71,15 @@ Dictionary KasaneDocumentPreview::refresh() {
         clear_views();
         return finish(error("MISSING_DOCUMENT", "Attach a Document."));
     }
+    if (!document_->document_session().root().empty()) {
+        auto diagnostics = diagnostic_array(document_->document_session().diagnose());
+        if (!diagnostics.is_empty()) {
+            clear_views();
+            auto out = error("INCOMPLETE_RESOURCES", "Project resources failed verification.");
+            out["diagnostics"] = diagnostics;
+            return finish(out);
+        }
+    }
     kasane::DrawableFrame frame;
     if (auto s = document_->evaluate(frame); !s.ok())
         return finish(result(s));
@@ -83,9 +93,14 @@ Dictionary KasaneDocumentPreview::refresh() {
     auto fail = [&](Dictionary error) {
         for (const auto &[id, view] : pending)
             memdelete(view);
+        clear_views();
         return finish(error);
     };
     for (const auto &d : frame.drawables) {
+        if (!document_->document_session().root().empty()) {
+            if (auto s = textures_->resolve_asset(document_, string(d.texture_asset_id)); !s.ok())
+                return fail(result(s));
+        }
         auto texture = textures_->get_texture(string(d.texture_asset_id));
         const auto *asset = document_->source().get_asset(d.texture_asset_id);
         if (texture.is_null())

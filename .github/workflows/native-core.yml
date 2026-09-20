@@ -11,7 +11,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libpng-dev python3-venv
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libpng-dev libssl-dev pkg-config python3-venv
       - name: Install pinned format and tidy tools
         run: |
           python3 -m venv target/quality-venv
@@ -52,7 +52,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libpng-dev
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libpng-dev libssl-dev
       - name: Configure
         run: cmake --preset ${{ matrix.preset }}
       - name: Build
@@ -67,7 +67,7 @@ jobs:
         with:
           submodules: recursive
       - name: Install libFuzzer toolchain
-        run: sudo apt-get update && sudo apt-get install -y clang-18 libclang-rt-18-dev cmake ninja-build libpng-dev
+        run: sudo apt-get update && sudo apt-get install -y clang-18 libclang-rt-18-dev cmake ninja-build libpng-dev libssl-dev
       - name: Generate a valid MOC3 seed
         run: |
           cmake --preset core-debug

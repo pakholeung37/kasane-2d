@@ -6,6 +6,7 @@ target
 # to be redistributed with this repository.
 third_party/CubismNativeFramework/
 third_party/CubismSdkForNative*/
+third_party
 demos/godot/assets/live2d/
 demos/godot/artifacts/
 benchmarks/cubism-matrix/addons/

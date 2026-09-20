@@ -9,6 +9,7 @@ namespace kasane {
 // top-left. Runtime coordinates: (x-origin.x)/ppu, (origin.y-y)/ppu.
 // Source UVs: (0,0) top-left; runtime UVs: (u, 1-v).
 struct Canvas {
+    bool operator==(const Canvas &) const = default;
     float width = 0;
     float height = 0;
     Vec2 origin{};
@@ -16,20 +17,24 @@ struct Canvas {
 };
 
 struct ImageAsset {
+    bool operator==(const ImageAsset &) const = default;
     std::string id;
     std::string name;
     std::string source;
     uint32_t width = 0;
     uint32_t height = 0;
+    std::string sha256; // Empty for unimported metadata; packaged assets carry a content hash.
 };
 enum class BlendMode { normal, additive, multiplicative };
 
 struct Appearance {
+    bool operator==(const Appearance &) const = default;
     float opacity = 1;
     std::array<float, 3> multiply{1, 1, 1}, screen{0, 0, 0};
 };
 
 struct RotationPose {
+    bool operator==(const RotationPose &) const = default;
     Vec2 origin{};
     float angle = 0, scale = 1;
     bool reflect_x = false, reflect_y = false;
@@ -39,6 +44,7 @@ struct RotationPose {
 enum class TransformKind { warp, rotation };
 
 struct Transform {
+    bool operator==(const Transform &) const = default;
     std::string id, runtime_id, name, part_id, parent_id;
     TransformKind kind = TransformKind::rotation;
     float base_angle = 0;
@@ -50,12 +56,14 @@ struct Transform {
 };
 
 struct Part {
+    bool operator==(const Part &) const = default;
     std::string id, runtime_id, name, parent_id;
     bool enabled = true;
     float draw_order = 0;
 };
 
 struct SceneKeyform {
+    bool operator==(const SceneKeyform &) const = default;
     std::vector<float> keys;
     std::vector<Vec2> positions;
     RotationPose rotation;
@@ -64,6 +72,7 @@ struct SceneKeyform {
 };
 
 struct Mesh {
+    bool operator==(const Mesh &) const = default;
     std::string id;
     std::string name;
     std::string texture_asset_id;
@@ -83,17 +92,20 @@ struct Mesh {
 };
 
 struct Parameter {
+    bool operator==(const Parameter &) const = default;
     std::string id, runtime_id, name;
     float minimum = -1, maximum = 1, default_value = 0;
     int32_t decimal_places = 6;
 };
 
 struct BindingAxis {
+    bool operator==(const BindingAxis &) const = default;
     std::string parameter_id;
     std::vector<float> keys;
 };
 
 struct MeshKeyform {
+    bool operator==(const MeshKeyform &) const = default;
     // Explicit key value per axis, in binding axis order.
     std::vector<float> keys;
     std::vector<Vec2> positions;
@@ -102,6 +114,7 @@ struct MeshKeyform {
 };
 
 struct MeshBinding {
+    bool operator==(const MeshBinding &) const = default;
     std::string id, mesh_id;
     std::vector<BindingAxis> axes;
     // Stored in canonical Cartesian order: axis 0 varies fastest.
@@ -109,12 +122,14 @@ struct MeshBinding {
 };
 
 struct SceneBinding {
+    bool operator==(const SceneBinding &) const = default;
     std::string id, target_id;
     std::vector<BindingAxis> axes;
     std::vector<SceneKeyform> keyforms;
 };
 
 struct VertexMapping {
+    bool operator==(const VertexMapping &) const = default;
     VertexId new_id;
     std::optional<VertexId> old_id;
 };

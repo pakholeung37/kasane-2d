@@ -72,10 +72,10 @@ Dictionary KasaneDocumentBridge::initialize(const String &id, Vector2 size, Vect
                                             double pixels_per_unit) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    return result(document_.initialize(utf8(id), {static_cast<float>(size.x),
-                                                  static_cast<float>(size.y),
-                                                  {float(origin.x), float(origin.y)},
-                                                  float(pixels_per_unit)}));
+    return result(session_.document().initialize(utf8(id), {static_cast<float>(size.x),
+                                                            static_cast<float>(size.y),
+                                                            {float(origin.x), float(origin.y)},
+                                                            float(pixels_per_unit)}));
 }
 
 Dictionary KasaneDocumentBridge::add_image_asset(const String &id, const String &name, const String &source,
@@ -84,8 +84,8 @@ Dictionary KasaneDocumentBridge::add_image_asset(const String &id, const String 
         return error("WRONG_THREAD", "Document requires the main thread.");
     if (width <= 0 || height <= 0 || uint64_t(width) > UINT32_MAX || uint64_t(height) > UINT32_MAX)
         return error("INVALID_ASSET", "Dimensions must be positive uint32 values.");
-    return apply(
-        document_.add_asset({utf8(id), utf8(name), utf8(source), uint32_t(width), uint32_t(height)}));
+    return apply(session_.document().add_asset(
+        {utf8(id), utf8(name), utf8(source), uint32_t(width), uint32_t(height), {}}));
 }
 
 Dictionary KasaneDocumentBridge::create_mesh(const Dictionary &d) {
@@ -120,7 +120,7 @@ Dictionary KasaneDocumentBridge::write_mesh(const Dictionary &d, bool replace) {
             return error("INVALID_FIELD", "runtime_id must be a string.");
         mesh.runtime_id = utf8(d["runtime_id"]);
     } else if (replace) {
-        if (const auto *old = document_.get_mesh(mesh.id))
+        if (const auto *old = session_.document().get_mesh(mesh.id))
             mesh.runtime_id = old->runtime_id;
     }
     if (d.has("properties")) {
@@ -129,7 +129,7 @@ Dictionary KasaneDocumentBridge::write_mesh(const Dictionary &d, bool replace) {
         if (auto s = mesh_properties_from_dictionary(d["properties"], mesh); !s.ok())
             return result(s);
     } else if (replace) {
-        if (auto old = document_.get_mesh(mesh.id))
+        if (auto old = session_.document().get_mesh(mesh.id))
             if (auto s = mesh_properties_from_dictionary(mesh_properties_dictionary(*old), mesh); !s.ok())
                 return result(s);
     }
@@ -144,7 +144,8 @@ Dictionary KasaneDocumentBridge::write_mesh(const Dictionary &d, bool replace) {
         return error("INVALID_LENGTH", "Triangle vertex IDs must be a multiple of three.");
     for (size_t i = 0; i < triangles.size(); i += 3)
         mesh.triangles.push_back({triangles[i], triangles[i + 1], triangles[i + 2]});
-    return apply(replace ? document_.replace_mesh(std::move(mesh)) : document_.create_mesh(std::move(mesh)));
+    return apply(replace ? session_.document().replace_mesh(std::move(mesh))
+                         : session_.document().create_mesh(std::move(mesh)));
 }
 
 Dictionary KasaneDocumentBridge::set_vertex_positions(const String &mesh_id,
@@ -155,19 +156,19 @@ Dictionary KasaneDocumentBridge::set_vertex_positions(const String &mesh_id,
     std::vector<uint32_t> vertices;
     if (auto s = ids(vertex_ids, vertices); !s.ok())
         return result(s);
-    return apply(document_.set_vertex_positions(utf8(mesh_id), vertices, vectors(positions)));
+    return apply(session_.document().set_vertex_positions(utf8(mesh_id), vertices, vectors(positions)));
 }
 
 Dictionary KasaneDocumentBridge::rename_mesh(const String &id, const String &name) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    return apply(document_.rename_mesh(utf8(id), utf8(name)));
+    return apply(session_.document().rename_mesh(utf8(id), utf8(name)));
 }
 
 Dictionary KasaneDocumentBridge::begin_transaction() {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    return result(document_.begin_transaction());
+    return result(session_.document().begin_transaction());
 }
 
 Dictionary KasaneDocumentBridge::stage_vertex_positions(const String &mesh_id,
@@ -178,19 +179,20 @@ Dictionary KasaneDocumentBridge::stage_vertex_positions(const String &mesh_id,
     std::vector<uint32_t> vertices;
     if (auto status = ids(vertex_ids, vertices); !status.ok())
         return result(status);
-    return result(document_.stage_vertex_positions({utf8(mesh_id), std::move(vertices), vectors(positions)}));
+    return result(
+        session_.document().stage_vertex_positions({utf8(mesh_id), std::move(vertices), vectors(positions)}));
 }
 
 Dictionary KasaneDocumentBridge::commit_transaction() {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    return apply(document_.commit_transaction());
+    return apply(session_.document().commit_transaction());
 }
 
 Dictionary KasaneDocumentBridge::cancel_transaction() {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    return result(document_.cancel_transaction());
+    return result(session_.document().cancel_transaction());
 }
 
 Dictionary KasaneDocumentBridge::commit_vertex_updates(const Array &updates, int64_t expected_revision) {
@@ -215,30 +217,31 @@ Dictionary KasaneDocumentBridge::commit_vertex_updates(const Array &updates, int
         update.positions = vectors(PackedVector2Array(item["positions"]));
         batch.push_back(std::move(update));
     }
-    return apply(
-        document_.apply_vertex_position_updates_at_revision(batch, static_cast<uint64_t>(expected_revision)));
+    return apply(session_.document().apply_vertex_position_updates_at_revision(
+        batch, static_cast<uint64_t>(expected_revision)));
 }
 
 Dictionary KasaneDocumentBridge::get_asset_snapshot(const String &id) const {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    const auto *asset = document_.get_asset(utf8(id));
+    const auto *asset = session_.document().get_asset(utf8(id));
     if (!asset)
         return error("MISSING_ASSET", "Asset does not exist.");
     auto out = result({});
     out["id"] = string(asset->id);
     out["name"] = string(asset->name);
     out["source"] = string(asset->source);
+    out["sha256"] = string(asset->sha256);
     out["width"] = static_cast<int64_t>(asset->width);
     out["height"] = static_cast<int64_t>(asset->height);
-    out["revision"] = document_.revision();
+    out["revision"] = session_.document().revision();
     return out;
 }
 
 Ref<KasaneMeshData> KasaneDocumentBridge::get_mesh(const String &id) const {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())
         return {};
-    if (!document_.get_mesh(utf8(id)))
+    if (!session_.document().get_mesh(utf8(id)))
         return {};
     Ref<KasaneMeshData> handle;
     handle.instantiate();
@@ -249,11 +252,11 @@ Ref<KasaneMeshData> KasaneDocumentBridge::get_mesh(const String &id) const {
 Ref<KasaneDocumentState> KasaneDocumentBridge::capture_state() const {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())
         return {};
-    if (document_.transaction_active())
+    if (session_.document().transaction_active())
         return {};
     Ref<KasaneDocumentState> state;
     state.instantiate();
-    state->document = document_;
+    state->document = session_.document();
     state->owner = get_instance_id();
     state->generation = generation_;
     return state;
@@ -264,12 +267,12 @@ Dictionary KasaneDocumentBridge::restore_state(const Ref<KasaneDocumentState> &s
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
     if (state.is_null() || state->owner != get_instance_id() || state->generation != generation_)
         return error("STALE_STATE", "State belongs to another document session.");
-    if (document_.transaction_active())
+    if (session_.document().transaction_active())
         return error("TRANSACTION_ACTIVE", "Commit or cancel the transaction first.");
-    document_.restore_from(state->document);
+    session_.document().restore_from(state->document);
     preview_values_.clear();
     auto out = result({});
-    out["revision"] = document_.revision();
+    out["revision"] = session_.document().revision();
     emit_signal("changed", out);
     return out;
 }
@@ -296,7 +299,7 @@ Dictionary KasaneDocumentBridge::apply(const kasane::EditResult &edit) {
     if (!edit.status.ok())
         return out;
     for (auto it = preview_values_.begin(); it != preview_values_.end();) {
-        if (!document_.get_parameter(it->first))
+        if (!session_.document().get_parameter(it->first))
             it = preview_values_.erase(it);
         else
             ++it;
@@ -309,7 +312,7 @@ Dictionary KasaneDocumentBridge::apply(const kasane::EditResult &edit) {
 Dictionary KasaneDocumentBridge::get_mesh_snapshot(const String &id) const {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
-    const auto *mesh = document_.get_mesh(utf8(id));
+    const auto *mesh = session_.document().get_mesh(utf8(id));
     if (!mesh)
         return error("MISSING_MESH", "Mesh does not exist.");
     auto out = result({});
@@ -318,8 +321,8 @@ Dictionary KasaneDocumentBridge::get_mesh_snapshot(const String &id) const {
     out["texture_asset_id"] = string(mesh->texture_asset_id);
     out["runtime_id"] = string(mesh->runtime_id);
     out["properties"] = mesh_properties_dictionary(*mesh);
-    out["deform_parent"] = string(document_.parent_of(utf8(id)));
-    out["organization_parent"] = string(document_.parent_of(utf8(id), true));
+    out["deform_parent"] = string(session_.document().parent_of(utf8(id)));
+    out["organization_parent"] = string(session_.document().parent_of(utf8(id), true));
     out["vertex_ids"] = ids(mesh->vertex_ids);
     out["base_positions"] = vectors(mesh->base_positions);
     out["uvs"] = vectors(mesh->uvs);
@@ -327,7 +330,7 @@ Dictionary KasaneDocumentBridge::get_mesh_snapshot(const String &id) const {
     for (const auto &triangle : mesh->triangles)
         triangles.insert(triangles.end(), triangle.begin(), triangle.end());
     out["triangles"] = ids(triangles);
-    out["revision"] = document_.revision();
+    out["revision"] = session_.document().revision();
     return out;
 }
 
@@ -336,17 +339,17 @@ Dictionary KasaneDocumentBridge::get_document_summary() const {
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
     Dictionary out;
     out["schema_version"] = kasane::Document::schema_version;
-    out["initialized"] = document_.initialized();
-    out["id"] = string(document_.id());
-    out["canvas_size"] = Vector2(document_.canvas().width, document_.canvas().height);
-    out["revision"] = document_.revision();
-    out["asset_count"] = static_cast<int64_t>(document_.asset_count());
-    out["modified"] = document_.modified();
-    out["transaction_active"] = document_.transaction_active();
+    out["initialized"] = session_.document().initialized();
+    out["id"] = string(session_.document().id());
+    out["canvas_size"] = Vector2(session_.document().canvas().width, session_.document().canvas().height);
+    out["revision"] = session_.document().revision();
+    out["asset_count"] = static_cast<int64_t>(session_.document().asset_count());
+    out["modified"] = session_.document().modified();
+    out["transaction_active"] = session_.document().transaction_active();
     out["generation"] = generation_;
     Array meshes;
-    for (const auto &id : document_.mesh_order()) {
-        const auto *mesh = document_.get_mesh(id);
+    for (const auto &id : session_.document().mesh_order()) {
+        const auto *mesh = session_.document().get_mesh(id);
         Dictionary item;
         item["id"] = string(id);
         item["name"] = string(mesh->name);
@@ -356,28 +359,29 @@ Dictionary KasaneDocumentBridge::get_document_summary() const {
     }
     out["meshes"] = meshes;
     Array deformers;
-    for (const auto &id : document_.deformer_order())
+    for (const auto &id : session_.document().deformer_order())
         deformers.push_back(get_deformer_snapshot(string(id)));
     out["deformers"] = deformers;
     Array parameters, bindings;
-    for (const auto &id : document_.parameter_order())
-        parameters.push_back(parameter_dictionary(*document_.get_parameter(id)));
-    for (const auto &id : document_.binding_order())
-        bindings.push_back(binding_dictionary(*document_.get_binding(id)));
+    for (const auto &id : session_.document().parameter_order())
+        parameters.push_back(parameter_dictionary(*session_.document().get_parameter(id)));
+    for (const auto &id : session_.document().binding_order())
+        bindings.push_back(binding_dictionary(*session_.document().get_binding(id)));
     Array parts, transforms, scene_bindings;
-    for (auto &id : document_.part_order())
-        parts.push_back(part_dictionary(*document_.get_part(id)));
-    for (auto &id : document_.transform_order())
-        transforms.push_back(transform_dictionary(*document_.get_transform(id)));
-    for (auto &id : document_.scene_binding_order())
-        scene_bindings.push_back(scene_binding_dictionary(*document_.get_scene_binding(id)));
+    for (auto &id : session_.document().part_order())
+        parts.push_back(part_dictionary(*session_.document().get_part(id)));
+    for (auto &id : session_.document().transform_order())
+        transforms.push_back(transform_dictionary(*session_.document().get_transform(id)));
+    for (auto &id : session_.document().scene_binding_order())
+        scene_bindings.push_back(scene_binding_dictionary(*session_.document().get_scene_binding(id)));
     out["parts"] = parts;
     out["transforms"] = transforms;
     out["scene_bindings"] = scene_bindings;
     out["parameters"] = parameters;
     out["bindings"] = bindings;
-    out["canvas_origin"] = Vector2(document_.canvas().origin.x, document_.canvas().origin.y);
-    out["pixels_per_unit"] = document_.canvas().pixels_per_unit;
+    out["canvas_origin"] =
+        Vector2(session_.document().canvas().origin.x, session_.document().canvas().origin.y);
+    out["pixels_per_unit"] = session_.document().canvas().pixels_per_unit;
     return out;
 }
 } // namespace kasane_gd

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """GPU comparison of live Document preview with the existing gd-cubism player."""
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import shutil
@@ -27,7 +28,17 @@ def main():
     try:
         run([args.core_build.resolve()/'kasane_moc3_official_tests', project/'fixtures'], project/'fixtures.log')
         shutil.copytree(project/'fixtures/publication/gpu-package', project/'package', dirs_exist_ok=True)
-        shutil.copyfile(project/'fixtures/publication/gpu-source.json', project/'gpu-source.json')
+        fixture = json.loads((project/'fixtures/publication/gpu-source.json').read_text())
+        fixture.update(format='kasane-directory-project', format_version=1)
+        (project/'assets').mkdir(exist_ok=True)
+        for asset in fixture['document']['assets']:
+            source = project / 'package' / asset['source'].removeprefix('res://')
+            data = source.read_bytes()
+            asset['sha256'] = hashlib.sha256(data).hexdigest()
+            asset['source'] = 'assets/' + asset['sha256'] + '.png'
+            (project/asset['source']).write_bytes(data)
+        (project/'gpu-source.json').write_text(json.dumps(fixture))
+        (project/'roundtrip.json').unlink(missing_ok=True)
         shutil.copyfile(ROOT/'modules/gd-kasane/tests/gpu_regression.gd', project/'test.gd')
         addon = project/'addons/gd_cubism'
         shutil.copytree(ROOT/'modules/gd-cubism/addons/gd_cubism/res', addon/'res', dirs_exist_ok=True)
@@ -41,7 +52,7 @@ def main():
         (project/'.godot').mkdir(exist_ok=True)
         (project/'.godot/extension_list.cfg').write_text('res://kasane.gdextension\nres://addons/gd_cubism/gd_cubism.gdextension\n')
         run([args.godot, '--headless', '--path', project, '--editor', '--import'], project/'import.log')
-        run([args.godot, '--path', project, '--rendering-method', 'gl_compatibility', '--resolution', '640x480', '--script', 'res://test.gd'], project/'run.log')
+        run([args.godot, '--path', project, '--rendering-method', 'gl_compatibility', '--resolution', '640x480', '--script', 'res://test.gd', '--', project], project/'run.log')
         from compare_gpu_images import compare
         report = compare(project)
         print(f'{len(report["checks"])} GPU checks passed: {project / "report.json"}')

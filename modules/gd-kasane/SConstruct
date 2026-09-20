@@ -15,7 +15,17 @@ else:
     owned.Append(CXXFLAGS=['-std=c++20', '-Wall', '-Wextra', '-Wpedantic', '-Werror'])
     owned.Append(CXXFLAGS=['-isystem' + str(path) for path in vendor_headers])
 owned.Append(CPPPATH=['src', '../kasane-core/include'])
+if not owned.get('is_msvc', False):
+    owned.Append(CXXFLAGS=['-fexceptions'])
+else:
+    owned.Append(CXXFLAGS=['/EHsc'])
+owned.ParseConfig('pkg-config --cflags --libs libpng openssl')
+owned.Append(CPPPATH=['../kasane-document/include'])
+owned.Append(CXXFLAGS=['-isystem' + str(Path('../kasane-document/vendor').resolve())] if not owned.get('is_msvc', False) else ['/external:I' + str(Path('../kasane-document/vendor').resolve())])
 sources = Glob('src/*.cpp')
+sources += owned.SharedObject('build/moc3', '../kasane-core/src/moc3.cpp')
+for source in Path('../kasane-document/src').glob('*.cpp'):
+    sources += owned.SharedObject('build/project_' + source.stem, str(source))
 # Keep core object files in this module: avoid mixing flags with other builds.
 for filename in Path('../kasane-core/core_sources.txt').read_text().splitlines():
     name = Path(filename).stem

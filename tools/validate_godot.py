@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -34,7 +35,8 @@ def main():
     # pre-refactor HEAD extension; see docs/editor/M1-CORE-REFACTOR.md.
     (project/'.godot').mkdir(exist_ok=True)
     (project/'.godot/extension_list.cfg').write_text('res://kasane.gdextension\n')
-    for label, command in [('test', ['--headless', '--script', 'res://test.gd'])]:
+    data = tempfile.mkdtemp(prefix='files-', dir=project)
+    for label, command in [('test', ['--headless', '--script', 'res://test.gd', '--', data])]:
         result = subprocess.run([str(args.godot), '--path', str(project), *command], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=60)
         (project/f'{label}.log').write_text(result.stdout)
         if result.returncode or 'SCRIPT ERROR:' in result.stdout or 'ERROR:' in result.stdout:

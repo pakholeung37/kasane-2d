@@ -10,16 +10,7 @@ namespace kasane_gd {
     return error("WRONG_THREAD", "Document requires the main thread.")
 
 kasane::Status KasaneDocumentBridge::evaluate(kasane::DrawableFrame &out) const {
-    return kasane::evaluate_frame(document_, preview_values_, out);
-}
-
-void KasaneDocumentBridge::replace_source(const kasane::Document &source) {
-    document_.restore_from(source);
-    ++generation_;
-    preview_values_.clear();
-    auto change = result({});
-    change["revision"] = document_.revision();
-    emit_signal("changed", change);
+    return kasane::evaluate_frame(session_.document(), preview_values_, out);
 }
 
 Dictionary KasaneDocumentBridge::get_frame() const {
@@ -83,7 +74,7 @@ Dictionary KasaneDocumentBridge::set_preview_values(const Dictionary &values) {
         next[utf8(keys[i])] = float(value);
     }
     kasane::DrawableFrame frame;
-    auto status = kasane::evaluate_frame(document_, next, frame);
+    auto status = kasane::evaluate_frame(session_.document(), next, frame);
     if (!status.ok())
         return result(status);
     preview_values_ = std::move(next);
@@ -96,7 +87,7 @@ Dictionary KasaneDocumentBridge::create_parameter(const Dictionary &d) {
     kasane::Parameter p;
     if (auto s = parameter_from_dictionary(d, p); !s.ok())
         return result(s);
-    return apply(document_.create_parameter(std::move(p)));
+    return apply(session_.document().create_parameter(std::move(p)));
 }
 
 Dictionary KasaneDocumentBridge::write_binding(const Dictionary &d, bool replace) {
@@ -104,7 +95,8 @@ Dictionary KasaneDocumentBridge::write_binding(const Dictionary &d, bool replace
     kasane::MeshBinding b;
     if (auto s = binding_from_dictionary(d, b); !s.ok())
         return result(s);
-    return apply(replace ? document_.replace_binding(std::move(b)) : document_.create_binding(std::move(b)));
+    return apply(replace ? session_.document().replace_binding(std::move(b))
+                         : session_.document().create_binding(std::move(b)));
 }
 
 Dictionary KasaneDocumentBridge::set_mesh_keyform(const String &id, const PackedFloat32Array &keys,
@@ -114,19 +106,19 @@ Dictionary KasaneDocumentBridge::set_mesh_keyform(const String &id, const Packed
     form.positions = vectors(positions);
     for (int64_t i = 0; i < keys.size(); ++i)
         form.keys.push_back(keys[i]);
-    if (auto b = document_.get_binding(utf8(id)))
+    if (auto b = session_.document().get_binding(utf8(id)))
         for (const auto &old : b->keyforms)
             if (old.keys == form.keys) {
                 form.appearance = old.appearance;
                 form.draw_order = old.draw_order;
                 break;
             }
-    return apply(document_.set_mesh_keyform(utf8(id), std::move(form)));
+    return apply(session_.document().set_mesh_keyform(utf8(id), std::move(form)));
 }
 
 Dictionary KasaneDocumentBridge::erase_object(const String &id) {
     MAIN_THREAD();
-    return apply(document_.erase_object(utf8(id)));
+    return apply(session_.document().erase_object(utf8(id)));
 }
 
 Dictionary KasaneDocumentBridge::write_part(const Dictionary &d, bool replace) {
@@ -134,7 +126,8 @@ Dictionary KasaneDocumentBridge::write_part(const Dictionary &d, bool replace) {
     kasane::Part p;
     if (auto s = part_from_dictionary(d, p); !s.ok())
         return result(s);
-    return apply(replace ? document_.replace_part(std::move(p)) : document_.create_part(std::move(p)));
+    return apply(replace ? session_.document().replace_part(std::move(p))
+                         : session_.document().create_part(std::move(p)));
 }
 
 Dictionary KasaneDocumentBridge::write_transform(const Dictionary &d, bool replace) {
@@ -142,8 +135,8 @@ Dictionary KasaneDocumentBridge::write_transform(const Dictionary &d, bool repla
     kasane::Transform t;
     if (auto s = transform_from_dictionary(d, t); !s.ok())
         return result(s);
-    return apply(replace ? document_.replace_transform(std::move(t))
-                         : document_.create_transform(std::move(t)));
+    return apply(replace ? session_.document().replace_transform(std::move(t))
+                         : session_.document().create_transform(std::move(t)));
 }
 
 Dictionary KasaneDocumentBridge::write_scene_binding(const Dictionary &d, bool replace) {
@@ -151,13 +144,13 @@ Dictionary KasaneDocumentBridge::write_scene_binding(const Dictionary &d, bool r
     kasane::SceneBinding b;
     if (auto s = scene_binding_from_dictionary(d, b); !s.ok())
         return result(s);
-    return apply(replace ? document_.replace_scene_binding(std::move(b))
-                         : document_.create_scene_binding(std::move(b)));
+    return apply(replace ? session_.document().replace_scene_binding(std::move(b))
+                         : session_.document().create_scene_binding(std::move(b)));
 }
 
 Dictionary KasaneDocumentBridge::set_mesh_properties(const String &id, const Dictionary &d) {
     MAIN_THREAD();
-    auto old = document_.get_mesh(utf8(id));
+    auto old = session_.document().get_mesh(utf8(id));
     if (!old)
         return result(kasane::Status::error("MISSING_MESH", utf8(id)));
     auto m = *old;
@@ -165,7 +158,7 @@ Dictionary KasaneDocumentBridge::set_mesh_properties(const String &id, const Dic
     m.draw_order.reset();
     if (auto s = mesh_properties_from_dictionary(d, m); !s.ok())
         return result(s);
-    return apply(document_.replace_mesh(std::move(m)));
+    return apply(session_.document().replace_mesh(std::move(m)));
 }
 
 #undef MAIN_THREAD
