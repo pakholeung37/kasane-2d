@@ -9,9 +9,10 @@
   submodule.
 - `modules/gd-cubism/` — `gd_cubism` Godot GDExtension, imported from
   `gd_cubism` and adapted to support an alternate Cubism Core implementation.
-- `modules/kasane-core/` — independent C++20 source Document and geometry validation.
-- `modules/kasane-gd/` — internal Editor C++ bindings and prototype mesh preview;
-  builds into its own `build/bin/`, not a user-installable addon.
+- `modules/kasane-core/` — Rust core document model, deformers, geometry and evaluation.
+- `modules/kasane-godot/` — Rust GDExtension bindings for Godot, live preview, and GDScript test suites.
+- `modules/kasane-moc3/` — Rust MOC3 binary encoder and purism verification.
+- `modules/kasane-project/` — Rust project persistence, resource validation, atomic locks and package publication.
 - `demos/gd-cubism-demo/` — interactive Godot comparison and regression demo.
 - `benchmarks/cubism-matrix/` — reproducible benchmark matrix between official
   Cubism Core and PurismCore.

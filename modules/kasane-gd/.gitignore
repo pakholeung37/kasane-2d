@@ -1,5 +1,0 @@
-build/
-*.os
-*.o
-.sconsign.dblite
-compile_commands.json

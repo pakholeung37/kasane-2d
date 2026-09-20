@@ -1,9 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/kasane-core", "crates/kasane-godot",
-    "crates/kasane-moc3",
-    "crates/kasane-project",
+    "modules/kasane-core",
+    "modules/kasane-godot",
+    "modules/kasane-moc3",
+    "modules/kasane-project",
 ]
 
 [workspace.package]

@@ -1,6 +1,0 @@
-document.cpp
-geometry.cpp
-legacy_deformers.cpp
-keyforms.cpp
-scene.cpp
-evaluation.cpp

@@ -35,12 +35,9 @@ def ensure_probes(build_dir: Path, sdk_dir: Path):
     print(f"Building Core probes in {build_dir}...")
     run([
         "cmake",
-        "-S", ROOT / "modules/kasane-core",
+        "-S", ROOT / "tools/probes",
         "-B", build_dir,
         "-DCMAKE_BUILD_TYPE=Release",
-        "-DKASANE_MOC3_CONFORMANCE=ON",
-        "-DPURISM_CORE_BUILD_TESTS=ON",
-        "-DPURISM_CORE_ABI=v6",
         f"-DKASANE_CUBISM_ROOT={sdk_dir.resolve()}",
     ])
     run(["cmake", "--build", build_dir, "--target", "kasane_document_official_probe", "kasane_document_purism_probe", "-j4"])

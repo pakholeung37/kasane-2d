@@ -11,4 +11,4 @@ if(KASANE_ENABLE_SANITIZERS)
   add_link_options(-fsanitize=address,undefined)
 endif()
 
-add_subdirectory(modules/kasane-core)
+add_subdirectory(tools/probes)

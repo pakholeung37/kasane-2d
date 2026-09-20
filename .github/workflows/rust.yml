@@ -1,4 +1,4 @@
-name: Rust migration
+name: CI
 on:
   push:
   pull_request:
@@ -30,15 +30,3 @@ jobs:
         run: cargo test --workspace --locked
       - name: Build extension
         run: cargo build --release -p kasane-godot --locked
-      - name: Install C++ compatibility dependencies
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libpng-dev libssl-dev
-      - name: Build migration probes
-        if: runner.os == 'Linux'
-        run: |
-          cmake -S . -B target/migration-cpp -G Ninja -DCMAKE_BUILD_TYPE=Release -DKASANE_MOC3_CONFORMANCE=OFF
-          cmake --build target/migration-cpp --target kasane_document_tool --parallel 4
-          cargo build -p kasane-project --example project_roundtrip --locked
-      - name: Check C++ and Rust format and lock compatibility
-        if: runner.os == 'Linux'
-        run: python3 tools/validate_rust_migration.py --cpp-tool target/migration-cpp/modules/kasane-core/document/kasane_document_tool

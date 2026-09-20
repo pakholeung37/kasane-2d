@@ -20,7 +20,7 @@ def get_default_library():
     debug_rust = ROOT / 'target/debug/libkasane_godot.dylib'
     if debug_rust.is_file():
         return debug_rust
-    return ROOT / 'modules/kasane-gd/build/bin/libkasane_gd.macos.template_debug.arm64.dylib'
+    return release_rust
 
 
 def validate_workflow_package(data_dir, samples, probe):
@@ -106,11 +106,11 @@ def main():
 
     suites = []
     if args.suite in ['all', 'boundary']:
-        suites.append(('boundary', ROOT / 'modules/kasane-gd/tests/document_boundary.gd'))
+        suites.append(('boundary', ROOT / 'modules/kasane-godot/tests/document_boundary.gd'))
     if args.suite in ['all', 'lifecycle']:
-        suites.append(('lifecycle', ROOT / 'modules/kasane-gd/tests/lifecycle_boundary.gd'))
+        suites.append(('lifecycle', ROOT / 'modules/kasane-godot/tests/lifecycle_boundary.gd'))
     if args.suite in ['all', 'workflow']:
-        suites.append(('workflow', ROOT / 'modules/kasane-gd/tests/full_workflow_e2e.gd'))
+        suites.append(('workflow', ROOT / 'modules/kasane-godot/tests/full_workflow_e2e.gd'))
 
     overall_report = {
         'status': 'passed',

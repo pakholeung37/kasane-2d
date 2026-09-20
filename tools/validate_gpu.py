@@ -29,7 +29,7 @@ def get_default_library():
     debug_rust = ROOT / 'target/debug/libkasane_godot.dylib'
     if debug_rust.is_file():
         return debug_rust
-    return ROOT / 'modules/kasane-gd/build/bin/libkasane_gd.macos.template_debug.arm64.dylib'
+    return release_rust
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
@@ -41,7 +41,13 @@ def main():
     project = args.output_dir.resolve()
     project.mkdir(parents=True, exist_ok=True)
     try:
-        run([args.core_build.resolve()/'kasane_moc3_official_tests', project/'fixtures'], project/'fixtures.log')
+        fixtures_gpu = ROOT / 'modules/kasane-godot/tests/fixtures/gpu'
+        if (fixtures_gpu / 'gpu-package').is_dir() and (fixtures_gpu / 'gpu-source.json').is_file():
+            shutil.copytree(fixtures_gpu, project / 'fixtures/publication', dirs_exist_ok=True)
+        elif (args.core_build.resolve() / 'kasane_moc3_official_tests').is_file():
+            run([args.core_build.resolve()/'kasane_moc3_official_tests', project/'fixtures'], project/'fixtures.log')
+        else:
+            raise RuntimeError(f"Missing GPU fixtures at {fixtures_gpu} and missing test generator")
         shutil.copytree(project/'fixtures/publication/gpu-package', project/'package', dirs_exist_ok=True)
         fixture = json.loads((project/'fixtures/publication/gpu-source.json').read_text())
         fixture.update(format='kasane-directory-project', format_version=1)
@@ -54,7 +60,7 @@ def main():
             (project/asset['source']).write_bytes(data)
         (project/'gpu-source.json').write_text(json.dumps(fixture))
         (project/'roundtrip.json').unlink(missing_ok=True)
-        shutil.copyfile(ROOT/'modules/kasane-gd/tests/gpu_regression.gd', project/'test.gd')
+        shutil.copyfile(ROOT/'modules/kasane-godot/tests/gpu_regression.gd', project/'test.gd')
         addon = project/'addons/gd_cubism'
         shutil.copytree(ROOT/'modules/gd-cubism/addons/gd_cubism/res', addon/'res', dirs_exist_ok=True)
         framework = 'libgd_cubism.cubism.macos.release.framework'

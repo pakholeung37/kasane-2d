@@ -1,4 +1,0 @@
-Checks: '-*,clang-analyzer-core.*,bugprone-use-after-move,bugprone-dangling-handle,bugprone-sizeof-expression,bugprone-suspicious-memset-usage'
-WarningsAsErrors: '*'
-HeaderFilterRegex: '.*modules/kasane-document/(include|src|tests)/.*'
-FormatStyle: none

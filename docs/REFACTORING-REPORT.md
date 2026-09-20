@@ -46,18 +46,20 @@ cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 cargo build --release -p kasane-godot --locked
 
-# macOS Godot 无头边界检查；其他平台需对应工具入口。
-python3 tools/validate_godot.py --library target/release/libkasane_godot.dylib
+# 验证器负控制门禁
+python3 -m unittest discover -s tools -p test_acceptance_validators.py -v
 
-# C++/Rust 真实进程间的格式与锁协议验证。
-cmake -S . -B target/migration-cpp -DCMAKE_BUILD_TYPE=Release -DKASANE_MOC3_CONFORMANCE=OFF
-cmake --build target/migration-cpp --target kasane_document_tool --parallel 4
-cargo build -p kasane-project --example project_roundtrip --locked
-python3 tools/validate_rust_migration.py \
-  --cpp-tool target/migration-cpp/modules/kasane-core/document/kasane_document_tool
+# 官方 Cubism Core 与 Purism Core 对照
+python3 tools/validate_official_core.py
 
-# 独立 Rust 耗时采样，不代表跨语言性能比较。
-cargo bench --workspace
+# 真实 GPU 视觉回归测试
+python3 tools/validate_gpu.py --library target/release/libkasane_godot.dylib
+
+# Godot 边界、生命周期与完整工作流
+python3 tools/validate_godot.py --library target/release/libkasane_godot.dylib --suite all
+
+# 生产级规模性能基准
+cargo bench -p kasane-core --bench production_scale_benchmark
 ```
 
 本轮本机结果：
