@@ -20,6 +20,7 @@ Status to_runtime_positions(Canvas c, std::span<const Vec2> positions, std::vect
     out = std::move(result);
     return {};
 }
+
 Status to_parent_positions(const Document &doc, const std::string &parent, std::span<const Vec2> positions,
                            std::vector<Vec2> &out) {
     if (parent.empty())
@@ -31,12 +32,14 @@ Status to_parent_positions(const Document &doc, const std::string &parent, std::
     out.assign(positions.begin(), positions.end());
     return {};
 }
+
 namespace {
 struct Selection {
     std::vector<int32_t> indices{0};
     std::vector<float> weights{1};
     bool enabled = true;
 };
+
 Selection select(const Document &doc, const PreviewValues &values, const std::vector<BindingAxis> &binding) {
     Selection s;
     std::vector<psm__key_axis> axes;
@@ -56,6 +59,7 @@ Selection select(const Document &doc, const PreviewValues &values, const std::ve
     s.weights.resize(count);
     return s;
 }
+
 Appearance blend_appearance(const Selection &s, const std::function<Appearance(int)> &get) {
     Appearance a;
     a.opacity = 0;
@@ -71,6 +75,7 @@ Appearance blend_appearance(const Selection &s, const std::function<Appearance(i
     }
     return a;
 }
+
 void inherit(Appearance &child, const Appearance &parent) {
     child.opacity *= parent.opacity;
     for (int c = 0; c < 3; ++c) {
@@ -78,6 +83,7 @@ void inherit(Appearance &child, const Appearance &parent) {
         child.screen[c] = child.screen[c] + parent.screen[c] - child.screen[c] * parent.screen[c];
     }
 }
+
 Status blend_positions(const Document &doc, const std::string &parent, const Selection &s,
                        const std::function<const std::vector<Vec2> &(int)> &get, std::vector<Vec2> &out) {
     std::vector<std::vector<float>> data(s.indices.size());
@@ -104,6 +110,7 @@ Status blend_positions(const Document &doc, const std::string &parent, const Sel
         out[i] = {xy[2 * i], xy[2 * i + 1]};
     return validate_positions(out);
 }
+
 struct TransformState {
     const Transform *source = nullptr;
     RotationPose pose;
@@ -111,6 +118,7 @@ struct TransformState {
     Appearance appearance;
     float inherited_scale = 1;
     bool enabled = true;
+
     psm__vec2 point(psm__vec2 p) const {
         float in[2]{p.x, p.y}, out[2];
         if (source->kind == TransformKind::warp)
@@ -121,11 +129,13 @@ struct TransformState {
                                  out, 1);
         return {out[0], out[1]};
     }
+
     static psm__vec2 callback(void *self, psm__vec2 p) {
         return static_cast<TransformState *>(self)->point(p);
     }
 };
 } // namespace
+
 Status evaluate_frame(const Document &doc, const PreviewValues &preview, DrawableFrame &out) {
     if (!doc.initialized())
         return Status::error("NOT_INITIALIZED", "Initialize Document first");

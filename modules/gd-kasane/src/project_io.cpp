@@ -10,19 +10,23 @@
 #include <cmath>
 #include <unordered_set>
 using namespace godot;
+
 namespace kasane_gd {
 void KasaneProjectIO::_bind_methods() {
     ClassDB::bind_method(D_METHOD("save_project", "document", "path"), &KasaneProjectIO::save_project);
     ClassDB::bind_method(D_METHOD("open_project", "document", "path"), &KasaneProjectIO::open_project);
 }
+
 namespace {
 constexpr int64_t PROJECT_FORMAT_VERSION = 5;
+
 Array pair_array(kasane::Vec2 p) {
     Array a;
     a.push_back(p.x);
     a.push_back(p.y);
     return a;
 }
+
 Dictionary project_dictionary(const kasane::Document &document) {
     Dictionary root;
     root["format"] = "kasane-project";
@@ -143,9 +147,11 @@ Dictionary project_dictionary(const kasane::Document &document) {
     root["document"] = doc;
     return root;
 }
+
 bool number(const Variant &value) {
     return value.get_type() == Variant::INT || value.get_type() == Variant::FLOAT;
 }
+
 bool unsigned_integer(const Variant &value, uint64_t maximum, uint64_t &out) {
     if (!number(value))
         return false;
@@ -156,12 +162,14 @@ bool unsigned_integer(const Variant &value, uint64_t maximum, uint64_t &out) {
     out = static_cast<uint64_t>(parsed);
     return true;
 }
+
 kasane::Status require(const Dictionary &d, const char *key, Variant::Type type) {
     if (!d.has(key) || d[key].get_type() != type)
         return kasane::Status::error("INVALID_PROJECT",
                                      utf8(String("Missing or invalid field: ") + String(key)));
     return {};
 }
+
 kasane::Status parse_vectors(const Variant &value, std::vector<kasane::Vec2> &out) {
     if (value.get_type() != Variant::ARRAY)
         return kasane::Status::error("INVALID_PROJECT", "Expected an array of coordinate pairs.");
@@ -176,6 +184,7 @@ kasane::Status parse_vectors(const Variant &value, std::vector<kasane::Vec2> &ou
     }
     return {};
 }
+
 kasane::Status parse_vertex_ids(const Variant &value, std::vector<uint32_t> &out) {
     if (value.get_type() != Variant::ARRAY)
         return kasane::Status::error("INVALID_PROJECT", "Expected an array of vertex IDs.");
@@ -188,6 +197,7 @@ kasane::Status parse_vertex_ids(const Variant &value, std::vector<uint32_t> &out
     }
     return {};
 }
+
 kasane::Status parse_pair(const Dictionary &d, const char *key, kasane::Vec2 &out) {
     if (auto s = require(d, key, Variant::ARRAY); !s.ok())
         return s;
@@ -197,6 +207,7 @@ kasane::Status parse_pair(const Dictionary &d, const char *key, kasane::Vec2 &ou
     out = {static_cast<float>(pair[0]), static_cast<float>(pair[1])};
     return {};
 }
+
 kasane::Status parse_deformers(const Dictionary &doc, kasane::Document &document) {
     if (auto s = require(doc, "deformers", Variant::ARRAY); !s.ok())
         return s;
@@ -273,6 +284,7 @@ kasane::Status parse_deformers(const Dictionary &doc, kasane::Document &document
     }
     return {};
 }
+
 kasane::Status parse_project(const Dictionary &root, kasane::Document &document) {
     if (auto s = require(root, "format", Variant::STRING); !s.ok())
         return s;
@@ -470,6 +482,7 @@ Dictionary KasaneProjectIO::save_project(const Ref<KasaneDocumentBridge> &owner,
     out["path"] = path;
     return out;
 }
+
 Dictionary KasaneProjectIO::open_project(const Ref<KasaneDocumentBridge> &owner, const String &path) {
     if (owner.is_null())
         return error("MISSING_DOCUMENT", "Provide a Document.");

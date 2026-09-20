@@ -40,7 +40,6 @@ The full native suite uses Purism for MOC3 evaluation and does not need the prop
 An official Core comparison remains a separate acceptance gate.
 
 ```sh
-python3 tools/validate_m1_core.py
-# Complete macOS arm64 acceptance, including rebuilding Godot libraries and GPU:
-target/kasane/buildenv/bin/python tools/validate_m1.py
+python3 tools/validate_core.py
+# Godot and GPU regressions use tools/validate_godot.py and tools/validate_gpu.py.
 ```

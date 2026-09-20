@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage a disposable Godot project to test M1 data/preview ownership boundaries.
+"""Stage a disposable Godot project to test data/preview ownership boundaries.
 Headless integration evidence only; does not replace GPU visual acceptance.
 """
 import argparse
@@ -26,7 +26,7 @@ def main():
     library = project/args.library.name
     shutil.copyfile(args.library, library)
     shutil.copyfile(ROOT/'modules/gd-kasane/tests/document_boundary.gd', project/'test.gd')
-    (project/'project.godot').write_text('config_version=5\n[application]\nconfig/name="Kasane M1 Boundary Test"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
+    (project/'project.godot').write_text('config_version=5\n[application]\nconfig/name="Kasane Boundary Test"\n[rendering]\nrenderer/rendering_method="gl_compatibility"\n')
     (project/'kasane.gdextension').write_text('[configuration]\nentry_symbol="gd_kasane_library_init"\ncompatibility_minimum="4.3"\n[libraries]\nmacos.debug.arm64="res://'+library.name+'"\n')
     # All fixtures are built in memory. Register this one extension directly;
     # no editor import or filesystem resource scan is needed for this harness.

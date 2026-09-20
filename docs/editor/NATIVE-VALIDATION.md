@@ -21,7 +21,10 @@ own diagnostics do not fail this gate.
 
 Format and static analysis use **clang-format and clang-tidy 22.1.8**. CI
 installs exact wheel versions and the validation script rejects another
-version. On macOS, Homebrew `llvm@22` provides both tools and libFuzzer. Run:
+version. The root `.clang-format` selects LLVM as the default style, with
+4-space indentation and blank lines between definitions. Nested upstream
+projects keep their own style files. On macOS, Homebrew `llvm@22` provides
+both tools and libFuzzer. Run:
 
 ```sh
 cmake --preset core-debug
@@ -41,12 +44,13 @@ produce a nonzero exit. Purism external-model conformance is opt-in with
 `PURISM_CORE_EXTERNAL_CONFORMANCE=ON`; without local model and reference data,
 it is **not run** and must not be reported as passed.
 
-For official Core compatibility and the M1 Godot/GPU checks, run
-`python3 tools/validate_m1.py` on the supported macOS setup. Every acceptance
-run writes under `target/kasane/runs/<run-id>/`, including child reports and
-logs. Reports include a content hash of the current source tree. A failed
-required gate means M1 failed; absent SDK, model data or GPU is `not_run`.
-The CMake native suite is the fast development gate and is not the full M1 gate.
+The reusable regression runners are `tools/validate_core.py`,
+`tools/validate_godot.py` and `tools/validate_gpu.py`. Run them separately on
+the supported macOS setup for official Core compatibility, Godot integration
+and GPU comparisons. Their reports live under `target/kasane/core-regression/`,
+`target/kasane/godot-boundary/` and `target/kasane/gpu-regression/`.
+CTest also checks the Purism C99 bundle. The CMake native suite is the fast
+development gate; Godot and GPU checks require their own runtime environment.
 
 On a host with Clang's libFuzzer runtime, run bounded fuzz checks with:
 
@@ -63,6 +67,6 @@ Command Line Tools Clang does not supply a usable runtime on this host.
 
 For source edits, run `core-debug`. For public headers, CMake, validator or
 memory management edits, also run `core-asan`. Godot adapter edits require the
-M1 headless boundary check, and renderer edits require the GPU acceptance gate
+headless boundary check, and renderer edits require the GPU regression check
 on the supported machine. Run the full suite periodically even when a change
 appears isolated.

@@ -10,16 +10,20 @@ namespace kasane {
 struct Status {
     std::string code;
     std::string message;
+
     bool ok() const { return code.empty(); }
+
     static Status error(std::string code, std::string message) {
         return {std::move(code), std::move(message)};
     }
 };
+
 struct Vec2 {
     float x = 0;
     float y = 0;
     bool operator==(const Vec2 &) const = default;
 };
+
 using VertexId = uint32_t;
 
 // Borrowed views are used only for the duration of a synchronous call.

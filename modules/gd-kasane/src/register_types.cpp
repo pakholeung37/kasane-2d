@@ -6,6 +6,7 @@
 
 using namespace godot;
 using namespace kasane_gd;
+
 static void initialize(ModuleInitializationLevel level) {
     if (level != MODULE_INITIALIZATION_LEVEL_SCENE)
         return;
@@ -18,8 +19,10 @@ static void initialize(ModuleInitializationLevel level) {
     GDREGISTER_CLASS(KasaneTextureStore);
     GDREGISTER_CLASS(KasaneDocumentPreview);
 }
+
 static void terminate(ModuleInitializationLevel) {
 }
+
 extern "C" {
 GDExtensionBool GDE_EXPORT gd_kasane_library_init(GDExtensionInterfaceGetProcAddress get_proc_address,
                                                   GDExtensionClassLibraryPtr library,

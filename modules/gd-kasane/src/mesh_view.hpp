@@ -24,6 +24,7 @@ class KasaneMeshView : public godot::MeshInstance2D {
     godot::Dictionary update_positions(const godot::PackedVector2Array &positions);
     void clear();
     godot::Dictionary get_render_stats() const;
+
     godot::PackedVector2Array get_positions_snapshot() const { return vectors(positions_); }
 };
 } // namespace kasane_gd

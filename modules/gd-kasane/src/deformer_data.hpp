@@ -2,8 +2,10 @@
 #pragma once
 #include "conversions.hpp"
 #include <godot_cpp/classes/ref_counted.hpp>
+
 namespace kasane_gd {
 class KasaneDocumentBridge;
+
 class KasaneDeformerData : public godot::RefCounted {
     GDCLASS(KasaneDeformerData, godot::RefCounted)
     uint64_t owner_ = 0, generation_ = 0;
@@ -17,7 +19,9 @@ class KasaneDeformerData : public godot::RefCounted {
     void attach(uint64_t owner, uint64_t generation, const godot::String &id);
     bool is_valid() const;
     godot::Dictionary snapshot() const;
+
     godot::String get_id() const { return id_; }
+
     double get_angle_degrees() const;
     void set_angle_degrees(double angle);
     godot::Vector2 get_center() const;

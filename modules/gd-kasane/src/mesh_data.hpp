@@ -5,6 +5,7 @@
 
 namespace kasane_gd {
 class KasaneDocumentBridge;
+
 // A stable-ID handle, not a second copy of the mesh or a scene node.
 class KasaneMeshData : public godot::RefCounted {
     GDCLASS(KasaneMeshData, godot::RefCounted)
@@ -19,7 +20,9 @@ class KasaneMeshData : public godot::RefCounted {
   public:
     void attach(uint64_t owner, uint64_t generation, const godot::String &id);
     bool is_valid() const;
+
     godot::String get_id() const { return id_; }
+
     godot::Dictionary snapshot() const;
     godot::String get_name() const;
     void set_name(const godot::String &value);

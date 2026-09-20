@@ -2,20 +2,24 @@
 #include "model_conversion.hpp"
 #include <cmath>
 using namespace godot;
+
 namespace kasane_gd {
 namespace {
 bool numeric(const Variant &v) {
     return v.get_type() == Variant::INT || v.get_type() == Variant::FLOAT;
 }
+
 kasane::Status fail() {
     return kasane::Status::error("INVALID_FIELD", "Required field is absent or has the wrong type");
 }
+
 kasane::Status strings(const Dictionary &d, std::initializer_list<const char *> fields) {
     for (auto f : fields)
         if (!d.has(f) || d[f].get_type() != Variant::STRING)
             return fail();
     return {};
 }
+
 kasane::Status floats(const Variant &v, std::vector<float> &out) {
     if (v.get_type() == Variant::PACKED_FLOAT32_ARRAY) {
         PackedFloat32Array a = v;
@@ -33,6 +37,7 @@ kasane::Status floats(const Variant &v, std::vector<float> &out) {
     }
     return {};
 }
+
 Array float_array(const std::vector<float> &v) {
     Array a;
     for (float x : v)
@@ -40,6 +45,7 @@ Array float_array(const std::vector<float> &v) {
     return a;
 }
 } // namespace
+
 kasane::Status parameter_from_dictionary(const Dictionary &d, kasane::Parameter &p) {
     if (auto s = strings(d, {"id", "runtime_id", "name"}); !s.ok())
         return s;
@@ -62,6 +68,7 @@ kasane::Status parameter_from_dictionary(const Dictionary &d, kasane::Parameter 
     }
     return {};
 }
+
 kasane::Status binding_from_dictionary(const Dictionary &d, kasane::MeshBinding &b) {
     if (auto s = strings(d, {"id", "mesh_id"}); !s.ok())
         return s;
@@ -123,6 +130,7 @@ kasane::Status binding_from_dictionary(const Dictionary &d, kasane::MeshBinding 
     }
     return {};
 }
+
 Dictionary parameter_dictionary(const kasane::Parameter &p) {
     Dictionary d;
     d["id"] = string(p.id);
@@ -134,6 +142,7 @@ Dictionary parameter_dictionary(const kasane::Parameter &p) {
     d["decimal_places"] = p.decimal_places;
     return d;
 }
+
 Dictionary binding_dictionary(const kasane::MeshBinding &b) {
     Dictionary d;
     d["id"] = string(b.id);
@@ -173,12 +182,14 @@ Array point_array(kasane::Vec2 p) {
     a.push_back(p.y);
     return a;
 }
+
 Array points_array(const std::vector<kasane::Vec2> &p) {
     Array a;
     for (auto v : p)
         a.push_back(point_array(v));
     return a;
 }
+
 kasane::Status read_points(const Variant &v, std::vector<kasane::Vec2> &out) {
     if (v.get_type() != Variant::ARRAY)
         return fail();
@@ -193,18 +204,21 @@ kasane::Status read_points(const Variant &v, std::vector<kasane::Vec2> &out) {
     }
     return {};
 }
+
 kasane::Status numbers(const Dictionary &d, std::initializer_list<const char *> fields) {
     for (auto f : fields)
         if (!d.has(f) || !numeric(d[f]))
             return fail();
     return {};
 }
+
 kasane::Status booleans(const Dictionary &d, std::initializer_list<const char *> fields) {
     for (auto f : fields)
         if (!d.has(f) || d[f].get_type() != Variant::BOOL)
             return fail();
     return {};
 }
+
 Dictionary pose_dictionary(const kasane::RotationPose &p) {
     Dictionary d;
     d["origin"] = point_array(p.origin);
@@ -214,6 +228,7 @@ Dictionary pose_dictionary(const kasane::RotationPose &p) {
     d["reflect_y"] = p.reflect_y;
     return d;
 }
+
 kasane::Status pose_from_dictionary(const Dictionary &d, kasane::RotationPose &p) {
     if (auto s = numbers(d, {"angle", "scale"}); !s.ok())
         return s;
@@ -234,6 +249,7 @@ kasane::Status pose_from_dictionary(const Dictionary &d, kasane::RotationPose &p
     return {};
 }
 } // namespace
+
 Dictionary appearance_dictionary(const kasane::Appearance &a) {
     Dictionary d;
     d["opacity"] = a.opacity;
@@ -241,6 +257,7 @@ Dictionary appearance_dictionary(const kasane::Appearance &a) {
     d["screen"] = float_array({a.screen.begin(), a.screen.end()});
     return d;
 }
+
 kasane::Status appearance_from_dictionary(const Dictionary &d, kasane::Appearance &a) {
     if (auto s = numbers(d, {"opacity"}); !s.ok())
         return s;
@@ -258,6 +275,7 @@ kasane::Status appearance_from_dictionary(const Dictionary &d, kasane::Appearanc
     }
     return {};
 }
+
 Dictionary mesh_properties_dictionary(const kasane::Mesh &m) {
     Dictionary d;
     d["part_id"] = string(m.part_id);
@@ -275,6 +293,7 @@ Dictionary mesh_properties_dictionary(const kasane::Mesh &m) {
     d["masks"] = masks;
     return d;
 }
+
 kasane::Status mesh_properties_from_dictionary(const Dictionary &d, kasane::Mesh &m) {
     if (auto s = strings(d, {"part_id", "deformer_id"}); !s.ok())
         return s;
@@ -310,6 +329,7 @@ kasane::Status mesh_properties_from_dictionary(const Dictionary &d, kasane::Mesh
     }
     return {};
 }
+
 Dictionary part_dictionary(const kasane::Part &p) {
     Dictionary d;
     d["id"] = string(p.id);
@@ -320,6 +340,7 @@ Dictionary part_dictionary(const kasane::Part &p) {
     d["draw_order"] = p.draw_order;
     return d;
 }
+
 kasane::Status part_from_dictionary(const Dictionary &d, kasane::Part &p) {
     if (auto s = strings(d, {"id", "runtime_id", "name", "parent_id"}); !s.ok())
         return s;
@@ -335,6 +356,7 @@ kasane::Status part_from_dictionary(const Dictionary &d, kasane::Part &p) {
     p.draw_order = float(d["draw_order"]);
     return {};
 }
+
 Dictionary transform_dictionary(const kasane::Transform &t) {
     Dictionary d;
     d["id"] = string(t.id);
@@ -353,6 +375,7 @@ Dictionary transform_dictionary(const kasane::Transform &t) {
     d["appearance"] = appearance_dictionary(t.appearance);
     return d;
 }
+
 kasane::Status transform_from_dictionary(const Dictionary &d, kasane::Transform &t) {
     if (auto s = strings(d, {"id", "runtime_id", "name", "part_id", "parent_id"}); !s.ok())
         return s;
@@ -387,6 +410,7 @@ kasane::Status transform_from_dictionary(const Dictionary &d, kasane::Transform 
         return fail();
     return read_points(d["points"], t.points);
 }
+
 Dictionary scene_binding_dictionary(const kasane::SceneBinding &b) {
     kasane::MeshBinding mesh;
     mesh.id = b.id;
@@ -404,6 +428,7 @@ Dictionary scene_binding_dictionary(const kasane::SceneBinding &b) {
     }
     return d;
 }
+
 kasane::Status scene_binding_from_dictionary(const Dictionary &d, kasane::SceneBinding &b) {
     if (auto s = strings(d, {"target_id"}); !s.ok())
         return s;

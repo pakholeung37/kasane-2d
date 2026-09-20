@@ -3,13 +3,16 @@
 #include "model_conversion.hpp"
 #include <godot_cpp/classes/os.hpp>
 using namespace godot;
+
 namespace kasane_gd {
 #define MAIN_THREAD()                                                                                        \
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())            \
     return error("WRONG_THREAD", "Document requires the main thread.")
+
 kasane::Status KasaneDocumentBridge::evaluate(kasane::DrawableFrame &out) const {
     return kasane::evaluate_frame(document_, preview_values_, out);
 }
+
 void KasaneDocumentBridge::replace_source(const kasane::Document &source) {
     document_.restore_from(source);
     ++generation_;
@@ -18,6 +21,7 @@ void KasaneDocumentBridge::replace_source(const kasane::Document &source) {
     change["revision"] = document_.revision();
     emit_signal("changed", change);
 }
+
 Dictionary KasaneDocumentBridge::get_frame() const {
     MAIN_THREAD();
     kasane::DrawableFrame frame;
@@ -66,6 +70,7 @@ Dictionary KasaneDocumentBridge::get_frame() const {
     out["parameters"] = parameters;
     return out;
 }
+
 Dictionary KasaneDocumentBridge::set_preview_values(const Dictionary &values) {
     MAIN_THREAD();
     kasane::PreviewValues next;
@@ -85,6 +90,7 @@ Dictionary KasaneDocumentBridge::set_preview_values(const Dictionary &values) {
     emit_signal("preview_changed");
     return get_frame();
 }
+
 Dictionary KasaneDocumentBridge::create_parameter(const Dictionary &d) {
     MAIN_THREAD();
     kasane::Parameter p;
@@ -92,6 +98,7 @@ Dictionary KasaneDocumentBridge::create_parameter(const Dictionary &d) {
         return result(s);
     return apply(document_.create_parameter(std::move(p)));
 }
+
 Dictionary KasaneDocumentBridge::write_binding(const Dictionary &d, bool replace) {
     MAIN_THREAD();
     kasane::MeshBinding b;
@@ -99,6 +106,7 @@ Dictionary KasaneDocumentBridge::write_binding(const Dictionary &d, bool replace
         return result(s);
     return apply(replace ? document_.replace_binding(std::move(b)) : document_.create_binding(std::move(b)));
 }
+
 Dictionary KasaneDocumentBridge::set_mesh_keyform(const String &id, const PackedFloat32Array &keys,
                                                   const PackedVector2Array &positions) {
     MAIN_THREAD();
@@ -115,10 +123,12 @@ Dictionary KasaneDocumentBridge::set_mesh_keyform(const String &id, const Packed
             }
     return apply(document_.set_mesh_keyform(utf8(id), std::move(form)));
 }
+
 Dictionary KasaneDocumentBridge::erase_object(const String &id) {
     MAIN_THREAD();
     return apply(document_.erase_object(utf8(id)));
 }
+
 Dictionary KasaneDocumentBridge::write_part(const Dictionary &d, bool replace) {
     MAIN_THREAD();
     kasane::Part p;
@@ -126,6 +136,7 @@ Dictionary KasaneDocumentBridge::write_part(const Dictionary &d, bool replace) {
         return result(s);
     return apply(replace ? document_.replace_part(std::move(p)) : document_.create_part(std::move(p)));
 }
+
 Dictionary KasaneDocumentBridge::write_transform(const Dictionary &d, bool replace) {
     MAIN_THREAD();
     kasane::Transform t;
@@ -134,6 +145,7 @@ Dictionary KasaneDocumentBridge::write_transform(const Dictionary &d, bool repla
     return apply(replace ? document_.replace_transform(std::move(t))
                          : document_.create_transform(std::move(t)));
 }
+
 Dictionary KasaneDocumentBridge::write_scene_binding(const Dictionary &d, bool replace) {
     MAIN_THREAD();
     kasane::SceneBinding b;
@@ -142,6 +154,7 @@ Dictionary KasaneDocumentBridge::write_scene_binding(const Dictionary &d, bool r
     return apply(replace ? document_.replace_scene_binding(std::move(b))
                          : document_.create_scene_binding(std::move(b)));
 }
+
 Dictionary KasaneDocumentBridge::set_mesh_properties(const String &id, const Dictionary &d) {
     MAIN_THREAD();
     auto old = document_.get_mesh(utf8(id));
@@ -154,5 +167,6 @@ Dictionary KasaneDocumentBridge::set_mesh_properties(const String &id, const Dic
         return result(s);
     return apply(document_.replace_mesh(std::move(m)));
 }
+
 #undef MAIN_THREAD
 } // namespace kasane_gd

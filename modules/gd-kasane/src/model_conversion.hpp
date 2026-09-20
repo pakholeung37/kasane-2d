@@ -3,6 +3,7 @@
 #include "conversions.hpp"
 #include <godot_cpp/variant/array.hpp>
 #include <godot_cpp/variant/packed_float32_array.hpp>
+
 namespace kasane_gd {
 kasane::Status parameter_from_dictionary(const godot::Dictionary &, kasane::Parameter &);
 kasane::Status binding_from_dictionary(const godot::Dictionary &, kasane::MeshBinding &);

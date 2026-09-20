@@ -35,6 +35,7 @@ static double max_error = 0;
 static std::string context = "fixture";
 static std::vector<std::string> comparisons, samples;
 static unsigned sample = 0;
+
 static void near(float actual, float expected, float ppu = 1,
                  std::source_location loc = std::source_location::current()) {
     CHECK(std::isfinite(actual));
@@ -50,9 +51,11 @@ static void near(float actual, float expected, float ppu = 1,
         throw std::runtime_error(context + " line " + std::to_string(loc.line()) + ": expected " +
                                  std::to_string(expected) + ", actual " + std::to_string(actual));
 }
+
 static std::string id(int n) {
     return std::to_string(n) + "1111111-1111-4111-8111-111111111111";
 }
+
 static Document fixture() {
     Document doc;
     CHECK(doc.initialize(id(1), {640, 480, {271, 193}, 100}).ok());
@@ -78,6 +81,7 @@ static Document fixture() {
     CHECK(doc.create_mesh(m).status.ok());
     return doc;
 }
+
 static void verify(const Document &doc, const Moc3Artifact &a, const PreviewValues &preview = {}) {
     context = "sample-" + std::to_string(sample++) + "/canvas";
     const auto sample_context = context;
@@ -185,6 +189,7 @@ static void verify(const Document &doc, const Moc3Artifact &a, const PreviewValu
             CHECK(csmGetDrawableIndices(model)[i][j] == d.indices[j]);
     }
 }
+
 static Moc3Artifact encode(const Document &d) {
     Moc3Artifact a;
     auto s = encode_moc3(d, a);
@@ -192,6 +197,7 @@ static Moc3Artifact encode(const Document &d) {
         throw std::runtime_error(s.code + ": " + s.message);
     return a;
 }
+
 static Document animated_fixture(unsigned dimensions) {
     auto doc = fixture();
     MeshBinding b{id(9), id(4)};
@@ -232,6 +238,7 @@ static Document animated_fixture(unsigned dimensions) {
     CHECK(doc.create_binding(b).status.ok());
     return doc;
 }
+
 static void verify_keyforms(const std::filesystem::path &output) {
     for (unsigned dimensions = 1; dimensions <= 3; ++dimensions) {
         auto doc = animated_fixture(dimensions);
@@ -332,11 +339,13 @@ static void verify_keyforms(const std::filesystem::path &output) {
     verify(doc, encode(doc));
     verify(doc, encode(doc), {{id(6), 0.5f}});
 }
+
 static std::string sid(int n) {
     char value[37];
     std::snprintf(value, sizeof(value), "%08x-2222-4222-8222-222222222222", n);
     return value;
 }
+
 static Document scene_fixture(bool warp_root, bool quad) {
     auto doc = fixture();
     CHECK(doc.create_parameter({id(6), "ParamScene", "scene", -1, 1, 0}).status.ok());
@@ -414,6 +423,7 @@ static Document scene_fixture(bool warp_root, bool quad) {
     CHECK(doc.create_scene_binding(part_binding).status.ok());
     return doc;
 }
+
 static void verify_scene(const std::filesystem::path &output) {
     for (bool warp_root : {false, true})
         for (bool quad : {false, true}) {
@@ -497,6 +507,7 @@ static Mesh rectangle(int number, const std::string &asset, float x, float y, fl
             {{{1, 2, 3}}, {{1, 3, 4}}},
             "Mesh" + std::to_string(number)};
 }
+
 static Document gpu_fixture() {
     Document doc;
     CHECK(doc.initialize(id(1), {640, 480, {271, 193}, 100}).ok());
@@ -538,6 +549,7 @@ static Document gpu_fixture() {
         }
     return doc;
 }
+
 static void write_fixture_png(const std::filesystem::path &path, int slot) {
     png_image image{};
     image.version = PNG_IMAGE_VERSION;
@@ -553,6 +565,7 @@ static void write_fixture_png(const std::filesystem::path &path, int slot) {
         }
     CHECK(png_image_write_to_file(&image, path.string().c_str(), 0, pixels.data(), 0, nullptr));
 }
+
 static void write_gpu_source(const Document &doc, const std::filesystem::path &path) {
     std::ofstream o(path);
     o << std::setprecision(9);
@@ -640,6 +653,7 @@ static void write_gpu_source(const Document &doc, const std::filesystem::path &p
     o << "]}}\n";
     CHECK(o.good());
 }
+
 static void verify_package(const std::filesystem::path &output) {
     auto doc = gpu_fixture();
     auto artifact = encode(doc);
@@ -708,6 +722,7 @@ static void verify_package(const std::filesystem::path &output) {
     if (output.empty())
         std::filesystem::remove_all(base);
 }
+
 static void reject_malformed(const Moc3Artifact &a) {
     using Buffer = std::unique_ptr<void, decltype(&std::free)>;
     Buffer memory(std::aligned_alloc(64, (a.bytes.size() + 63) & ~size_t(63)), &std::free);
@@ -734,6 +749,7 @@ static void reject_malformed(const Moc3Artifact &a) {
         static_cast<uint8_t *>(memory.get())[64 + i] = 0x7f;
     CHECK(!csmHasMocConsistency(memory.get(), unsigned(a.bytes.size())));
 }
+
 int main(int argc, char **argv) {
     try {
         csmSetLogFunction([](const char *s) { std::cerr << s; });

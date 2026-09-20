@@ -4,6 +4,7 @@
 #include <fstream>
 #include <random>
 #include <sstream>
+
 namespace kasane {
 namespace {
 std::string json_string(const std::string &value) {
@@ -22,6 +23,7 @@ std::string json_string(const std::string &value) {
     }
     return s + '"';
 }
+
 void write(const std::filesystem::path &p, const void *data, size_t count) {
     std::ofstream file(p, std::ios::binary);
     file.write(static_cast<const char *>(data), std::streamsize(count));
@@ -30,6 +32,7 @@ void write(const std::filesystem::path &p, const void *data, size_t count) {
         throw std::runtime_error("write failed: " + p.string());
 }
 } // namespace
+
 Status publish_package(const Document &doc, const PackageOptions &options) {
     namespace fs = std::filesystem;
     if (!options.validate)

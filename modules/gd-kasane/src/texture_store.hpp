@@ -2,6 +2,7 @@
 #pragma once
 #include "document_bridge.hpp"
 #include <godot_cpp/classes/texture2d.hpp>
+
 namespace kasane_gd {
 class KasaneTextureStore : public godot::RefCounted {
     GDCLASS(KasaneTextureStore, godot::RefCounted)

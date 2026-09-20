@@ -2,7 +2,7 @@
 
 状态：已完成，2026-09-19 本机统一验收通过（macOS arm64 / Godot 4.7.2 / OpenGL）。依赖：现有 kasane-core、PurismCore 与 gd-cubism。返回 [总路线图](../ROADMAP.md)。
 
-当前进度：已完成源数据/预览边界拆分，普通参数与完整 Keyform、正式嵌套 Rotation/Warp、Part/绘制属性/遮罩、编辑回归和通用运行包发布。统一入口 `tools/validate_m1.py` 已通过全部必需门禁：7 项 CTest、59 项 Godot 集成检查、84 项 GPU 检查和 Purism C99 bundle；两个 Core 各 7712 项数值比较。见 [验收与复现](../M1-ACCEPTANCE.md)、[核心重构说明](../M1-CORE-REFACTOR.md) 与 [写出映射](../formats/MOC3-WRITER.md)。已知 Godot 首次动态导入退出问题保留记录；M2–M6 不因此视为完成。
+当前进度：已完成源数据/预览边界拆分，普通参数与完整 Keyform、正式嵌套 Rotation/Warp、Part/绘制属性/遮罩、编辑回归和通用运行包发布。2026-09-19 的历史验收通过全部必需门禁：7 项 CTest、59 项 Godot 集成检查、84 项 GPU 检查和 Purism C99 bundle；两个 Core 各 7712 项数值比较。后续回归分别运行 Core、Godot 和 GPU 检查。见 [验收与复现](../M1-ACCEPTANCE.md)、[核心重构说明](../M1-CORE-REFACTOR.md) 与 [写出映射](../formats/MOC3-WRITER.md)。已知 Godot 首次动态导入退出问题保留记录；M2–M6 不因此视为完成。
 
 ## 1. 交付结果
 

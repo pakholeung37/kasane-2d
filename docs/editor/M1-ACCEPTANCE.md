@@ -1,29 +1,32 @@
 # M1 验收与复现
 
-2026-09-19：本机 M1 统一验收通过。代码创建、编辑、内存求值、MOC3 导出及运行包路径已贯通。后续运行通过与否以本次 `target/kasane/runs/<run-id>/report.json` 的整体状态为准；任何必需项失败或未执行都不通过。
+2026-09-19：本机 M1 统一验收通过。代码创建、编辑、内存求值、MOC3 导出及运行包路径已贯通。原始证据保存在 `target/kasane/runs/<run-id>/report.json`；这是当时的验收快照，后续回归以各项独立检查的结果为准。
 
 本次结果：7 项 CTest、59 项 Godot 集成检查、84 项 GPU 检查与 C99 bundle 均通过。两个 Core 各比较 7712 项数值；Purism 最大误差 0，官方 Core 最大误差 `7.15256e-7` 运行单位，最大位置误差 `0.000071526` 原画像素。三个状态的图像及局部裁剪逐像素一致；独立解析像素预期最大通道误差 `0.002048`，低于 `2/255`。
 
-## 单一入口
+## 现在如何复现
 
-本机验收配置：macOS arm64，Godot 4.7.2 mono，OpenGL Compatibility，640×480，Apple M4 GPU。C++ 核心仍可独立使用 CMake 构建；完整入口目前按此平台组织。
+本机验收配置：macOS arm64，Godot 4.7.2 mono，OpenGL Compatibility，640×480，Apple M4 GPU。Core、Godot 和 GPU 回归分别运行；GPU 检查需要真实图形环境。
 
 ```sh
 python3 -m venv target/kasane/buildenv
-target/kasane/buildenv/bin/python -m pip install -r tools/requirements-m1.txt
-# 系统需要 CMake、C/C++ 编译器和 libpng 开发库。
-target/kasane/buildenv/bin/python tools/validate_m1.py
+target/kasane/buildenv/bin/python -m pip install -r tools/requirements-validation.txt
+# 系统需要 CMake、C/C++ 编译器和 libpng 开发库；SDK 路径按本机安装位置调整。
+target/kasane/buildenv/bin/python tools/validate_core.py
+target/kasane/buildenv/bin/python -m SCons -C modules/gd-cubism platform=macos arch=arm64 target=template_release CUBISM_SDK_ROOT="$PWD/third_party/CubismSdkForNative-5-r.5" -j8
+target/kasane/buildenv/bin/python -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
+target/kasane/buildenv/bin/python tools/validate_godot.py
+target/kasane/buildenv/bin/python tools/validate_gpu.py
 ```
 
-可用 `--sdk /absolute/path` 与 `--godot /absolute/path` 指定本地 SDK 和 Godot。默认 SDK 为 `third_party/CubismSdkForNative-5-r.5`；实际 Core 版本从执行报告读取，不能由目录名推断。SDK 不提交到仓库。失败入口返回非零，保留日志与旧的已验证运行包。
+`validate_core.py` 可用 `--sdk /absolute/path` 指定本地 SDK；Godot 和 GPU 脚本可用 `--godot /absolute/path` 指定 Godot。默认 SDK 为 `third_party/CubismSdkForNative-5-r.5`；实际 Core 版本从报告读取，不能由目录名推断。SDK 不提交到仓库。各检查失败时返回非零。
 
-入口依次执行：
+检查内容：
 
-1. 构建 kasane-core、编码器和通用发布器；运行 7 项 CTest（包含两个 Core、Purism unit 和验证器负例）。Purism 外部模型 conformance 需另外提供模型与参考数据。
+1. 构建 kasane-core、编码器和通用发布器；运行 CTest（包含两个 Core、Purism unit、验证器负例与 C99 bundle smoke）。Purism 外部模型 conformance 需另外提供模型与参考数据。
 2. 重建官方 Core 的 gd-cubism 参考播放器及 gd-kasane。
 3. Godot headless 源数据、预览生命周期、工程快照和失效原子性检查。
 4. 启动真实 GPU 窗口，比较现有 gd-cubism 官方 Core 播放与直接消费 Document 的 KasaneDocumentPreview。
-5. 将提取后的 Purism 编译为 C99 单文件 bundle，并运行 ABI smoke。
 
 ## 验收对应关系
 
@@ -43,6 +46,8 @@ target/kasane/buildenv/bin/python tools/validate_m1.py
 GPU 使用统一的线性/mipmap 过滤、透明背景、画布和相机。生成实际图、参考图、原始差异图及局部裁剪，1350 个像素位置、两条渲染路径的解析比较记录到 `pixel-samples.json`。阈值沿用 [统一规则](VALIDATION.md)，未放宽：整图/裁剪 MAE≤0.005、大误差像素≤1%，确定区域每通道≤2/255。解析预期独立计算纹理方向、颜色、透明度和混合方程，避免两个 renderer 同时出现相同错误。
 
 ## 产物位置
+
+当前独立检查分别写入 `target/kasane/core-regression/`、`target/kasane/godot-boundary/` 和 `target/kasane/gpu-regression/`。以下路径属于 2026-09-19 的历史整体验收记录；删除总入口不会删除已有记录。
 
 - `target/kasane/runs/<run-id>/report.json`：整体状态、所有门禁、源码指纹、环境与 SHA-256。
 - `target/kasane/runs/<run-id>/core/report.json`：数值/编码/编辑/发布验证。Core 子报告不单独代表 GPU 验收。

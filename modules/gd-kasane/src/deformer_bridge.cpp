@@ -2,10 +2,12 @@
 #include "document_bridge.hpp"
 #include <godot_cpp/classes/os.hpp>
 using namespace godot;
+
 namespace kasane_gd {
 #define MAIN_THREAD()                                                                                        \
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())            \
     return error("WRONG_THREAD", "Document requires the main thread.")
+
 Dictionary KasaneDocumentBridge::create_rotation(const String &id, const String &name, Vector2 center,
                                                  double angle) {
     MAIN_THREAD();
@@ -16,6 +18,7 @@ Dictionary KasaneDocumentBridge::create_rotation(const String &id, const String 
     d.angle_degrees = float(angle);
     return apply(document_.create_deformer(std::move(d)));
 }
+
 Dictionary KasaneDocumentBridge::create_warp(const String &id, const String &name, Vector2 origin,
                                              Vector2 size, int64_t columns, int64_t rows) {
     MAIN_THREAD();
@@ -31,22 +34,27 @@ Dictionary KasaneDocumentBridge::create_warp(const String &id, const String &nam
     d.rows = uint32_t(rows);
     return apply(document_.create_deformer(std::move(d)));
 }
+
 Dictionary KasaneDocumentBridge::set_rotation(const String &id, Vector2 center, double angle) {
     MAIN_THREAD();
     return apply(document_.set_rotation(utf8(id), {float(center.x), float(center.y)}, float(angle)));
 }
+
 Dictionary KasaneDocumentBridge::set_warp_points(const String &id, const PackedVector2Array &points) {
     MAIN_THREAD();
     return apply(document_.set_warp_points(utf8(id), vectors(points)));
 }
+
 Dictionary KasaneDocumentBridge::set_deform_parent(const String &id, const String &parent) {
     MAIN_THREAD();
     return apply(document_.set_parent(utf8(id), utf8(parent)));
 }
+
 Dictionary KasaneDocumentBridge::set_organization_parent(const String &id, const String &parent) {
     MAIN_THREAD();
     return apply(document_.set_parent(utf8(id), utf8(parent), true));
 }
+
 Dictionary KasaneDocumentBridge::get_deformer_snapshot(const String &id) const {
     MAIN_THREAD();
     const auto *d = document_.get_deformer(utf8(id));
@@ -71,6 +79,7 @@ Dictionary KasaneDocumentBridge::get_deformer_snapshot(const String &id) const {
     }
     return out;
 }
+
 Ref<KasaneDeformerData> KasaneDocumentBridge::get_deformer(const String &id) const {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id() ||
         !document_.get_deformer(utf8(id)))
@@ -80,6 +89,7 @@ Ref<KasaneDeformerData> KasaneDocumentBridge::get_deformer(const String &id) con
     handle->attach(get_instance_id(), generation_, id);
     return handle;
 }
+
 Dictionary KasaneDocumentBridge::evaluate_mesh(const String &id) const {
     MAIN_THREAD();
     kasane::DrawableFrame frame;
@@ -96,5 +106,6 @@ Dictionary KasaneDocumentBridge::evaluate_mesh(const String &id) const {
         }
     return error("MISSING_MESH", "Mesh does not exist.");
 }
+
 #undef MAIN_THREAD
 } // namespace kasane_gd

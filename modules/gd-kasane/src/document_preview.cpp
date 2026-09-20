@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 using namespace godot;
+
 namespace kasane_gd {
 void KasaneDocumentPreview::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_document", "document"), &KasaneDocumentPreview::set_document);
@@ -18,6 +19,7 @@ void KasaneDocumentPreview::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mesh_view", "mesh_id"), &KasaneDocumentPreview::get_mesh_view);
     ClassDB::bind_method(D_METHOD("_document_changed", "change"), &KasaneDocumentPreview::document_changed);
 }
+
 void KasaneDocumentPreview::clear_views() {
     for (const auto &[id, view] : views_)
         memdelete(view);
@@ -26,6 +28,7 @@ void KasaneDocumentPreview::clear_views() {
         memdelete(mask);
     masks_.clear();
 }
+
 void KasaneDocumentPreview::set_document(const Ref<KasaneDocumentBridge> &doc) {
     if (document_ == doc)
         return;
@@ -42,6 +45,7 @@ void KasaneDocumentPreview::set_document(const Ref<KasaneDocumentBridge> &doc) {
     set_process(true);
     refresh();
 }
+
 void KasaneDocumentPreview::set_texture_store(const Ref<KasaneTextureStore> &textures) {
     if (textures_ == textures)
         return;
@@ -52,9 +56,11 @@ void KasaneDocumentPreview::set_texture_store(const Ref<KasaneTextureStore> &tex
         textures_->connect("changed", Callable(this, "refresh"));
     refresh();
 }
+
 void KasaneDocumentPreview::document_changed(const Dictionary &) {
     refresh();
 }
+
 Dictionary KasaneDocumentPreview::refresh() {
     auto finish = [&](Dictionary result) {
         last_result_ = result;
@@ -208,12 +214,14 @@ Dictionary KasaneDocumentPreview::refresh() {
     status["revision"] = frame.source_revision;
     return finish(status);
 }
+
 void KasaneDocumentPreview::_process(double) {
     auto transform = get_global_transform_with_canvas();
     double scale = std::max(0.0001f, std::max(transform[0].length(), transform[1].length()));
     if (std::abs(scale - mask_scale_) > 0.00001)
         refresh();
 }
+
 KasaneMeshView *KasaneDocumentPreview::get_mesh_view(const String &id) const {
     auto it = views_.find(utf8(id));
     return it == views_.end() ? nullptr : it->second;

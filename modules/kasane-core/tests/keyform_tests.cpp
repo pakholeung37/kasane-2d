@@ -9,9 +9,11 @@ using namespace kasane;
         if (!(x))                                                                                            \
             throw std::runtime_error(std::string("line ") + std::to_string(__LINE__) + ": " + #x);           \
     } while (0)
+
 static std::string id(int n) {
     return std::to_string(n) + "1111111-1111-4111-8111-111111111111";
 }
+
 int main() {
     try {
         Document d;

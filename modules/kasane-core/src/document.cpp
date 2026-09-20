@@ -20,6 +20,7 @@ bool valid_uuid(const std::string &id) {
     }
     return nonzero;
 }
+
 Status Document::initialize(std::string id, Canvas canvas) {
     if (initialized())
         return Status::error("ALREADY_INITIALIZED", "Create a new Document to open another model.");
@@ -33,25 +34,31 @@ Status Document::initialize(std::string id, Canvas canvas) {
     canvas_ = canvas;
     return {};
 }
+
 bool Document::contains_id(const std::string &id) const {
     return transforms_.contains(id) || parts_.contains(id) || scene_bindings_.contains(id) || id == id_ ||
            assets_.contains(id) || meshes_.contains(id) || deformers_.contains(id) ||
            parameters_.contains(id) || bindings_.contains(id);
 }
+
 const ImageAsset *Document::get_asset(const std::string &id) const {
     auto it = assets_.find(id);
     return it == assets_.end() ? nullptr : &it->second;
 }
+
 const Mesh *Document::get_mesh(const std::string &id) const {
     auto it = meshes_.find(id);
     return it == meshes_.end() ? nullptr : &it->second;
 }
+
 EditResult Document::failed(Status status) const {
     return {std::move(status), {ChangeKind::none, {}, revision_, {}}, {}};
 }
+
 void Document::advance_state() {
     current_state_id_ = next_state_id_++;
 }
+
 EditResult Document::changed(ChangeKind kind, std::vector<std::string> ids,
                              std::vector<std::string> objects) {
     if (objects.empty())
@@ -59,6 +66,7 @@ EditResult Document::changed(ChangeKind kind, std::vector<std::string> ids,
     advance_state();
     return {{}, {kind, std::move(ids), ++revision_, std::move(objects)}, {}};
 }
+
 EditResult Document::add_asset(ImageAsset asset) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel the active transaction first."));
@@ -75,6 +83,7 @@ EditResult Document::add_asset(ImageAsset asset) {
     asset_order_.push_back(key);
     return changed(ChangeKind::metadata, {}, {key});
 }
+
 EditResult Document::create_mesh(Mesh mesh) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel the active transaction first."));
@@ -117,6 +126,7 @@ EditResult Document::create_mesh(Mesh mesh) {
     mesh_order_.push_back(key);
     return changed(ChangeKind::structure, {key});
 }
+
 EditResult Document::rename_mesh(const std::string &id, std::string name) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel the active transaction first."));
@@ -128,19 +138,23 @@ EditResult Document::rename_mesh(const std::string &id, std::string name) {
     it->second.name = std::move(name);
     return changed(ChangeKind::metadata, {id});
 }
+
 EditResult Document::set_vertex_positions(const std::string &id, std::span<const VertexId> vertices,
                                           std::span<const Vec2> positions) {
     VertexPositionUpdate update{id, {vertices.begin(), vertices.end()}, {positions.begin(), positions.end()}};
     return apply_vertex_position_updates(std::span<const VertexPositionUpdate>(&update, 1));
 }
+
 EditResult Document::apply_vertex_position_updates(std::span<const VertexPositionUpdate> updates) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Use commit_transaction for staged edits."));
+
     struct PositionDelta {
         std::string mesh_id;
         std::vector<uint32_t> slots;
         std::vector<Vec2> after;
     };
+
     std::vector<PositionDelta> deltas;
     std::unordered_map<std::string, std::unordered_set<VertexId>> seen;
     std::vector<std::string> changed_meshes;
@@ -185,12 +199,14 @@ EditResult Document::apply_vertex_position_updates(std::span<const VertexPositio
     }
     return changed(ChangeKind::positions, std::move(changed_meshes));
 }
+
 EditResult Document::apply_vertex_position_updates_at_revision(std::span<const VertexPositionUpdate> updates,
                                                                uint64_t expected_revision) {
     if (revision_ != expected_revision)
         return failed(Status::error("STALE_REVISION", "Document changed since this transaction began."));
     return apply_vertex_position_updates(updates);
 }
+
 Status Document::begin_transaction() {
     if (!initialized())
         return Status::error("NOT_INITIALIZED", "Initialize Document first.");
@@ -200,6 +216,7 @@ Status Document::begin_transaction() {
     staged_updates_.clear();
     return {};
 }
+
 Status Document::stage_vertex_positions(VertexPositionUpdate update) {
     if (!transaction_active_)
         return Status::error("NO_TRANSACTION", "Begin a transaction first.");
@@ -212,6 +229,7 @@ Status Document::stage_vertex_positions(VertexPositionUpdate update) {
     staged_updates_.push_back(std::move(update));
     return {};
 }
+
 EditResult Document::commit_transaction() {
     if (!transaction_active_)
         return failed(Status::error("NO_TRANSACTION", "Begin a transaction first."));
@@ -220,6 +238,7 @@ EditResult Document::commit_transaction() {
     staged_updates_.clear();
     return apply_vertex_position_updates(updates);
 }
+
 Status Document::cancel_transaction() {
     if (!transaction_active_)
         return Status::error("NO_TRANSACTION", "No transaction is active.");
@@ -227,6 +246,7 @@ Status Document::cancel_transaction() {
     transaction_active_ = false;
     return {};
 }
+
 void Document::restore_from(const Document &source) {
     const auto next_revision = revision_ + 1;
     const auto next_state = next_state_id_;
@@ -237,6 +257,7 @@ void Document::restore_from(const Document &source) {
     transaction_active_ = false;
     staged_updates_.clear();
 }
+
 EditResult Document::replace_mesh(Mesh mesh) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel the active transaction first."));
@@ -260,6 +281,7 @@ EditResult Document::replace_mesh(Mesh mesh) {
     vertex_slots_.at(key) = std::move(candidate.vertex_slots_.at(key));
     return changed(ChangeKind::structure, {key});
 }
+
 Status Document::render_indices(const std::string &id, std::vector<uint32_t> &out) const {
     const auto *mesh = get_mesh(id);
     if (!mesh)

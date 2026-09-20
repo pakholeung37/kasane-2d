@@ -7,6 +7,7 @@
 #include <unordered_set>
 
 using namespace godot;
+
 namespace kasane_gd {
 void KasaneDocumentBridge::_bind_methods() {
     ADD_SIGNAL(MethodInfo("changed", PropertyInfo(Variant::DICTIONARY, "change")));
@@ -66,6 +67,7 @@ void KasaneDocumentBridge::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_mesh_snapshot", "id"), &KasaneDocumentBridge::get_mesh_snapshot);
     ClassDB::bind_method(D_METHOD("get_document_summary"), &KasaneDocumentBridge::get_document_summary);
 }
+
 Dictionary KasaneDocumentBridge::initialize(const String &id, Vector2 size, Vector2 origin,
                                             double pixels_per_unit) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
@@ -75,6 +77,7 @@ Dictionary KasaneDocumentBridge::initialize(const String &id, Vector2 size, Vect
                                                   {float(origin.x), float(origin.y)},
                                                   float(pixels_per_unit)}));
 }
+
 Dictionary KasaneDocumentBridge::add_image_asset(const String &id, const String &name, const String &source,
                                                  int64_t width, int64_t height) {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())
@@ -84,12 +87,15 @@ Dictionary KasaneDocumentBridge::add_image_asset(const String &id, const String 
     return apply(
         document_.add_asset({utf8(id), utf8(name), utf8(source), uint32_t(width), uint32_t(height)}));
 }
+
 Dictionary KasaneDocumentBridge::create_mesh(const Dictionary &d) {
     return write_mesh(d, false);
 }
+
 Dictionary KasaneDocumentBridge::replace_mesh(const Dictionary &d) {
     return write_mesh(d, true);
 }
+
 Dictionary KasaneDocumentBridge::write_mesh(const Dictionary &d, bool replace) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
@@ -140,6 +146,7 @@ Dictionary KasaneDocumentBridge::write_mesh(const Dictionary &d, bool replace) {
         mesh.triangles.push_back({triangles[i], triangles[i + 1], triangles[i + 2]});
     return apply(replace ? document_.replace_mesh(std::move(mesh)) : document_.create_mesh(std::move(mesh)));
 }
+
 Dictionary KasaneDocumentBridge::set_vertex_positions(const String &mesh_id,
                                                       const PackedInt64Array &vertex_ids,
                                                       const PackedVector2Array &positions) {
@@ -150,16 +157,19 @@ Dictionary KasaneDocumentBridge::set_vertex_positions(const String &mesh_id,
         return result(s);
     return apply(document_.set_vertex_positions(utf8(mesh_id), vertices, vectors(positions)));
 }
+
 Dictionary KasaneDocumentBridge::rename_mesh(const String &id, const String &name) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
     return apply(document_.rename_mesh(utf8(id), utf8(name)));
 }
+
 Dictionary KasaneDocumentBridge::begin_transaction() {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
     return result(document_.begin_transaction());
 }
+
 Dictionary KasaneDocumentBridge::stage_vertex_positions(const String &mesh_id,
                                                         const PackedInt64Array &vertex_ids,
                                                         const PackedVector2Array &positions) {
@@ -170,16 +180,19 @@ Dictionary KasaneDocumentBridge::stage_vertex_positions(const String &mesh_id,
         return result(status);
     return result(document_.stage_vertex_positions({utf8(mesh_id), std::move(vertices), vectors(positions)}));
 }
+
 Dictionary KasaneDocumentBridge::commit_transaction() {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
     return apply(document_.commit_transaction());
 }
+
 Dictionary KasaneDocumentBridge::cancel_transaction() {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
     return result(document_.cancel_transaction());
 }
+
 Dictionary KasaneDocumentBridge::commit_vertex_updates(const Array &updates, int64_t expected_revision) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
@@ -205,6 +218,7 @@ Dictionary KasaneDocumentBridge::commit_vertex_updates(const Array &updates, int
     return apply(
         document_.apply_vertex_position_updates_at_revision(batch, static_cast<uint64_t>(expected_revision)));
 }
+
 Dictionary KasaneDocumentBridge::get_asset_snapshot(const String &id) const {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
@@ -231,6 +245,7 @@ Ref<KasaneMeshData> KasaneDocumentBridge::get_mesh(const String &id) const {
     handle->attach(get_instance_id(), generation_, id);
     return handle;
 }
+
 Ref<KasaneDocumentState> KasaneDocumentBridge::capture_state() const {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())
         return {};
@@ -243,6 +258,7 @@ Ref<KasaneDocumentState> KasaneDocumentBridge::capture_state() const {
     state->generation = generation_;
     return state;
 }
+
 Dictionary KasaneDocumentBridge::restore_state(const Ref<KasaneDocumentState> &state) {
     if (OS::get_singleton()->get_thread_caller_id() != OS::get_singleton()->get_main_thread_id())
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
@@ -257,6 +273,7 @@ Dictionary KasaneDocumentBridge::restore_state(const Ref<KasaneDocumentState> &s
     emit_signal("changed", out);
     return out;
 }
+
 Dictionary KasaneDocumentBridge::apply(const kasane::EditResult &edit) {
     auto out = result(edit.status);
     out["revision"] = edit.changes.revision;
@@ -288,6 +305,7 @@ Dictionary KasaneDocumentBridge::apply(const kasane::EditResult &edit) {
         emit_signal("changed", out);
     return out;
 }
+
 Dictionary KasaneDocumentBridge::get_mesh_snapshot(const String &id) const {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");
@@ -312,6 +330,7 @@ Dictionary KasaneDocumentBridge::get_mesh_snapshot(const String &id) const {
     out["revision"] = document_.revision();
     return out;
 }
+
 Dictionary KasaneDocumentBridge::get_document_summary() const {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Document bridge requires the main thread.");

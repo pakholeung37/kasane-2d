@@ -3,6 +3,7 @@
 #include <kasane/geometry.hpp>
 #include <array>
 #include <optional>
+
 namespace kasane {
 // Source coordinates: pixels, X right / Y down. Origin is measured from the
 // top-left. Runtime coordinates: (x-origin.x)/ppu, (origin.y-y)/ppu.
@@ -13,6 +14,7 @@ struct Canvas {
     Vec2 origin{};
     float pixels_per_unit = 1;
 };
+
 struct ImageAsset {
     std::string id;
     std::string name;
@@ -21,10 +23,12 @@ struct ImageAsset {
     uint32_t height = 0;
 };
 enum class BlendMode { normal, additive, multiplicative };
+
 struct Appearance {
     float opacity = 1;
     std::array<float, 3> multiply{1, 1, 1}, screen{0, 0, 0};
 };
+
 struct RotationPose {
     Vec2 origin{};
     float angle = 0, scale = 1;
@@ -33,6 +37,7 @@ struct RotationPose {
 // Root coordinates are canvas pixels. Under Rotation coordinates are local
 // runtime units; under Warp they are normalized grid coordinates (unbounded).
 enum class TransformKind { warp, rotation };
+
 struct Transform {
     std::string id, runtime_id, name, part_id, parent_id;
     TransformKind kind = TransformKind::rotation;
@@ -43,11 +48,13 @@ struct Transform {
     std::vector<Vec2> points;
     Appearance appearance;
 };
+
 struct Part {
     std::string id, runtime_id, name, parent_id;
     bool enabled = true;
     float draw_order = 0;
 };
+
 struct SceneKeyform {
     std::vector<float> keys;
     std::vector<Vec2> positions;
@@ -55,6 +62,7 @@ struct SceneKeyform {
     Appearance appearance;
     float draw_order = 0;
 };
+
 struct Mesh {
     std::string id;
     std::string name;
@@ -73,15 +81,18 @@ struct Mesh {
     bool enabled = true, double_sided = true, inverted_mask = false;
     std::vector<std::string> masks;
 };
+
 struct Parameter {
     std::string id, runtime_id, name;
     float minimum = -1, maximum = 1, default_value = 0;
     int32_t decimal_places = 6;
 };
+
 struct BindingAxis {
     std::string parameter_id;
     std::vector<float> keys;
 };
+
 struct MeshKeyform {
     // Explicit key value per axis, in binding axis order.
     std::vector<float> keys;
@@ -89,17 +100,20 @@ struct MeshKeyform {
     Appearance appearance;
     std::optional<float> draw_order;
 };
+
 struct MeshBinding {
     std::string id, mesh_id;
     std::vector<BindingAxis> axes;
     // Stored in canonical Cartesian order: axis 0 varies fastest.
     std::vector<MeshKeyform> keyforms;
 };
+
 struct SceneBinding {
     std::string id, target_id;
     std::vector<BindingAxis> axes;
     std::vector<SceneKeyform> keyforms;
 };
+
 struct VertexMapping {
     VertexId new_id;
     std::optional<VertexId> old_id;

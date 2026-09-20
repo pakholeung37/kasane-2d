@@ -4,6 +4,7 @@
 
 namespace kasane {
 using PreviewValues = std::unordered_map<std::string, float>;
+
 struct Drawable {
     std::string id, runtime_id, texture_asset_id;
     int32_t texture_slot = 0;
@@ -16,17 +17,20 @@ struct Drawable {
     bool enabled = true, visible = true, double_sided = true, inverted_mask = false;
     std::vector<std::string> masks;
 };
+
 struct EvaluatedParameter {
     std::string id;
     float requested, value;
     bool clamped;
 };
+
 struct DrawableFrame {
     uint64_t source_revision = 0;
     Canvas canvas;
     std::vector<EvaluatedParameter> parameters;
     std::vector<Drawable> drawables;
 };
+
 // Pure evaluation: does not change Document or use an exporter, scene, file,
 // texture loader or Core runtime model. Missing values use parameter defaults.
 // Failed evaluation leaves the previous output intact.

@@ -24,9 +24,9 @@ against identical GPU thresholds during M1 acceptance.
 
 ```sh
 python3 -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
-python3 tools/validate_m1_godot.py
+python3 tools/validate_godot.py
 # Requires the existing gd-cubism reference build and Pillow/numpy:
-target/kasane/buildenv/bin/python tools/validate_m1_gpu.py
+target/kasane/buildenv/bin/python tools/validate_gpu.py
 ```
 
 The unified [M1 acceptance](../../docs/editor/M1-ACCEPTANCE.md) command rebuilds

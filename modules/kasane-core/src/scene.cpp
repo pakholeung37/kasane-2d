@@ -15,35 +15,42 @@ Status validate_appearance(const Appearance &a, const std::string &id) {
                 return Status::error("INVALID_COLOR", id);
     return {};
 }
+
 Status validate_draw_order(float order, const std::string &id) {
     if (!std::isfinite(order) || order < -32768 || order > 32767)
         return Status::error("INVALID_DRAW_ORDER", id + ": supported order range -32768..32767");
     return {};
 }
+
 static Status pose_valid(const RotationPose &p, const std::string &id) {
     if (!std::isfinite(p.origin.x) || !std::isfinite(p.origin.y) || !std::isfinite(p.angle) ||
         !std::isfinite(p.scale) || p.scale < 0)
         return Status::error("INVALID_ROTATION", id);
     return {};
 }
+
 const Transform *Document::get_transform(const std::string &id) const {
     auto i = transforms_.find(id);
     return i == transforms_.end() ? nullptr : &i->second;
 }
+
 const Part *Document::get_part(const std::string &id) const {
     auto i = parts_.find(id);
     return i == parts_.end() ? nullptr : &i->second;
 }
+
 const SceneBinding *Document::get_scene_binding(const std::string &id) const {
     auto i = scene_bindings_.find(id);
     return i == scene_bindings_.end() ? nullptr : &i->second;
 }
+
 const SceneBinding *Document::binding_for_scene(const std::string &id) const {
     for (const auto &bid : scene_binding_order_)
         if (scene_bindings_.at(bid).target_id == id)
             return &scene_bindings_.at(bid);
     return nullptr;
 }
+
 Status Document::validate_part(const Part &p) const {
     if (!valid_uuid(p.id) || p.runtime_id.empty())
         return Status::error("INVALID_ID", p.id);
@@ -61,6 +68,7 @@ Status Document::validate_part(const Part &p) const {
     }
     return validate_draw_order(p.draw_order, p.id);
 }
+
 Status Document::validate_transform(const Transform &t) const {
     if (!valid_uuid(t.id) || t.runtime_id.empty())
         return Status::error("INVALID_ID", t.id);
@@ -93,6 +101,7 @@ Status Document::validate_transform(const Transform &t) const {
     }
     return validate_appearance(t.appearance, t.id);
 }
+
 Status Document::validate_mesh_properties(const Mesh &m) const {
     if (!m.part_id.empty() && !get_part(m.part_id))
         return Status::error("MISSING_PART", m.id + ".part_id");
@@ -132,6 +141,7 @@ Status Document::validate_mesh_properties(const Mesh &m) const {
     }
     return {};
 }
+
 EditResult Document::create_part(Part p) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", p.id));
@@ -148,6 +158,7 @@ EditResult Document::create_part(Part p) {
     part_order_.push_back(id);
     return changed(ChangeKind::structure, mesh_order_, {id});
 }
+
 EditResult Document::replace_part(Part p) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", p.id));
@@ -159,6 +170,7 @@ EditResult Document::replace_part(Part p) {
     parts_[id] = std::move(p);
     return changed(ChangeKind::structure, mesh_order_, {id});
 }
+
 EditResult Document::create_transform(Transform t) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", t.id));
@@ -175,6 +187,7 @@ EditResult Document::create_transform(Transform t) {
     transform_order_.push_back(id);
     return changed(ChangeKind::structure, mesh_order_, {id});
 }
+
 EditResult Document::replace_transform(Transform t) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", t.id));
@@ -190,6 +203,7 @@ EditResult Document::replace_transform(Transform t) {
     transforms_[id] = std::move(t);
     return changed(ChangeKind::structure, mesh_order_, {id});
 }
+
 Status Document::canonicalize_scene_binding(SceneBinding &b) const {
     if (!valid_uuid(b.id))
         return Status::error("INVALID_ID", b.id);
@@ -250,6 +264,7 @@ Status Document::canonicalize_scene_binding(SceneBinding &b) const {
     b.keyforms = std::move(ordered);
     return {};
 }
+
 EditResult Document::create_scene_binding(SceneBinding b) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", b.id));
@@ -262,6 +277,7 @@ EditResult Document::create_scene_binding(SceneBinding b) {
     scene_binding_order_.push_back(id);
     return changed(ChangeKind::structure, mesh_order_, {id, target});
 }
+
 EditResult Document::replace_scene_binding(SceneBinding b) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", b.id));
@@ -273,6 +289,7 @@ EditResult Document::replace_scene_binding(SceneBinding b) {
     scene_bindings_[id] = std::move(b);
     return changed(ChangeKind::structure, mesh_order_, {id, target, previous});
 }
+
 EditResult Document::set_scene_keyform(const std::string &id, SceneKeyform f) {
     auto old = get_scene_binding(id);
     if (!old)
@@ -285,6 +302,7 @@ EditResult Document::set_scene_keyform(const std::string &id, SceneKeyform f) {
     *it = std::move(f);
     return replace_scene_binding(std::move(b));
 }
+
 EditResult Document::replace_canvas(Canvas canvas) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", id_));
@@ -296,6 +314,7 @@ EditResult Document::replace_canvas(Canvas canvas) {
     canvas_ = canvas;
     return changed(ChangeKind::structure, mesh_order_, {id_});
 }
+
 EditResult Document::replace_asset(ImageAsset a) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", a.id));
@@ -307,6 +326,7 @@ EditResult Document::replace_asset(ImageAsset a) {
     assets_[id] = std::move(a);
     return changed(ChangeKind::metadata, mesh_order_, {id});
 }
+
 std::vector<std::string> Document::sorted_parts() const {
     std::vector<std::string> result;
     std::unordered_set<std::string> seen;
@@ -320,6 +340,7 @@ std::vector<std::string> Document::sorted_parts() const {
         visit(id);
     return result;
 }
+
 std::vector<std::string> Document::sorted_transforms() const {
     std::vector<std::string> result;
     std::unordered_set<std::string> seen;

@@ -11,6 +11,7 @@ Status validate_positions(std::span<const Vec2> positions) {
     }
     return {};
 }
+
 Status validate_render_mesh(std::span<const Vec2> positions, std::span<const Vec2> uvs,
                             std::span<const uint32_t> indices) {
     if (positions.size() < 3 || positions.size() > INT32_MAX || positions.size() != uvs.size())

@@ -11,6 +11,7 @@ const Deformer *Document::get_deformer(const std::string &id) const {
     auto it = deformers_.find(id);
     return it == deformers_.end() ? nullptr : &it->second;
 }
+
 EditResult Document::create_deformer(Deformer d) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Finish the position transaction first."));
@@ -45,11 +46,13 @@ EditResult Document::create_deformer(Deformer d) {
     deformer_order_.push_back(id);
     return changed(ChangeKind::metadata, {}, {id});
 }
+
 std::string Document::parent_of(const std::string &id, bool organization) const {
     const auto &links = organization ? organization_parents_ : deformation_parents_;
     auto it = links.find(id);
     return it == links.end() ? std::string{} : it->second;
 }
+
 std::vector<std::string> Document::affected_meshes(const std::string &id) const {
     std::vector<std::string> affected;
     for (const auto &mesh : mesh_order_) {
@@ -64,6 +67,7 @@ std::vector<std::string> Document::affected_meshes(const std::string &id) const 
     }
     return affected;
 }
+
 EditResult Document::set_parent(const std::string &id, const std::string &parent, bool organization) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Finish the position transaction first."));
@@ -99,6 +103,7 @@ EditResult Document::set_parent(const std::string &id, const std::string &parent
     return changed(organization ? ChangeKind::metadata : ChangeKind::positions,
                    organization ? std::vector<std::string>{} : affected_meshes(id), {id});
 }
+
 EditResult Document::set_rotation(const std::string &id, Vec2 center, float angle) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Finish the position transaction first."));
@@ -114,6 +119,7 @@ EditResult Document::set_rotation(const std::string &id, Vec2 center, float angl
     d.angle_degrees = angle;
     return changed(ChangeKind::positions, affected_meshes(id), {id});
 }
+
 EditResult Document::set_warp_points(const std::string &id, std::span<const Vec2> points) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Finish the position transaction first."));
@@ -130,6 +136,7 @@ EditResult Document::set_warp_points(const std::string &id, std::span<const Vec2
     d.control_points.assign(points.begin(), points.end());
     return changed(ChangeKind::positions, affected_meshes(id), {id});
 }
+
 Status Document::evaluate_legacy_mesh(const std::string &id, std::vector<Vec2> &out) const {
     const auto *mesh = get_mesh(id);
     if (!mesh)

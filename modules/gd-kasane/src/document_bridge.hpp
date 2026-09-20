@@ -17,6 +17,7 @@ class KasaneDocumentState : public godot::RefCounted {
   protected:
     static void _bind_methods() {}
 };
+
 class KasaneDocumentBridge : public godot::RefCounted {
     GDCLASS(KasaneDocumentBridge, godot::RefCounted)
     kasane::Document document_;
@@ -50,8 +51,11 @@ class KasaneDocumentBridge : public godot::RefCounted {
     godot::Ref<KasaneMeshData> get_mesh(const godot::String &id) const;
     godot::Ref<KasaneDocumentState> capture_state() const;
     godot::Dictionary restore_state(const godot::Ref<KasaneDocumentState> &state);
+
     uint64_t generation() const { return generation_; }
+
     const kasane::Document &source() const { return document_; }
+
     kasane::Status evaluate(kasane::DrawableFrame &out) const;
     void replace_source(const kasane::Document &);
     godot::Dictionary get_frame() const;

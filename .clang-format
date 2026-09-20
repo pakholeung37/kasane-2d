@@ -1,3 +1,4 @@
+# Default style for Kasane-owned C and C++ code.
 BasedOnStyle: LLVM
 IndentWidth: 4
 ColumnLimit: 110
@@ -6,3 +7,4 @@ AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 SortIncludes: Never
 PointerAlignment: Right
+SeparateDefinitionBlocks: Always

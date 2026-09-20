@@ -79,6 +79,12 @@ if(BUILD_TESTING AND KASANE_MOC3_CONFORMANCE)
       COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/test_validation_contract.py
               $<TARGET_FILE:stageplay>)
   endif()
+  if(NOT WIN32)
+    add_test(NAME purism_c99_bundle
+      COMMAND sh ${CMAKE_CURRENT_SOURCE_DIR}/../../tools/check_purism_bundle.sh
+              ${CMAKE_C_COMPILER}
+              ${CMAKE_CURRENT_SOURCE_DIR}/../purism-core/scripts/bundle.sh)
+  endif()
   add_executable(kasane_moc3_purism_tests tests/moc3_tests.cpp)
   kasane_warnings(kasane_moc3_purism_tests)
   target_link_libraries(kasane_moc3_purism_tests PRIVATE kasane_package PurismCore PNG::PNG)

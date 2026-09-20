@@ -78,19 +78,18 @@ Purism 原运行时和 Kasane 求值器调用同一份函数。提取不新增�
 从仓库根目录执行：
 
 ```sh
-python3 tools/validate_m1_core.py
-# 旧 validate_m1_static.py 保留为同一入口的兼容转发。
+python3 tools/validate_core.py
 
 # 安装 SCons 的 Python 环境；示例使用本地构建环境。
 target/kasane/buildenv/bin/python -m SCons -C modules/gd-kasane platform=macos arch=arm64 target=template_debug -j8
-python3 tools/validate_m1_godot.py
+python3 tools/validate_godot.py
 ```
 
-- Core 报告：单独运行在 `target/kasane/m1-core/report.json`，统一验收在 `target/kasane/runs/<run-id>/core/report.json`。7 项 CTest 包括基础编辑、Keyform 数据契约、legacy 回归、两个 Core 的生成文件对照、Purism 单元及验证器负例；外部模型 conformance 需独立运行。
+- Core 报告：当前独立运行在 `target/kasane/core-regression/report.json`；历史整体验收记录在 `target/kasane/runs/<run-id>/core/report.json`。CTest 包括基础编辑、Keyform 数据契约、legacy 回归、两个 Core 的生成文件对照、Purism 单元、验证器负例与 C99 bundle；外部模型 conformance 需独立运行。
 - 双 Core 测试覆盖三形态端点和中点、非对称 3×3、2×2×2、参数创建顺序与绑定轴顺序不同、预览范围钳制、单关键值轴、不可见绑定、修改中间形态、重绑定、完整拓扑替换和引用删除。
 - `samples.json` 保留实际参数采样；`comparisons.json` 保留对象 ID、断言位置、expected/actual 和误差。
 - `package/` 保留静态用例；`package-1d/`、`package-2d/`、`package-3d/` 提供相应的真实 MOC3、model3.json 和 PNG。
-- Godot 报告：`target/kasane/godot-boundary/report.json`。59 项 headless 集成检查覆盖脱离场景树编辑、多个预览、资源错误、预览生命周期、源数据保存重开、失败原子性与句柄失效。GPU 另由 `validate_m1_gpu.py` 执行，统一门禁为 `validate_m1.py`。
+- Godot 报告：`target/kasane/godot-boundary/report.json`。59 项 headless 集成检查覆盖脱离场景树编辑、多个预览、资源错误、预览生命周期、源数据保存重开、失败原子性与句柄失效。GPU 另由 `validate_gpu.py` 独立执行。
 - Purism v5 ABI 另通过当前新模型对照与 unit；其既有 stageplay 测试源使用 v6 专有接口，v5 构建失败，未计入通过项。v6 原有完整回归通过。
 - 共享头的 C99 单文件 bundle 编译和运行通过。
 

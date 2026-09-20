@@ -13,9 +13,11 @@ namespace kasane_gd {
 inline std::string utf8(const godot::String &s) {
     return s.utf8().get_data();
 }
+
 inline godot::String string(const std::string &s) {
     return godot::String::utf8(s.c_str());
 }
+
 inline godot::Dictionary result(const kasane::Status &status) {
     godot::Dictionary out;
     out["ok"] = status.ok();
@@ -23,9 +25,11 @@ inline godot::Dictionary result(const kasane::Status &status) {
     out["message"] = string(status.message);
     return out;
 }
+
 inline godot::Dictionary error(const char *code, const char *message) {
     return result(kasane::Status::error(code, message));
 }
+
 inline std::vector<kasane::Vec2> vectors(const godot::PackedVector2Array &input) {
     std::vector<kasane::Vec2> out;
     out.reserve(input.size());
@@ -33,6 +37,7 @@ inline std::vector<kasane::Vec2> vectors(const godot::PackedVector2Array &input)
         out.push_back({static_cast<float>(input[i].x), static_cast<float>(input[i].y)});
     return out;
 }
+
 inline godot::PackedVector2Array vectors(std::span<const kasane::Vec2> input) {
     godot::PackedVector2Array out;
     out.resize(input.size());
@@ -40,6 +45,7 @@ inline godot::PackedVector2Array vectors(std::span<const kasane::Vec2> input) {
         out.set(i, {input[i].x, input[i].y});
     return out;
 }
+
 inline kasane::Status ids(const godot::PackedInt64Array &input, std::vector<uint32_t> &out) {
     out.reserve(input.size());
     for (int64_t i = 0; i < input.size(); ++i) {
@@ -49,6 +55,7 @@ inline kasane::Status ids(const godot::PackedInt64Array &input, std::vector<uint
     }
     return {};
 }
+
 inline godot::PackedInt64Array ids(std::span<const uint32_t> input) {
     godot::PackedInt64Array out;
     out.resize(input.size());

@@ -18,39 +18,49 @@ struct Section {
     size_t width;
     int count_index;
 };
+
 constexpr Section schema[] = {
 #define SECTION(name, width, count) {name, width, count},
 #include "moc3_sections.inc"
 #undef SECTION
 };
 using Bytes = std::vector<uint8_t>;
+
 void u32(Bytes &b, uint32_t v) {
     for (unsigned i = 0; i < 4; ++i)
         b.push_back(uint8_t(v >> (8 * i)));
 }
+
 void f32(Bytes &b, float v) {
     u32(b, std::bit_cast<uint32_t>(v));
 }
+
 void patch_u32(Bytes &b, size_t at, uint32_t v) {
     for (unsigned i = 0; i < 4; ++i)
         b.at(at + i) = uint8_t(v >> (8 * i));
 }
+
 int32_t checked(size_t n, const std::string &field) {
     if (n > size_t(INT32_MAX))
         throw std::length_error(field + ": exceeds signed 32-bit count");
     return int32_t(n);
 }
+
 struct Layout {
     std::array<uint32_t, 64> counts{};
     std::array<Bytes, std::size(schema)> data;
+
     Bytes &field(std::string_view name) {
         for (size_t i = 0; i < std::size(schema); ++i)
             if (name == schema[i].name)
                 return data[i];
         throw std::logic_error("Unknown MOC3 field: " + std::string(name));
     }
+
     void integer(std::string_view name, int32_t v) { u32(field(name), uint32_t(v)); }
+
     void scalar(std::string_view name, float v) { f32(field(name), v); }
+
     Bytes finish() {
         for (auto n : counts)
             u32(data[0], n);
@@ -83,11 +93,13 @@ struct Layout {
         return out;
     }
 };
+
 Status error(const std::string &code, const std::string &id, const std::string &field,
              const std::string &why) {
     return Status::error(code, id + "." + field + ": " + why);
 }
 } // namespace
+
 Status encode_moc3(const Document &doc, Moc3Artifact &out) {
     if (doc.transaction_active())
         return Status::error("TRANSACTION_ACTIVE", "Commit or cancel edits before export");
@@ -119,10 +131,12 @@ Status encode_moc3(const Document &doc, Moc3Artifact &out) {
     for (const auto &id : transforms)
         if (!representable(doc.get_transform(id)->runtime_id))
             return error("UNREPRESENTABLE_ID", id, "runtime_id", "requires 1..63 printable ASCII bytes");
+
     struct BindingView {
         std::string id;
         const std::vector<BindingAxis> *axes;
     };
+
     std::vector<BindingView> all_bindings;
     for (const auto &id : doc.binding_order())
         all_bindings.push_back({id, &doc.get_binding(id)->axes});

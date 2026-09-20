@@ -3,6 +3,7 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/classes/resource_loader.hpp>
 using namespace godot;
+
 namespace kasane_gd {
 void KasaneTextureStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("set_texture", "asset_id", "texture"), &KasaneTextureStore::set_texture);
@@ -11,6 +12,7 @@ void KasaneTextureStore::_bind_methods() {
     ClassDB::bind_method(D_METHOD("clear"), &KasaneTextureStore::clear);
     ADD_SIGNAL(MethodInfo("changed"));
 }
+
 Dictionary KasaneTextureStore::set_texture(const String &id, const Ref<Texture2D> &texture) {
     if (texture.is_null() || texture->get_width() <= 0 || texture->get_height() <= 0)
         return error("INVALID_TEXTURE", "Provide a loaded texture.");
@@ -18,6 +20,7 @@ Dictionary KasaneTextureStore::set_texture(const String &id, const Ref<Texture2D
     emit_signal("changed");
     return result({});
 }
+
 Dictionary KasaneTextureStore::load_asset(const Ref<KasaneDocumentBridge> &doc, const String &id) {
     if (doc.is_null())
         return error("MISSING_DOCUMENT", "Provide a Document.");
@@ -33,10 +36,12 @@ Dictionary KasaneTextureStore::load_asset(const Ref<KasaneDocumentBridge> &doc, 
         return error("RESOURCE_MISMATCH", "Loaded texture dimensions do not match source metadata.");
     return set_texture(id, texture);
 }
+
 Ref<Texture2D> KasaneTextureStore::get_texture(const String &id) const {
     auto it = textures_.find(utf8(id));
     return it == textures_.end() ? Ref<Texture2D>{} : it->second;
 }
+
 void KasaneTextureStore::clear() {
     textures_.clear();
     emit_signal("changed");

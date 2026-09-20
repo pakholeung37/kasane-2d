@@ -9,16 +9,19 @@ const Parameter *Document::get_parameter(const std::string &id) const {
     auto it = parameters_.find(id);
     return it == parameters_.end() ? nullptr : &it->second;
 }
+
 const MeshBinding *Document::get_binding(const std::string &id) const {
     auto it = bindings_.find(id);
     return it == bindings_.end() ? nullptr : &it->second;
 }
+
 const MeshBinding *Document::binding_for_mesh(const std::string &id) const {
     for (const auto &key : binding_order_)
         if (bindings_.at(key).mesh_id == id)
             return &bindings_.at(key);
     return nullptr;
 }
+
 Status Document::validate_parameter(const Parameter &p) const {
     if (!valid_uuid(p.id))
         return Status::error("INVALID_ID", p.id + ": parameter requires a canonical UUID");
@@ -36,6 +39,7 @@ Status Document::validate_parameter(const Parameter &p) const {
         return Status::error("INVALID_PARAMETER", p.id + ".decimal_places must be 0..9");
     return {};
 }
+
 Status Document::canonicalize_binding(MeshBinding &b) const {
     if (!valid_uuid(b.id))
         return Status::error("INVALID_ID", b.id + ": binding requires a canonical UUID");
@@ -98,6 +102,7 @@ Status Document::canonicalize_binding(MeshBinding &b) const {
     b.keyforms = std::move(ordered);
     return {};
 }
+
 EditResult Document::create_parameter(Parameter p) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
@@ -114,6 +119,7 @@ EditResult Document::create_parameter(Parameter p) {
     parameter_order_.push_back(id);
     return changed(ChangeKind::structure, {}, {id});
 }
+
 EditResult Document::replace_parameter(Parameter p) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
@@ -143,6 +149,7 @@ EditResult Document::replace_parameter(Parameter p) {
     parameters_[id] = std::move(p);
     return changed(ChangeKind::structure, std::move(meshes), {id});
 }
+
 EditResult Document::create_binding(MeshBinding b) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
@@ -155,6 +162,7 @@ EditResult Document::create_binding(MeshBinding b) {
     binding_order_.push_back(id);
     return changed(ChangeKind::structure, {mesh}, {id, mesh});
 }
+
 EditResult Document::replace_binding(MeshBinding b) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
@@ -171,6 +179,7 @@ EditResult Document::replace_binding(MeshBinding b) {
         affected.push_back(previous);
     return changed(ChangeKind::structure, affected, {id, mesh, previous});
 }
+
 EditResult Document::set_mesh_keyform(const std::string &id, MeshKeyform form) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
@@ -189,6 +198,7 @@ EditResult Document::set_mesh_keyform(const std::string &id, MeshKeyform form) {
     bindings_[id] = std::move(b);
     return changed(ChangeKind::positions, {mesh}, {id, mesh});
 }
+
 EditResult Document::replace_mesh_with_keyforms(Mesh mesh, std::span<const VertexMapping> mapping,
                                                 std::vector<MeshKeyform> forms) {
     if (mutation_blocked())
@@ -228,6 +238,7 @@ EditResult Document::replace_mesh_with_keyforms(Mesh mesh, std::span<const Verte
     bindings_[binding_id] = std::move(candidate.bindings_.at(binding_id));
     return changed(ChangeKind::structure, {id}, {id, binding_id});
 }
+
 std::vector<std::string> Document::references_to(const std::string &id) const {
     std::vector<std::string> refs;
     for (const auto &m : mesh_order_)
@@ -266,6 +277,7 @@ std::vector<std::string> Document::references_to(const std::string &id) const {
     refs.erase(std::unique(refs.begin(), refs.end()), refs.end());
     return refs;
 }
+
 EditResult Document::erase_object(const std::string &id) {
     if (mutation_blocked())
         return failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));

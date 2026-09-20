@@ -8,6 +8,7 @@
 #include <cstring>
 
 using namespace godot;
+
 namespace kasane_gd {
 void KasaneMeshView::_bind_methods() {
     ClassDB::bind_method(D_METHOD("initialize", "positions", "uvs", "indices", "texture"),
@@ -17,6 +18,7 @@ void KasaneMeshView::_bind_methods() {
     ClassDB::bind_method(D_METHOD("get_render_stats"), &KasaneMeshView::get_render_stats);
     ClassDB::bind_method(D_METHOD("get_positions_snapshot"), &KasaneMeshView::get_positions_snapshot);
 }
+
 Dictionary KasaneMeshView::initialize(const PackedVector2Array &positions, const PackedVector2Array &uvs,
                                       const PackedInt32Array &indices, const Ref<Texture2D> &texture) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
@@ -56,6 +58,7 @@ Dictionary KasaneMeshView::initialize(const PackedVector2Array &positions, const
     ++creations_;
     return result({});
 }
+
 Dictionary KasaneMeshView::update_positions(const PackedVector2Array &positions) {
     if (!(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()))
         return error("WRONG_THREAD", "Rendering calls require the main thread.");
@@ -79,6 +82,7 @@ Dictionary KasaneMeshView::update_positions(const PackedVector2Array &positions)
     ++uploads_;
     return result({});
 }
+
 void KasaneMeshView::update_bounds() {
     float left = positions_[0].x, right = left, top = positions_[0].y, bottom = top;
     for (const auto &p : positions_) {
@@ -89,6 +93,7 @@ void KasaneMeshView::update_bounds() {
     }
     surface_->set_custom_aabb(AABB(Vector3(left, top, -0.5), Vector3(right - left, bottom - top, 1)));
 }
+
 void KasaneMeshView::clear() {
     ERR_FAIL_COND_MSG(
         !(OS::get_singleton()->get_thread_caller_id() == OS::get_singleton()->get_main_thread_id()),
@@ -98,6 +103,7 @@ void KasaneMeshView::clear() {
     surface_.unref();
     positions_.clear();
 }
+
 Dictionary KasaneMeshView::get_render_stats() const {
     Dictionary out;
     out["initialized"] = surface_.is_valid();

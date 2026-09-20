@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reproduce all M1 source/codec/dual-Core checks; GPU and Godot run in validate_m1.py."""
+"""Run source, codec, and dual-Core regression checks."""
 import argparse
 import hashlib
 import json
@@ -101,19 +101,18 @@ def png(slot):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--sdk', type=Path, default=ROOT/'third_party/CubismSdkForNative-5-r.5')
-    parser.add_argument('--output-dir', type=Path, default=ROOT/'target/kasane/m1-core')
+    parser.add_argument('--output-dir', type=Path, default=ROOT/'target/kasane/core-regression')
     args = parser.parse_args()
     parent = ROOT/'target/kasane'
     parent.mkdir(parents=True, exist_ok=True)
-    stage = Path(tempfile.mkdtemp(prefix='m1-core-', dir=parent))
-    report = dict(scope='M1 source model, editing, nested transforms, drawing and package publication', status='failed', milestone_status='not_run',
+    stage = Path(tempfile.mkdtemp(prefix='core-regression-', dir=parent))
+    report = dict(scope='source model, editing, nested transforms, drawing and package publication', status='failed',
                   git_revision=git('rev-parse', 'HEAD'), source_sha256=source_fingerprint(), working_tree=git('status', '--short'),
                   submodules=git('submodule', 'status'), purism_working_tree=git('-C', 'modules/purism-core', 'status', '--short'), platform=platform.platform(),
                   architecture=platform.machine(), build_configuration='Debug', moc_version=5,
                   coordinate_units='runtime model units; source pixels; pixels_per_unit=100',
                   canvas=dict(width=640, height=480, origin=[271, 193]),
-                  parameter_samples=[{}], checks=[], gpu=dict(status='not_run',
-                  reason='Run tools/validate_m1.py for the complete GPU and Godot gate'))
+                  parameter_samples=[{}], checks=[])
     try:
         fields = schema()
         if not (args.sdk/'Core/include/Live2DCubismCore.h').is_file():
@@ -173,7 +172,6 @@ def main():
                            for p in sorted(stage.rglob('*')) if p.is_file()]
         report['checks'].append(dict(name='schema_layout_resource_references', status='passed'))
         report['status'] = 'passed'
-        report['remaining_m1'] = ['Godot integration and GPU image gate (tools/validate_m1.py)']
         (stage/'report.json').write_text(json.dumps(report, indent=2)+'\n')
         # Publish only after all required checks of this increment have passed.
         # The previous verified run survives all build/validation/write failures.
@@ -190,7 +188,7 @@ def main():
             raise
         if backup.exists():
             shutil.rmtree(backup)
-        print(f'M1 core checks passed; use validate_m1.py for complete milestone acceptance. Report: {destination / "report.json"}')
+        print(f'Core regression checks passed. Report: {destination / "report.json"}')
         return 0
     except Exception as exc:
         report['error'] = str(exc)

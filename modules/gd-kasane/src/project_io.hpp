@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 #pragma once
 #include "document_bridge.hpp"
+
 namespace kasane_gd {
 // Source persistence only; opening a project neither loads textures nor creates
 // nodes. This prototype format is not the M2 packaged-project implementation.

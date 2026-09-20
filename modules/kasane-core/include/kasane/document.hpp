@@ -6,17 +6,20 @@
 
 namespace kasane {
 enum class ChangeKind { none, metadata, positions, structure };
+
 struct ChangeSet {
     ChangeKind kind = ChangeKind::none;
     std::vector<std::string> mesh_ids;
     uint64_t revision = 0;
     std::vector<std::string> object_ids;
 };
+
 struct EditResult {
     Status status;
     ChangeSet changes;
     std::vector<std::string> referrers;
 };
+
 struct VertexPositionUpdate {
     std::string mesh_id;
     std::vector<VertexId> vertex_ids;
@@ -29,20 +32,33 @@ class Document {
   public:
     static constexpr uint32_t schema_version = 3;
     Status initialize(std::string id, Canvas canvas);
+
     bool initialized() const { return !id_.empty(); }
+
     const std::string &id() const { return id_; }
+
     Canvas canvas() const { return canvas_; }
+
     uint64_t revision() const { return revision_; }
+
     bool modified() const { return current_state_id_ != saved_state_id_; }
+
     bool transaction_active() const { return transaction_active_; }
+
     void mark_saved() { saved_state_id_ = current_state_id_; }
+
     const std::vector<std::string> &asset_order() const { return asset_order_; }
+
     const std::vector<std::string> &mesh_order() const { return mesh_order_; }
+
     size_t asset_count() const { return assets_.size(); }
+
     const ImageAsset *get_asset(const std::string &id) const;
     const Mesh *get_mesh(const std::string &id) const;
     const Deformer *get_deformer(const std::string &id) const;
+
     const std::vector<std::string> &deformer_order() const { return deformer_order_; }
+
     EditResult create_deformer(Deformer deformer);
     EditResult set_rotation(const std::string &id, Vec2 center, float angle_degrees);
     EditResult set_warp_points(const std::string &id, std::span<const Vec2> points);
@@ -66,8 +82,11 @@ class Document {
     // Restore source data while keeping the live revision monotonic.
     void restore_from(const Document &source);
     EditResult replace_mesh(Mesh mesh);
+
     const std::vector<std::string> &parameter_order() const { return parameter_order_; }
+
     const std::vector<std::string> &binding_order() const { return binding_order_; }
+
     const Parameter *get_parameter(const std::string &) const;
     const MeshBinding *get_binding(const std::string &) const;
     const MeshBinding *binding_for_mesh(const std::string &) const;
@@ -79,9 +98,13 @@ class Document {
     EditResult replace_mesh_with_keyforms(Mesh, std::span<const VertexMapping>, std::vector<MeshKeyform>);
     std::vector<std::string> references_to(const std::string &) const;
     EditResult erase_object(const std::string &);
+
     const std::vector<std::string> &transform_order() const { return transform_order_; }
+
     const std::vector<std::string> &part_order() const { return part_order_; }
+
     const std::vector<std::string> &scene_binding_order() const { return scene_binding_order_; }
+
     const Transform *get_transform(const std::string &) const;
     const Part *get_part(const std::string &) const;
     const SceneBinding *get_scene_binding(const std::string &) const;
@@ -131,7 +154,9 @@ class Document {
     uint64_t current_state_id_ = 0;
     uint64_t saved_state_id_ = 0;
     bool contains_id(const std::string &id) const;
+
     bool mutation_blocked() const { return transaction_active_; }
+
     void advance_state();
     EditResult failed(Status status) const;
     EditResult changed(ChangeKind kind, std::vector<std::string> ids = {},
@@ -139,6 +164,7 @@ class Document {
     Status validate_parameter(const Parameter &) const;
     Status canonicalize_binding(MeshBinding &) const;
 };
+
 Status validate_appearance(const Appearance &, const std::string &);
 Status validate_draw_order(float, const std::string &);
 bool valid_uuid(const std::string &id);

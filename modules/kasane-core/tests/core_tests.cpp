@@ -15,6 +15,7 @@ using namespace kasane;
 static const std::string DOC = "11111111-1111-4111-8111-111111111111";
 static const std::string ASSET = "22222222-2222-4222-8222-222222222222";
 static const std::string MESH = "33333333-3333-4333-8333-333333333333";
+
 Mesh sample() {
     return {MESH,
             "quad",
@@ -24,6 +25,7 @@ Mesh sample() {
             {{0, 0}, {0, 1}, {1, 1}, {1, 0}},
             {{{40, 10, 90}}, {{40, 90, 20}}}};
 }
+
 int main() {
     Document doc;
     CHECK(!doc.create_mesh(sample()).status.ok());
