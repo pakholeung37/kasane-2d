@@ -3,9 +3,11 @@ use std::fmt;
 
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::types::{
-    Appearance, BindingAxis, BlendMode, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform,
-    Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind,
-    Vec2,
+    Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint,
+    BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaKeyforms, DeltaMeshKeyform,
+    DeltaPartKeyform, DeltaRotationKeyform, DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset,
+    Mesh, MeshBinding, MeshKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform,
+    Status, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
 use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
@@ -278,6 +280,107 @@ impl From<BindingAxisWire> for BindingAxis {
     }
 }
 
+#[derive(Serialize, Deserialize)]
+struct BlendShapeKeyTableWire {
+    id: String,
+    parameter_id: String,
+    keys: Vec<f32>,
+    base_key_idx: usize,
+}
+
+#[derive(Serialize, Deserialize)]
+struct BlendShapeConstraintWire {
+    id: String,
+    parameter_id: String,
+    keys: Vec<f32>,
+    weights: Vec<f32>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeltaMeshKeyformWire {
+    positions: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    draw_order: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screen: Option<[f32; 3]>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeltaWarpKeyformWire {
+    points: Vec<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screen: Option<[f32; 3]>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeltaRotationKeyformWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    angle: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scale: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opacity: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screen: Option<[f32; 3]>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct DeltaPartKeyformWire {
+    draw_order: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(tag = "type", content = "items", rename_all = "snake_case")]
+enum DeltaKeyformsWire {
+    Mesh(Vec<DeltaMeshKeyformWire>),
+    Warp(Vec<DeltaWarpKeyformWire>),
+    Rotation(Vec<DeltaRotationKeyformWire>),
+    Part(Vec<DeltaPartKeyformWire>),
+}
+
+#[derive(Serialize, Deserialize)]
+struct BlendShapeBindingWire {
+    id: String,
+    target_id: String,
+    target_kind: BlendShapeTargetKind,
+    key_table_id: String,
+    constraint_ids: Vec<String>,
+    keyforms: DeltaKeyformsWire,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GlueVertexPairWire {
+    vertex_a: u32,
+    vertex_b: u32,
+    weight_a: f32,
+    weight_b: f32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct GlueWire {
+    id: String,
+    runtime_id: String,
+    name: String,
+    mesh_a_id: String,
+    mesh_b_id: String,
+    pairs: Vec<GlueVertexPairWire>,
+    intensity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    binding_id: Option<String>,
+}
+
 fn default_canvas_flag() -> u8 {
     1
 }
@@ -299,6 +402,14 @@ struct DocumentWire {
     parameters: Vec<Parameter>,
     bindings: Vec<MeshBindingWire>,
     scene_bindings: Vec<SceneBindingWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    blend_key_tables: Vec<BlendShapeKeyTableWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    blend_constraints: Vec<BlendShapeConstraintWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    blend_bindings: Vec<BlendShapeBindingWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    glues: Vec<GlueWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deformers: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -439,6 +550,112 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
         });
     }
 
+    let mut blend_key_tables_wire = Vec::with_capacity(document.blend_key_table_order().len());
+    for id in document.blend_key_table_order() {
+        let t = document.get_blend_key_table(id).unwrap();
+        blend_key_tables_wire.push(BlendShapeKeyTableWire {
+            id: t.id.clone(),
+            parameter_id: t.parameter_id.clone(),
+            keys: t.keys.clone(),
+            base_key_idx: t.base_key_idx,
+        });
+    }
+
+    let mut blend_constraints_wire = Vec::with_capacity(document.blend_constraint_order().len());
+    for id in document.blend_constraint_order() {
+        let c = document.get_blend_constraint(id).unwrap();
+        blend_constraints_wire.push(BlendShapeConstraintWire {
+            id: c.id.clone(),
+            parameter_id: c.parameter_id.clone(),
+            keys: c.keys.clone(),
+            weights: c.weights.clone(),
+        });
+    }
+
+    let mut blend_bindings_wire = Vec::with_capacity(document.blend_binding_order().len());
+    for id in document.blend_binding_order() {
+        let b = document.get_blend_binding(id).unwrap();
+        let keyforms = match &b.keyforms {
+            DeltaKeyforms::Mesh(forms) => DeltaKeyformsWire::Mesh(
+                forms
+                    .iter()
+                    .map(|f| DeltaMeshKeyformWire {
+                        positions: f.positions.iter().map(|p| [p.x, p.y]).collect(),
+                        opacity: f.opacity,
+                        draw_order: f.draw_order,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyforms::Warp(forms) => DeltaKeyformsWire::Warp(
+                forms
+                    .iter()
+                    .map(|f| DeltaWarpKeyformWire {
+                        points: f.points.iter().map(|p| [p.x, p.y]).collect(),
+                        opacity: f.opacity,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyforms::Rotation(forms) => DeltaKeyformsWire::Rotation(
+                forms
+                    .iter()
+                    .map(|f| DeltaRotationKeyformWire {
+                        origin: f.origin.map(|p| [p.x, p.y]),
+                        angle: f.angle,
+                        scale: f.scale,
+                        opacity: f.opacity,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyforms::Part(forms) => DeltaKeyformsWire::Part(
+                forms
+                    .iter()
+                    .map(|f| DeltaPartKeyformWire {
+                        draw_order: f.draw_order,
+                    })
+                    .collect(),
+            ),
+        };
+        blend_bindings_wire.push(BlendShapeBindingWire {
+            id: b.id.clone(),
+            target_id: b.target_id.clone(),
+            target_kind: b.target_kind,
+            key_table_id: b.key_table_id.clone(),
+            constraint_ids: b.constraint_ids.clone(),
+            keyforms,
+        });
+    }
+
+    let mut glues_wire = Vec::with_capacity(document.glue_order().len());
+    for id in document.glue_order() {
+        let g = document.get_glue(id).unwrap();
+        let pairs = g
+            .pairs
+            .iter()
+            .map(|p| GlueVertexPairWire {
+                vertex_a: p.vertex_a,
+                vertex_b: p.vertex_b,
+                weight_a: p.weight_a,
+                weight_b: p.weight_b,
+            })
+            .collect();
+        glues_wire.push(GlueWire {
+            id: g.id.clone(),
+            runtime_id: g.runtime_id.clone(),
+            name: g.name.clone(),
+            mesh_a_id: g.mesh_a_id.clone(),
+            mesh_b_id: g.mesh_b_id.clone(),
+            pairs,
+            intensity: g.intensity,
+            binding_id: g.binding_id.clone(),
+        });
+    }
+
     let mut assets_wire = Vec::with_capacity(document.asset_order().len());
     for id in document.asset_order() {
         assets_wire.push(document.get_asset(id).unwrap().clone());
@@ -446,7 +663,7 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
 
     let project = ProjectWire {
         format: "kasane-directory-project".to_string(),
-        format_version: 1,
+        format_version: 2,
         document: DocumentWire {
             id: document.id().to_string(),
             canvas: [c.width, c.height],
@@ -461,6 +678,10 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             parameters: params_wire,
             bindings: bindings_wire,
             scene_bindings: scene_bindings_wire,
+            blend_key_tables: blend_key_tables_wire,
+            blend_constraints: blend_constraints_wire,
+            blend_bindings: blend_bindings_wire,
+            glues: glues_wire,
             deformers: None,
             deformation_links: None,
             organization_links: None,
@@ -509,7 +730,7 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if root.format_version != 1 {
+    if root.format_version != 1 && root.format_version != 2 {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -788,6 +1009,125 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             return Err(result.status);
         }
     }
+
+    for t in doc.blend_key_tables {
+        let res = candidate.create_blend_key_table(BlendShapeKeyTable {
+            id: t.id,
+            parameter_id: t.parameter_id,
+            keys: t.keys,
+            base_key_idx: t.base_key_idx,
+        });
+        if !res.status.is_ok() {
+            return Err(res.status);
+        }
+    }
+
+    for c in doc.blend_constraints {
+        let res = candidate.create_blend_constraint(BlendShapeConstraint {
+            id: c.id,
+            parameter_id: c.parameter_id,
+            keys: c.keys,
+            weights: c.weights,
+        });
+        if !res.status.is_ok() {
+            return Err(res.status);
+        }
+    }
+
+    for b in doc.blend_bindings {
+        let keyforms = match b.keyforms {
+            DeltaKeyformsWire::Mesh(forms) => DeltaKeyforms::Mesh(
+                forms
+                    .into_iter()
+                    .map(|f| DeltaMeshKeyform {
+                        positions: f
+                            .positions
+                            .into_iter()
+                            .map(|p| Vec2::new(p[0], p[1]))
+                            .collect(),
+                        opacity: f.opacity,
+                        draw_order: f.draw_order,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyformsWire::Warp(forms) => DeltaKeyforms::Warp(
+                forms
+                    .into_iter()
+                    .map(|f| DeltaWarpKeyform {
+                        points: f
+                            .points
+                            .into_iter()
+                            .map(|p| Vec2::new(p[0], p[1]))
+                            .collect(),
+                        opacity: f.opacity,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyformsWire::Rotation(forms) => DeltaKeyforms::Rotation(
+                forms
+                    .into_iter()
+                    .map(|f| DeltaRotationKeyform {
+                        origin: f.origin.map(|p| Vec2::new(p[0], p[1])),
+                        angle: f.angle,
+                        scale: f.scale,
+                        opacity: f.opacity,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyformsWire::Part(forms) => DeltaKeyforms::Part(
+                forms
+                    .into_iter()
+                    .map(|f| DeltaPartKeyform {
+                        draw_order: f.draw_order,
+                    })
+                    .collect(),
+            ),
+        };
+        let res = candidate.create_blend_binding(BlendShapeBinding {
+            id: b.id,
+            target_id: b.target_id,
+            target_kind: b.target_kind,
+            key_table_id: b.key_table_id,
+            constraint_ids: b.constraint_ids,
+            keyforms,
+        });
+        if !res.status.is_ok() {
+            return Err(res.status);
+        }
+    }
+
+    for g in doc.glues {
+        let pairs = g
+            .pairs
+            .into_iter()
+            .map(|p| GlueVertexPair {
+                vertex_a: p.vertex_a,
+                vertex_b: p.vertex_b,
+                weight_a: p.weight_a,
+                weight_b: p.weight_b,
+            })
+            .collect();
+        let res = candidate.create_glue(Glue {
+            id: g.id,
+            runtime_id: g.runtime_id,
+            name: g.name,
+            mesh_a_id: g.mesh_a_id,
+            mesh_b_id: g.mesh_b_id,
+            pairs,
+            intensity: g.intensity,
+            binding_id: g.binding_id,
+        });
+        if !res.status.is_ok() {
+            return Err(res.status);
+        }
+    }
+
     candidate.mark_saved();
     Ok(candidate)
 }

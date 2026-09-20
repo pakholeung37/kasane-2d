@@ -60,6 +60,7 @@ fn test_keyform_data_editing_and_evaluation() {
         maximum: 1.0,
         default_value: 0.0,
         decimal_places: 6,
+        ..Default::default()
     });
     assert!(e.status.is_ok() && e.changes.object_ids == vec![id(4)]);
 

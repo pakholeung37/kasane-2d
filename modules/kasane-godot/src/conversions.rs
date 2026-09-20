@@ -237,6 +237,10 @@ pub fn parameter_from_dict(d: &Dictionary) -> Result<Parameter, Status> {
     } else {
         6
     };
+    let kind = match get_str(d, "kind").as_deref() {
+        Ok("blend_shape") => kasane_core::types::ParameterKind::BlendShape,
+        _ => kasane_core::types::ParameterKind::Normal,
+    };
     Ok(Parameter {
         id,
         runtime_id,
@@ -245,6 +249,7 @@ pub fn parameter_from_dict(d: &Dictionary) -> Result<Parameter, Status> {
         maximum,
         default_value,
         decimal_places,
+        kind,
     })
 }
 
@@ -257,6 +262,13 @@ pub fn dict_from_parameter(p: &Parameter) -> Dictionary {
     d.set("maximum", p.maximum);
     d.set("default_value", p.default_value);
     d.set("decimal_places", p.decimal_places);
+    d.set(
+        "kind",
+        match p.kind {
+            kasane_core::types::ParameterKind::Normal => "normal",
+            kasane_core::types::ParameterKind::BlendShape => "blend_shape",
+        },
+    );
     d
 }
 

@@ -87,6 +87,7 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
             maximum: 1.0,
             default_value: 0.0,
             decimal_places: 2,
+            ..Default::default()
         })
         .status
         .is_ok());
@@ -195,7 +196,7 @@ fn test_project_encode_decode_roundtrip() {
 
     let encoded = encode_project(&before).expect("encode_project failed");
     assert!(encoded.contains("\"format\": \"kasane-directory-project\""));
-    assert!(encoded.contains("\"format_version\": 1"));
+    assert!(encoded.contains("\"format_version\": 2"));
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(before.same_content(&decoded));
@@ -1214,4 +1215,138 @@ fn imported_canvas_and_drawing_groups_survive_save_reopen() {
         .status
         .is_ok());
     assert_eq!(baseline, encode_project(reopened.document()).unwrap());
+}
+
+#[test]
+fn test_project_v2_blendshape_and_glue_roundtrip() {
+    use kasane_core::types::{
+        BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind,
+        DeltaKeyforms, DeltaMeshKeyform, Glue, GlueVertexPair, ParameterKind,
+    };
+
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let mut doc = fixture_doc(sha1, sha2);
+
+    let bs_param_id = id(100);
+    assert!(doc
+        .create_parameter(kasane_core::types::Parameter {
+            id: bs_param_id.clone(),
+            runtime_id: "ParamMouthOpenBS".to_string(),
+            name: "Mouth Open BS".to_string(),
+            minimum: 0.0,
+            maximum: 1.0,
+            default_value: 0.0,
+            decimal_places: 2,
+            kind: ParameterKind::BlendShape,
+        })
+        .status
+        .is_ok());
+
+    let kt_id = id(101);
+    assert!(doc
+        .create_blend_key_table(BlendShapeKeyTable {
+            id: kt_id.clone(),
+            parameter_id: bs_param_id.clone(),
+            keys: vec![0.0, 1.0],
+            base_key_idx: 0,
+        })
+        .status
+        .is_ok());
+
+    let c_id = id(102);
+    assert!(doc
+        .create_blend_constraint(BlendShapeConstraint {
+            id: c_id.clone(),
+            parameter_id: bs_param_id.clone(),
+            keys: vec![0.0, 1.0],
+            weights: vec![0.0, 1.0],
+        })
+        .status
+        .is_ok());
+
+    let mesh_id = id(4); // from fixture_doc
+    let mesh = doc.get_mesh(&mesh_id).unwrap().clone();
+    let v_count = mesh.vertex_ids.len();
+
+    let mesh2_id = id(5);
+    let mut m2 = mesh.clone();
+    m2.id = mesh2_id.clone();
+    m2.runtime_id = "ArtMeshB".to_string();
+    assert!(doc.create_mesh(m2).status.is_ok());
+
+    let bb_id = id(103);
+    assert!(doc
+        .create_blend_binding(BlendShapeBinding {
+            id: bb_id.clone(),
+            target_id: mesh_id.clone(),
+            target_kind: BlendShapeTargetKind::Mesh,
+            key_table_id: kt_id.clone(),
+            constraint_ids: vec![c_id.clone()],
+            keyforms: DeltaKeyforms::Mesh(vec![
+                DeltaMeshKeyform {
+                    positions: vec![Vec2::new(0.0, 0.0); v_count],
+                    ..Default::default()
+                },
+                DeltaMeshKeyform {
+                    positions: vec![Vec2::new(1.0, 2.0); v_count],
+                    ..Default::default()
+                },
+            ]),
+        })
+        .status
+        .is_ok());
+
+    let glue_id = id(104);
+    assert!(doc
+        .create_glue(Glue {
+            id: glue_id.clone(),
+            runtime_id: "Glue0".to_string(),
+            name: "Glue 0".to_string(),
+            mesh_a_id: mesh_id.clone(),
+            mesh_b_id: mesh2_id.clone(),
+            pairs: vec![GlueVertexPair {
+                vertex_a: mesh.vertex_ids[0],
+                vertex_b: doc.get_mesh(&mesh2_id).unwrap().vertex_ids[0],
+                weight_a: 0.5,
+                weight_b: 0.5,
+            }],
+            intensity: 1.0,
+            binding_id: None,
+        })
+        .status
+        .is_ok());
+
+    let encoded = encode_project(&doc).expect("encode_project failed");
+    assert!(encoded.contains("\"format_version\": 2"));
+    assert!(encoded.contains("blend_key_tables"));
+    assert!(encoded.contains("blend_constraints"));
+    assert!(encoded.contains("blend_bindings"));
+    assert!(encoded.contains("glues"));
+
+    let decoded = decode_project(&encoded).expect("decode_project failed");
+    assert!(doc.same_content(&decoded));
+    assert_eq!(decoded.blend_key_table_order(), &[kt_id]);
+    assert_eq!(decoded.blend_constraint_order(), &[c_id]);
+    assert_eq!(decoded.blend_binding_order(), &[bb_id]);
+    assert_eq!(decoded.glue_order(), &[glue_id]);
+}
+
+#[test]
+fn test_project_v1_migration_to_v2() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let doc_v1 = fixture_doc(sha1, sha2);
+
+    // Encode to v2, then manually rewrite format_version to 1 and remove blend/glue fields to simulate a v1 project
+    let mut encoded_v1 = encode_project(&doc_v1).unwrap();
+    encoded_v1 = encoded_v1.replace("\"format_version\": 2", "\"format_version\": 1");
+
+    let decoded = decode_project(&encoded_v1).expect("Failed to decode v1 project");
+    assert_eq!(decoded.blend_key_table_order().len(), 0);
+    assert_eq!(decoded.glue_order().len(), 0);
+
+    // Saving the decoded v1 project automatically upgrades it to v2
+    let re_encoded = encode_project(&decoded).expect("Failed to re-encode project");
+    assert!(re_encoded.contains("\"format_version\": 2"));
 }

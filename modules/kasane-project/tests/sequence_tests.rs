@@ -104,6 +104,7 @@ fn build_initial_document() -> (Document, Vec<String>) {
                 maximum: 1.0,
                 default_value: 0.0,
                 decimal_places: 4,
+                ..Default::default()
             })
             .status
             .is_ok());
@@ -560,6 +561,7 @@ fn test_random_operation_sequences_and_invariants() {
                         maximum: max,
                         default_value: (min + max) * 0.5,
                         decimal_places: 4,
+                        ..Default::default()
                     });
                     edit_result = Some(res.status);
                 }

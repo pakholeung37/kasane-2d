@@ -285,6 +285,14 @@ fn default_decimal_places() -> i32 {
     6
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ParameterKind {
+    #[default]
+    Normal,
+    BlendShape,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Parameter {
     pub id: String,
@@ -295,6 +303,8 @@ pub struct Parameter {
     pub default_value: f32,
     #[serde(default = "default_decimal_places")]
     pub decimal_places: i32,
+    #[serde(default)]
+    pub kind: ParameterKind,
 }
 
 impl Default for Parameter {
@@ -307,8 +317,121 @@ impl Default for Parameter {
             maximum: 1.0,
             default_value: 0.0,
             decimal_places: 6,
+            kind: ParameterKind::Normal,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlendShapeTargetKind {
+    Mesh,
+    Warp,
+    Rotation,
+    Part,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlendShapeKeyTable {
+    pub id: String,
+    pub parameter_id: String,
+    pub keys: Vec<f32>,
+    pub base_key_idx: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlendShapeConstraint {
+    pub id: String,
+    pub parameter_id: String,
+    pub keys: Vec<f32>,
+    pub weights: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DeltaMeshKeyform {
+    pub positions: Vec<Vec2>,
+    pub opacity: Option<f32>,
+    pub draw_order: Option<f32>,
+    pub multiply: Option<[f32; 3]>,
+    pub screen: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DeltaWarpKeyform {
+    pub points: Vec<Vec2>,
+    pub opacity: Option<f32>,
+    pub multiply: Option<[f32; 3]>,
+    pub screen: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DeltaRotationKeyform {
+    pub origin: Option<Vec2>,
+    pub angle: Option<f32>,
+    pub scale: Option<f32>,
+    pub opacity: Option<f32>,
+    pub multiply: Option<[f32; 3]>,
+    pub screen: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DeltaPartKeyform {
+    pub draw_order: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", content = "items", rename_all = "snake_case")]
+pub enum DeltaKeyforms {
+    Mesh(Vec<DeltaMeshKeyform>),
+    Warp(Vec<DeltaWarpKeyform>),
+    Rotation(Vec<DeltaRotationKeyform>),
+    Part(Vec<DeltaPartKeyform>),
+}
+
+impl DeltaKeyforms {
+    pub fn len(&self) -> usize {
+        match self {
+            DeltaKeyforms::Mesh(v) => v.len(),
+            DeltaKeyforms::Warp(v) => v.len(),
+            DeltaKeyforms::Rotation(v) => v.len(),
+            DeltaKeyforms::Part(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct BlendShapeBinding {
+    pub id: String,
+    pub target_id: String,
+    pub target_kind: BlendShapeTargetKind,
+    pub key_table_id: String,
+    pub constraint_ids: Vec<String>,
+    pub keyforms: DeltaKeyforms,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct GlueVertexPair {
+    pub vertex_a: VertexId,
+    pub vertex_b: VertexId,
+    pub weight_a: f32,
+    pub weight_b: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Glue {
+    pub id: String,
+    pub runtime_id: String,
+    pub name: String,
+    pub mesh_a_id: String,
+    pub mesh_b_id: String,
+    pub pairs: Vec<GlueVertexPair>,
+    pub intensity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binding_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

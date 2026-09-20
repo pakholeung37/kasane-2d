@@ -3,9 +3,10 @@ use std::collections::{HashMap, HashSet};
 
 use crate::geometry::{validate_positions, validate_render_mesh};
 use crate::types::{
-    Appearance, Canvas, ChangeKind, ChangeSet, EditResult, ImageAsset, Mesh, MeshBinding,
-    MeshKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
-    TransformKind, Vec2, VertexId, VertexPositionUpdate,
+    Appearance, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind,
+    Canvas, ChangeKind, ChangeSet, DeltaKeyforms, EditResult, Glue, ImageAsset, Mesh,
+    MeshBinding, MeshKeyform, Parameter, ParameterKind, Part, RotationPose, SceneBinding,
+    SceneKeyform, Status, Transform, TransformKind, Vec2, VertexId, VertexPositionUpdate,
 };
 
 pub fn valid_uuid(id: &str) -> bool {
@@ -95,6 +96,18 @@ pub struct Document {
     scene_binding_order: Vec<String>,
     draw_order_groups: Option<Vec<DrawOrderGroup>>,
 
+    blend_key_tables: HashMap<String, BlendShapeKeyTable>,
+    blend_key_table_order: Vec<String>,
+
+    blend_constraints: HashMap<String, BlendShapeConstraint>,
+    blend_constraint_order: Vec<String>,
+
+    blend_bindings: HashMap<String, BlendShapeBinding>,
+    blend_binding_order: Vec<String>,
+
+    glues: HashMap<String, Glue>,
+    glue_order: Vec<String>,
+
     saved_content: Option<Box<DocumentContent>>,
 }
 
@@ -117,6 +130,14 @@ struct DocumentContent {
     scene_bindings: HashMap<String, SceneBinding>,
     scene_binding_order: Vec<String>,
     draw_order_groups: Option<Vec<DrawOrderGroup>>,
+    blend_key_tables: HashMap<String, BlendShapeKeyTable>,
+    blend_key_table_order: Vec<String>,
+    blend_constraints: HashMap<String, BlendShapeConstraint>,
+    blend_constraint_order: Vec<String>,
+    blend_bindings: HashMap<String, BlendShapeBinding>,
+    blend_binding_order: Vec<String>,
+    glues: HashMap<String, Glue>,
+    glue_order: Vec<String>,
 }
 
 impl Document {
@@ -191,6 +212,14 @@ impl Document {
             scene_bindings: self.scene_bindings.clone(),
             scene_binding_order: self.scene_binding_order.clone(),
             draw_order_groups: self.draw_order_groups.clone(),
+            blend_key_tables: self.blend_key_tables.clone(),
+            blend_key_table_order: self.blend_key_table_order.clone(),
+            blend_constraints: self.blend_constraints.clone(),
+            blend_constraint_order: self.blend_constraint_order.clone(),
+            blend_bindings: self.blend_bindings.clone(),
+            blend_binding_order: self.blend_binding_order.clone(),
+            glues: self.glues.clone(),
+            glue_order: self.glue_order.clone(),
         }
     }
 
@@ -236,6 +265,10 @@ impl Document {
             || self.parameters.contains_key(id)
             || self.bindings.contains_key(id)
             || self.scene_bindings.contains_key(id)
+            || self.blend_key_tables.contains_key(id)
+            || self.blend_constraints.contains_key(id)
+            || self.blend_bindings.contains_key(id)
+            || self.glues.contains_key(id)
     }
 
     fn failed(&self, status: Status) -> EditResult {
@@ -749,6 +782,39 @@ impl Document {
                     mesh.id
                 ),
             ));
+        }
+        if previous.vertex_ids != mesh.vertex_ids {
+            for b in self.blend_bindings.values() {
+                if b.target_id == mesh.id && b.target_kind == BlendShapeTargetKind::Mesh {
+                    return self.failed(Status::error(
+                        "KEYFORMS_REQUIRED",
+                        format!("{}: mesh topology replacement requires updating blend shape delta keyforms", mesh.id),
+                    ));
+                }
+            }
+            let new_vids: HashSet<u32> = mesh.vertex_ids.iter().copied().collect();
+            for g in self.glues.values() {
+                if g.mesh_a_id == mesh.id {
+                    for pair in &g.pairs {
+                        if !new_vids.contains(&pair.vertex_a) {
+                            return self.failed(Status::error(
+                                "GLUE_CONFLICT",
+                                format!("{}: vertex {} used in glue {} is missing from updated mesh", mesh.id, pair.vertex_a, g.id),
+                            ));
+                        }
+                    }
+                }
+                if g.mesh_b_id == mesh.id {
+                    for pair in &g.pairs {
+                        if !new_vids.contains(&pair.vertex_b) {
+                            return self.failed(Status::error(
+                                "GLUE_CONFLICT",
+                                format!("{}: vertex {} used in glue {} is missing from updated mesh", mesh.id, pair.vertex_b, g.id),
+                            ));
+                        }
+                    }
+                }
+            }
         }
         if !self.assets.contains_key(&mesh.texture_asset_id) {
             return self.failed(Status::error(
@@ -1584,6 +1650,574 @@ impl Document {
         self.changed(ChangeKind::Structure, self.mesh_order.clone(), Vec::new())
     }
 
+    // --- BlendShape Key Tables ---
+    pub fn blend_key_table_order(&self) -> &[String] {
+        &self.blend_key_table_order
+    }
+
+    pub fn get_blend_key_table(&self, id: &str) -> Option<&BlendShapeKeyTable> {
+        self.blend_key_tables.get(id)
+    }
+
+    fn validate_blend_key_table(&self, table: &BlendShapeKeyTable) -> Status {
+        if !valid_uuid(&table.id) {
+            return Status::error("INVALID_ID", &table.id);
+        }
+        let param = match self.get_parameter(&table.parameter_id) {
+            Some(p) => p,
+            None => return Status::error("MISSING_PARAMETER", &table.parameter_id),
+        };
+        if param.kind != ParameterKind::BlendShape {
+            return Status::error(
+                "INVALID_PARAMETER_KIND",
+                format!("{}: expected blend_shape parameter", table.parameter_id),
+            );
+        }
+        if table.keys.is_empty() {
+            return Status::error("INVALID_KEYS", "Key table must contain at least one key");
+        }
+        if table.base_key_idx >= table.keys.len() {
+            return Status::error("INVALID_BASE_KEY", "Base key index out of bounds");
+        }
+        for (i, &k) in table.keys.iter().enumerate() {
+            if !k.is_finite()
+                || k < param.minimum
+                || k > param.maximum
+                || (i > 0 && k <= table.keys[i - 1])
+            {
+                return Status::error(
+                    "INVALID_KEYS",
+                    "Keys must be finite, strictly increasing, and within parameter range",
+                );
+            }
+        }
+        Status::ok()
+    }
+
+    pub fn create_blend_key_table(&mut self, table: BlendShapeKeyTable) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &table.id));
+        }
+        if self.contains_id(&table.id) {
+            return self.failed(Status::error("DUPLICATE_ID", &table.id));
+        }
+        let s = self.validate_blend_key_table(&table);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = table.id.clone();
+        let param_id = table.parameter_id.clone();
+        self.blend_key_tables.insert(id.clone(), table);
+        self.blend_key_table_order.push(id.clone());
+        let meshes = self.mesh_order.clone();
+        self.changed(ChangeKind::Structure, meshes, vec![id, param_id])
+    }
+
+    pub fn replace_blend_key_table(&mut self, table: BlendShapeKeyTable) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &table.id));
+        }
+        if !self.blend_key_tables.contains_key(&table.id) {
+            return self.failed(Status::error("MISSING_KEY_TABLE", &table.id));
+        }
+        let s = self.validate_blend_key_table(&table);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        for b in self.blend_bindings.values() {
+            if b.key_table_id == table.id && b.keyforms.len() != table.keys.len() {
+                return self.failed(Status::error(
+                    "KEYFORMS_REQUIRED",
+                    format!(
+                        "{}: binding keyform count does not match new key table",
+                        b.id
+                    ),
+                ));
+            }
+        }
+        let id = table.id.clone();
+        let param_id = table.parameter_id.clone();
+        self.blend_key_tables.insert(id.clone(), table);
+        let meshes = self.mesh_order.clone();
+        self.changed(ChangeKind::Structure, meshes, vec![id, param_id])
+    }
+
+    // --- BlendShape Constraints ---
+    pub fn blend_constraint_order(&self) -> &[String] {
+        &self.blend_constraint_order
+    }
+
+    pub fn get_blend_constraint(&self, id: &str) -> Option<&BlendShapeConstraint> {
+        self.blend_constraints.get(id)
+    }
+
+    fn validate_blend_constraint(&self, constraint: &BlendShapeConstraint) -> Status {
+        if !valid_uuid(&constraint.id) {
+            return Status::error("INVALID_ID", &constraint.id);
+        }
+        let param = match self.get_parameter(&constraint.parameter_id) {
+            Some(p) => p,
+            None => return Status::error("MISSING_PARAMETER", &constraint.parameter_id),
+        };
+        if param.kind != ParameterKind::BlendShape {
+            return Status::error(
+                "INVALID_PARAMETER_KIND",
+                format!("{}: expected blend_shape parameter", constraint.parameter_id),
+            );
+        }
+        if constraint.keys.len() != constraint.weights.len() || constraint.keys.is_empty() {
+            return Status::error(
+                "INVALID_LENGTH",
+                "Constraint keys and weights must have matching non-zero lengths",
+            );
+        }
+        for (i, (&k, &w)) in constraint.keys.iter().zip(constraint.weights.iter()).enumerate() {
+            if !k.is_finite()
+                || k < param.minimum
+                || k > param.maximum
+                || (i > 0 && k <= constraint.keys[i - 1])
+            {
+                return Status::error(
+                    "INVALID_KEYS",
+                    "Constraint keys must be finite, strictly increasing, and within parameter range",
+                );
+            }
+            if !w.is_finite() || w < 0.0 {
+                return Status::error(
+                    "INVALID_WEIGHT",
+                    "Constraint weights must be finite and non-negative",
+                );
+            }
+        }
+        Status::ok()
+    }
+
+    pub fn create_blend_constraint(&mut self, constraint: BlendShapeConstraint) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &constraint.id));
+        }
+        if self.contains_id(&constraint.id) {
+            return self.failed(Status::error("DUPLICATE_ID", &constraint.id));
+        }
+        let s = self.validate_blend_constraint(&constraint);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = constraint.id.clone();
+        let param_id = constraint.parameter_id.clone();
+        self.blend_constraints.insert(id.clone(), constraint);
+        self.blend_constraint_order.push(id.clone());
+        let meshes = self.mesh_order.clone();
+        self.changed(ChangeKind::Structure, meshes, vec![id, param_id])
+    }
+
+    pub fn replace_blend_constraint(&mut self, constraint: BlendShapeConstraint) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &constraint.id));
+        }
+        if !self.blend_constraints.contains_key(&constraint.id) {
+            return self.failed(Status::error("MISSING_CONSTRAINT", &constraint.id));
+        }
+        let s = self.validate_blend_constraint(&constraint);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = constraint.id.clone();
+        let param_id = constraint.parameter_id.clone();
+        self.blend_constraints.insert(id.clone(), constraint);
+        let meshes = self.mesh_order.clone();
+        self.changed(ChangeKind::Structure, meshes, vec![id, param_id])
+    }
+
+    // --- BlendShape Bindings ---
+    pub fn blend_binding_order(&self) -> &[String] {
+        &self.blend_binding_order
+    }
+
+    pub fn get_blend_binding(&self, id: &str) -> Option<&BlendShapeBinding> {
+        self.blend_bindings.get(id)
+    }
+
+    pub fn blend_bindings_for_target(&self, target_id: &str) -> Vec<&BlendShapeBinding> {
+        self.blend_binding_order
+            .iter()
+            .filter_map(|id| self.blend_bindings.get(id))
+            .filter(|b| b.target_id == target_id)
+            .collect()
+    }
+
+    fn validate_blend_binding(&self, b: &BlendShapeBinding) -> Status {
+        if !valid_uuid(&b.id) {
+            return Status::error("INVALID_ID", &b.id);
+        }
+        let key_table = match self.get_blend_key_table(&b.key_table_id) {
+            Some(kt) => kt,
+            None => return Status::error("MISSING_KEY_TABLE", &b.key_table_id),
+        };
+        for c_id in &b.constraint_ids {
+            if !self.blend_constraints.contains_key(c_id) {
+                return Status::error("MISSING_CONSTRAINT", c_id);
+            }
+        }
+        if b.keyforms.len() != key_table.keys.len() {
+            return Status::error(
+                "INCOMPLETE_KEYFORMS",
+                format!(
+                    "{}: keyforms length {} does not match key table {}",
+                    b.id,
+                    b.keyforms.len(),
+                    key_table.keys.len()
+                ),
+            );
+        }
+        match (&b.target_kind, &b.keyforms) {
+            (BlendShapeTargetKind::Mesh, DeltaKeyforms::Mesh(forms)) => {
+                let mesh = match self.get_mesh(&b.target_id) {
+                    Some(m) => m,
+                    None => return Status::error("MISSING_MESH", &b.target_id),
+                };
+                for f in forms {
+                    if f.positions.len() != mesh.vertex_ids.len() {
+                        return Status::error(
+                            "INVALID_LENGTH",
+                            format!(
+                                "{}: delta positions len {} != mesh vertex len {}",
+                                b.id,
+                                f.positions.len(),
+                                mesh.vertex_ids.len()
+                            ),
+                        );
+                    }
+                    for p in &f.positions {
+                        if !p.x.is_finite() || !p.y.is_finite() {
+                            return Status::error(
+                                "INVALID_POSITION",
+                                format!("{}: non-finite delta position", b.id),
+                            );
+                        }
+                    }
+                    if let Some(op) = f.opacity {
+                        if !op.is_finite() {
+                            return Status::error("INVALID_OPACITY", &b.id);
+                        }
+                    }
+                    if let Some(order) = f.draw_order {
+                        let s = validate_draw_order(order, &b.id);
+                        if !s.is_ok() {
+                            return s;
+                        }
+                    }
+                    if let Some(mult) = f.multiply {
+                        for &c in &mult {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                    if let Some(scr) = f.screen {
+                        for &c in &scr {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                }
+            }
+            (BlendShapeTargetKind::Warp, DeltaKeyforms::Warp(forms)) => {
+                let warp = match self.get_transform(&b.target_id) {
+                    Some(w) if w.kind == TransformKind::Warp => w,
+                    _ => {
+                        return Status::error(
+                            "MISSING_OBJECT",
+                            format!("{}: expected Warp transform", b.target_id),
+                        )
+                    }
+                };
+                for f in forms {
+                    if f.points.len() != warp.points.len() {
+                        return Status::error(
+                            "INVALID_LENGTH",
+                            format!(
+                                "{}: delta points len {} != warp points len {}",
+                                b.id,
+                                f.points.len(),
+                                warp.points.len()
+                            ),
+                        );
+                    }
+                    for p in &f.points {
+                        if !p.x.is_finite() || !p.y.is_finite() {
+                            return Status::error(
+                                "INVALID_POSITION",
+                                format!("{}: non-finite delta point", b.id),
+                            );
+                        }
+                    }
+                    if let Some(op) = f.opacity {
+                        if !op.is_finite() {
+                            return Status::error("INVALID_OPACITY", &b.id);
+                        }
+                    }
+                    if let Some(mult) = f.multiply {
+                        for &c in &mult {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                    if let Some(scr) = f.screen {
+                        for &c in &scr {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                }
+            }
+            (BlendShapeTargetKind::Rotation, DeltaKeyforms::Rotation(forms)) => {
+                match self.get_transform(&b.target_id) {
+                    Some(r) if r.kind == TransformKind::Rotation => r,
+                    _ => {
+                        return Status::error(
+                            "MISSING_OBJECT",
+                            format!("{}: expected Rotation transform", b.target_id),
+                        )
+                    }
+                };
+                for f in forms {
+                    if let Some(orig) = f.origin {
+                        if !orig.x.is_finite() || !orig.y.is_finite() {
+                            return Status::error("INVALID_POSITION", &b.id);
+                        }
+                    }
+                    if let Some(angle) = f.angle {
+                        if !angle.is_finite() {
+                            return Status::error("INVALID_ROTATION", &b.id);
+                        }
+                    }
+                    if let Some(scale) = f.scale {
+                        if !scale.is_finite() || scale < 0.0 {
+                            return Status::error("INVALID_ROTATION", &b.id);
+                        }
+                    }
+                    if let Some(op) = f.opacity {
+                        if !op.is_finite() {
+                            return Status::error("INVALID_OPACITY", &b.id);
+                        }
+                    }
+                    if let Some(mult) = f.multiply {
+                        for &c in &mult {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                    if let Some(scr) = f.screen {
+                        for &c in &scr {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                }
+            }
+            (BlendShapeTargetKind::Part, DeltaKeyforms::Part(forms)) => {
+                if !self.parts.contains_key(&b.target_id) {
+                    return Status::error(
+                        "MISSING_OBJECT",
+                        format!("{}: expected Part", b.target_id),
+                    );
+                }
+                for f in forms {
+                    let s = validate_draw_order(f.draw_order, &b.id);
+                    if !s.is_ok() {
+                        return s;
+                    }
+                }
+            }
+            _ => {
+                return Status::error(
+                    "MISMATCHED_TARGET_KIND",
+                    format!(
+                        "{}: target_kind {:?} does not match keyform type",
+                        b.id, b.target_kind
+                    ),
+                );
+            }
+        }
+        Status::ok()
+    }
+
+    pub fn create_blend_binding(&mut self, b: BlendShapeBinding) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &b.id));
+        }
+        if self.contains_id(&b.id) {
+            return self.failed(Status::error("DUPLICATE_ID", &b.id));
+        }
+        let s = self.validate_blend_binding(&b);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = b.id.clone();
+        let target = b.target_id.clone();
+        let key_table = b.key_table_id.clone();
+        self.blend_bindings.insert(id.clone(), b);
+        self.blend_binding_order.push(id.clone());
+        let meshes = self.mesh_order.clone();
+        self.changed(ChangeKind::Structure, meshes, vec![id, target, key_table])
+    }
+
+    pub fn replace_blend_binding(&mut self, b: BlendShapeBinding) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &b.id));
+        }
+        if !self.blend_bindings.contains_key(&b.id) {
+            return self.failed(Status::error("MISSING_BINDING", &b.id));
+        }
+        let s = self.validate_blend_binding(&b);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = b.id.clone();
+        let target = b.target_id.clone();
+        let key_table = b.key_table_id.clone();
+        self.blend_bindings.insert(id.clone(), b);
+        let meshes = self.mesh_order.clone();
+        self.changed(ChangeKind::Structure, meshes, vec![id, target, key_table])
+    }
+
+    // --- Glues ---
+    pub fn glue_order(&self) -> &[String] {
+        &self.glue_order
+    }
+
+    pub fn get_glue(&self, id: &str) -> Option<&Glue> {
+        self.glues.get(id)
+    }
+
+    pub fn glues_for_mesh(&self, mesh_id: &str) -> Vec<&Glue> {
+        self.glue_order
+            .iter()
+            .filter_map(|id| self.glues.get(id))
+            .filter(|g| g.mesh_a_id == mesh_id || g.mesh_b_id == mesh_id)
+            .collect()
+    }
+
+    fn validate_glue(&self, glue: &Glue) -> Status {
+        if !valid_uuid(&glue.id) {
+            return Status::error("INVALID_ID", &glue.id);
+        }
+        if glue.mesh_a_id.is_empty() || glue.mesh_b_id.is_empty() {
+            return Status::error("INVALID_GLUE", "Mesh IDs cannot be empty");
+        }
+        if !self.meshes.contains_key(&glue.mesh_a_id) {
+            return Status::error("MISSING_MESH", &glue.mesh_a_id);
+        }
+        if !self.meshes.contains_key(&glue.mesh_b_id) {
+            return Status::error("MISSING_MESH", &glue.mesh_b_id);
+        }
+        let slots_a = &self.vertex_slots[&glue.mesh_a_id];
+        let slots_b = &self.vertex_slots[&glue.mesh_b_id];
+        for pair in &glue.pairs {
+            if !slots_a.contains_key(&pair.vertex_a) {
+                return Status::error(
+                    "MISSING_VERTEX",
+                    format!("{}: vertex {} not in mesh_a", glue.id, pair.vertex_a),
+                );
+            }
+            if !slots_b.contains_key(&pair.vertex_b) {
+                return Status::error(
+                    "MISSING_VERTEX",
+                    format!("{}: vertex {} not in mesh_b", glue.id, pair.vertex_b),
+                );
+            }
+            if !pair.weight_a.is_finite()
+                || pair.weight_a < 0.0
+                || !pair.weight_b.is_finite()
+                || pair.weight_b < 0.0
+            {
+                return Status::error(
+                    "INVALID_WEIGHT",
+                    format!("{}: weights must be finite and non-negative", glue.id),
+                );
+            }
+        }
+        if !glue.intensity.is_finite() || glue.intensity < 0.0 {
+            return Status::error(
+                "INVALID_INTENSITY",
+                format!("{}: intensity must be finite and non-negative", glue.id),
+            );
+        }
+        if let Some(b_id) = &glue.binding_id {
+            if !self.bindings.contains_key(b_id) {
+                return Status::error("MISSING_BINDING", b_id);
+            }
+        }
+        Status::ok()
+    }
+
+    pub fn create_glue(&mut self, glue: Glue) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &glue.id));
+        }
+        if self.contains_id(&glue.id) {
+            return self.failed(Status::error("DUPLICATE_ID", &glue.id));
+        }
+        for (other_id, other) in &self.glues {
+            if other.runtime_id == glue.runtime_id {
+                return self.failed(Status::error(
+                    "DUPLICATE_RUNTIME_ID",
+                    format!("{}.runtime_id duplicates {}", glue.id, other_id),
+                ));
+            }
+        }
+        let s = self.validate_glue(&glue);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = glue.id.clone();
+        let mesh_a = glue.mesh_a_id.clone();
+        let mesh_b = glue.mesh_b_id.clone();
+        self.glues.insert(id.clone(), glue);
+        self.glue_order.push(id.clone());
+        let mut affected = vec![mesh_a.clone()];
+        if mesh_a != mesh_b {
+            affected.push(mesh_b.clone());
+        }
+        self.changed(ChangeKind::Structure, affected, vec![id, mesh_a, mesh_b])
+    }
+
+    pub fn replace_glue(&mut self, glue: Glue) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &glue.id));
+        }
+        let prev = match self.glues.get(&glue.id) {
+            Some(g) => (g.mesh_a_id.clone(), g.mesh_b_id.clone()),
+            None => return self.failed(Status::error("MISSING_GLUE", &glue.id)),
+        };
+        for (other_id, other) in &self.glues {
+            if other_id != &glue.id && other.runtime_id == glue.runtime_id {
+                return self.failed(Status::error(
+                    "DUPLICATE_RUNTIME_ID",
+                    format!("{}.runtime_id duplicates {}", glue.id, other_id),
+                ));
+            }
+        }
+        let s = self.validate_glue(&glue);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = glue.id.clone();
+        let mesh_a = glue.mesh_a_id.clone();
+        let mesh_b = glue.mesh_b_id.clone();
+        self.glues.insert(id.clone(), glue);
+        let mut affected = vec![mesh_a.clone(), mesh_b.clone(), prev.0, prev.1];
+        affected.sort();
+        affected.dedup();
+        self.changed(ChangeKind::Structure, affected, vec![id, mesh_a, mesh_b])
+    }
+
     pub fn references_to(&self, id: &str) -> Vec<String> {
         let mut refs = Vec::new();
         for m in &self.mesh_order {
@@ -1632,6 +2266,29 @@ impl Document {
                 }
             }
         }
+        for (key, kt) in &self.blend_key_tables {
+            if kt.parameter_id == id {
+                refs.push(key.clone());
+            }
+        }
+        for (key, c) in &self.blend_constraints {
+            if c.parameter_id == id {
+                refs.push(key.clone());
+            }
+        }
+        for (key, b) in &self.blend_bindings {
+            if b.target_id == id
+                || b.key_table_id == id
+                || b.constraint_ids.iter().any(|cid| cid == id)
+            {
+                refs.push(key.clone());
+            }
+        }
+        for (key, g) in &self.glues {
+            if g.mesh_a_id == id || g.mesh_b_id == id || g.binding_id.as_deref() == Some(id) {
+                refs.push(key.clone());
+            }
+        }
         refs.sort();
         refs.dedup();
         refs
@@ -1663,6 +2320,15 @@ impl Document {
         if self.get_mesh(id).is_some() {
             meshes.push(id.to_string());
         }
+        if let Some(b) = self.get_blend_binding(id) {
+            if b.target_kind == BlendShapeTargetKind::Mesh {
+                meshes.push(b.target_id.clone());
+            }
+        }
+        if let Some(g) = self.get_glue(id) {
+            meshes.push(g.mesh_a_id.clone());
+            meshes.push(g.mesh_b_id.clone());
+        }
         if self.get_scene_binding(id).is_some()
             || self.get_transform(id).is_some()
             || self.get_part(id).is_some()
@@ -1690,7 +2356,17 @@ impl Document {
         self.mesh_order.retain(|k| k != id);
         self.parameter_order.retain(|k| k != id);
         self.binding_order.retain(|k| k != id);
+        self.blend_key_tables.remove(id);
+        self.blend_key_table_order.retain(|k| k != id);
+        self.blend_constraints.remove(id);
+        self.blend_constraint_order.retain(|k| k != id);
+        self.blend_bindings.remove(id);
+        self.blend_binding_order.retain(|k| k != id);
+        self.glues.remove(id);
+        self.glue_order.retain(|k| k != id);
 
+        meshes.sort();
+        meshes.dedup();
         self.changed(ChangeKind::Structure, meshes, vec![id.to_string()])
     }
 }

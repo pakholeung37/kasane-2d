@@ -383,6 +383,7 @@ fn test_animated_keyforms_1d_2d_3d() {
                     maximum: 1.0,
                     default_value: 0.0,
                     decimal_places: 6,
+                    ..Default::default()
                 })
                 .status
                 .is_ok());
@@ -457,6 +458,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             maximum: 1.0,
             default_value: 0.0,
             decimal_places: 2,
+            ..Default::default()
         })
         .status
         .is_ok());

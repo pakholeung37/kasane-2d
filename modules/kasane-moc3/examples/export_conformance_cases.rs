@@ -98,6 +98,7 @@ fn build_1d_case() -> (Document, Vec<Vec<f32>>) {
             maximum: 1.0,
             default_value: 0.0,
             decimal_places: 4,
+            ..Default::default()
         })
         .status
         .is_ok());
@@ -200,6 +201,7 @@ fn build_2d_case() -> (Document, Vec<Vec<f32>>) {
                 maximum: 1.0,
                 default_value: 0.0,
                 decimal_places: 4,
+                ..Default::default()
             })
             .status
             .is_ok());
@@ -283,6 +285,7 @@ fn build_masks_and_blends_case() -> (Document, Vec<Vec<f32>>) {
             maximum: 1.0,
             default_value: 0.0,
             decimal_places: 4,
+            ..Default::default()
         })
         .status
         .is_ok());
@@ -386,6 +389,7 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
             maximum: 1.0,
             default_value: 0.0,
             decimal_places: 4,
+            ..Default::default()
         })
         .status
         .is_ok());

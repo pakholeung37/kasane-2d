@@ -205,6 +205,7 @@ fn create_m1_fixture_doc() -> Document {
         maximum: 30.0,
         default_value: 0.0,
         decimal_places: 4,
+        ..Default::default()
     };
     assert!(doc.create_parameter(p1).status.is_ok());
 
@@ -622,6 +623,7 @@ fn test_structural_editing() {
         maximum: 10.0,
         default_value: 5.0,
         decimal_places: 2,
+        ..Default::default()
     };
     assert!(doc.create_parameter(new_p).status.is_ok());
 

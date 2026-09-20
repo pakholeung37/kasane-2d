@@ -46,6 +46,7 @@ fn create_m1_fixture_doc() -> Document {
         maximum: 30.0,
         default_value: 0.0,
         decimal_places: 1,
+        ..Default::default()
     };
     assert!(doc.create_parameter(param).status.is_ok());
 

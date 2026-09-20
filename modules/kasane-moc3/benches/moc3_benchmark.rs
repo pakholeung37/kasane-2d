@@ -60,6 +60,7 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
                 maximum: 1.0,
                 default_value: 0.0,
                 decimal_places: 2,
+                ..Default::default()
             })
             .status
             .is_ok());

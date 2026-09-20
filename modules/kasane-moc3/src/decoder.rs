@@ -2,8 +2,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use kasane_core::types::{
-    Appearance, BindingAxis, BlendMode, Canvas, Mesh, MeshBinding, MeshKeyform, Parameter, Part,
-    RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind, Vec2, VertexId,
+    Appearance, BindingAxis, BlendMode, Canvas, Mesh, MeshBinding, MeshKeyform, Parameter,
+    ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind,
+    Vec2, VertexId,
 };
 use kasane_core::Document;
 
@@ -360,6 +361,16 @@ pub fn decode_moc3(
         let min = read_f32(bytes, offsets[52] as usize + p * 4)?;
         let default_val = read_f32(bytes, offsets[53] as usize + p * 4)?;
         let dec_places = read_i32(bytes, offsets[55] as usize + p * 4)?;
+        let param_type = if offsets.len() > 114 && offsets[114] > 0 {
+            read_i32(bytes, offsets[114] as usize + p * 4).unwrap_or(0)
+        } else {
+            0
+        };
+        let kind = if param_type != 0 {
+            ParameterKind::BlendShape
+        } else {
+            ParameterKind::Normal
+        };
 
         check_status!(
             doc.create_parameter(Parameter {
@@ -378,6 +389,7 @@ pub fn decode_moc3(
                 maximum: max,
                 default_value: default_val,
                 decimal_places: dec_places,
+                kind,
             })
             .status
         );
