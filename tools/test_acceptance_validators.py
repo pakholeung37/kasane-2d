@@ -71,7 +71,7 @@ class ConformanceGateTests(unittest.TestCase):
     def test_wrong_geometry_rejected(self):
         self.check_gate(lambda d: d['positions'][0].__setitem__(1, 0.1))
 
-    @unittest.skipUnless((core.ROOT / 'target/kasane/core-regression/build/kasane_document_official_probe').is_file(), 'Official SDK probe not built')
+    @unittest.skipUnless((core.ROOT / 'target/probes/kasane_document_official_probe').is_file() or (core.ROOT / 'target/kasane/core-regression/build/kasane_document_official_probe').is_file(), 'Official SDK probe not built')
     def test_truncated_workflow_export_rejected_by_official_core(self):
         with tempfile.TemporaryDirectory() as folder:
             package = Path(folder) / 'e2e_export'
@@ -79,8 +79,11 @@ class ConformanceGateTests(unittest.TestCase):
             (package / 'model.moc3').write_bytes(b'MOC3\x05\0\0\0')
             (package / 'texture.png').write_bytes(b'fixture')
             (package / 'model.model3.json').write_text(json.dumps({'FileReferences': {'Moc': 'model.moc3', 'Textures': ['texture.png']}}))
+            probe = core.ROOT / 'target/probes/kasane_document_official_probe'
+            if not probe.is_file():
+                probe = core.ROOT / 'target/kasane/core-regression/build/kasane_document_official_probe'
             with self.assertRaises(RuntimeError):
-                validate_workflow_package(folder, [{'parameter': 0, 'positions': [[0, 0]] * 4}], core.ROOT / 'target/kasane/core-regression/build/kasane_document_official_probe')
+                validate_workflow_package(folder, [{'parameter': 0, 'positions': [[0, 0]] * 4}], probe)
 
 
 if __name__ == '__main__':

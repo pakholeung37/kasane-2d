@@ -11,9 +11,10 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 
-site_packages = ROOT / 'target/kasane/buildenv/lib/python3.14/site-packages'
-if site_packages.is_dir() and str(site_packages.resolve()) not in sys.path:
-    sys.path.insert(0, str(site_packages.resolve()))
+for candidate in [ROOT / 'target/buildenv/lib/python3.14/site-packages', ROOT / 'target/kasane/buildenv/lib/python3.14/site-packages']:
+    if candidate.is_dir() and str(candidate.resolve()) not in sys.path:
+        sys.path.insert(0, str(candidate.resolve()))
+        break
 
 def run(command, log):
     result = subprocess.run(list(map(str, command)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=120)
@@ -35,8 +36,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--godot', type=Path, default=Path('/Applications/Godot_mono.app/Contents/MacOS/Godot'))
     parser.add_argument('--library', type=Path, default=get_default_library())
-    parser.add_argument('--core-build', type=Path, default=ROOT/'target/kasane/core-regression/build')
-    parser.add_argument('--output-dir', type=Path, default=ROOT/'target/kasane/gpu-regression')
+    parser.add_argument('--core-build', type=Path, default=ROOT/'target/probes')
+    parser.add_argument('--output-dir', type=Path, default=ROOT/'target/gpu-regression')
     args = parser.parse_args()
     project = args.output_dir.resolve()
     project.mkdir(parents=True, exist_ok=True)

@@ -74,8 +74,8 @@ def validate_drawable_shape(drawable, expected=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sdk", type=Path, default=ROOT / "third_party/CubismSdkForNative-5-r.5")
-    parser.add_argument("--probe-dir", type=Path, default=ROOT / "target/kasane/core-regression/build")
-    parser.add_argument("--output-dir", type=Path, default=ROOT / "target/kasane/official-conformance")
+    parser.add_argument("--probe-dir", type=Path, default=ROOT / "target/probes")
+    parser.add_argument("--output-dir", type=Path, default=ROOT / "target/conformance")
     args = parser.parse_args()
 
     args.output_dir.mkdir(parents=True, exist_ok=True)

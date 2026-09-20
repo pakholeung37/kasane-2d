@@ -62,9 +62,9 @@ def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--godot', type=Path, default=Path('/Applications/Godot_mono.app/Contents/MacOS/Godot'))
     p.add_argument('--library', type=Path, default=get_default_library())
-    p.add_argument('--output-dir', type=Path, default=ROOT / 'target/kasane/godot-boundary')
+    p.add_argument('--output-dir', type=Path, default=ROOT / 'target/godot-boundary')
     p.add_argument('--suite', choices=['all', 'boundary', 'lifecycle', 'workflow'], default='all')
-    p.add_argument('--official-probe', type=Path, default=ROOT / 'target/kasane/core-regression/build/kasane_document_official_probe')
+    p.add_argument('--official-probe', type=Path, default=ROOT / 'target/probes/kasane_document_official_probe')
     args = p.parse_args()
 
     project = args.output_dir.resolve()
