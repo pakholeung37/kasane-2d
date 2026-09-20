@@ -245,3 +245,117 @@ fn test_glue_crud_and_references() {
     // Now mesh can be erased
     assert!(doc.erase_object(MESH_A).status.is_ok());
 }
+
+#[test]
+fn test_blendshape_evaluation() {
+    use kasane_core::evaluation::{evaluate_frame, DrawableFrame, PreviewValues};
+    use std::collections::HashMap;
+
+    let mut doc = create_base_document();
+
+    let param_bs2 = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    assert!(doc
+        .create_parameter(Parameter {
+            id: param_bs2.to_string(),
+            runtime_id: "ParamBS2".to_string(),
+            name: "ParamBS2".to_string(),
+            minimum: 0.0,
+            maximum: 1.0,
+            default_value: 0.0,
+            decimal_places: 2,
+            kind: ParameterKind::BlendShape,
+        })
+        .status
+        .is_ok());
+
+    // Create blend key table on PARAM_BS (range 0.0..1.0, keys [0.0, 1.0], base_key = 0)
+    let bkt = BlendShapeKeyTable {
+        id: KEY_TABLE.to_string(),
+        parameter_id: PARAM_BS.to_string(),
+        keys: vec![0.0, 1.0],
+        base_key_idx: 0,
+    };
+    assert!(doc.create_blend_key_table(bkt).status.is_ok());
+
+    // Create a constraint on param_bs2 (range 0.0..1.0):
+    // at 0.0 weight is 1.0, at 1.0 weight is 0.0
+    let bsc = BlendShapeConstraint {
+        id: CONSTRAINT.to_string(),
+        parameter_id: param_bs2.to_string(),
+        keys: vec![0.0, 1.0],
+        weights: vec![1.0, 0.0],
+    };
+    assert!(doc.create_blend_constraint(bsc).status.is_ok());
+
+    // Create blend binding for MESH_A:
+    // base key (0.0): delta is zero
+    // key 1 (1.0): dx = 5.0, dy = 10.0, draw_order = 50.0
+    let binding = BlendShapeBinding {
+        id: BINDING_BS.to_string(),
+        target_id: MESH_A.to_string(),
+        target_kind: BlendShapeTargetKind::Mesh,
+        key_table_id: KEY_TABLE.to_string(),
+        constraint_ids: vec![CONSTRAINT.to_string()],
+        keyforms: DeltaKeyforms::Mesh(vec![
+            DeltaMeshKeyform {
+                positions: vec![Vec2::default(); 3],
+                ..Default::default()
+            },
+            DeltaMeshKeyform {
+                positions: vec![Vec2::new(5.0, 10.0), Vec2::new(5.0, 10.0), Vec2::new(5.0, 10.0)],
+                opacity: None,
+                draw_order: Some(50.0),
+                multiply: None,
+                screen: None,
+            },
+        ]),
+    };
+    assert!(doc.create_blend_binding(binding).status.is_ok());
+
+    // Case 1: PARAM_BS = 0.0 (base key) -> no delta
+    let mut preview: PreviewValues = HashMap::new();
+    preview.insert(PARAM_BS.to_string(), 0.0);
+    preview.insert(param_bs2.to_string(), 0.0); // constraint weight = 1.0
+    let mut frame = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    assert_eq!(mesh_a.positions[0], Vec2::new(0.0, 0.0));
+    assert_eq!(mesh_a.positions[1], Vec2::new(10.0, 0.0));
+    assert_eq!(mesh_a.draw_order, 0);
+
+    // Case 2: PARAM_BS = 1.0, constraint param_bs2 = 0.0 (weight 1.0) -> full delta (5, 10)
+    // Note: doc.canvas().flag & 1 == 0 inverts Y for final output
+    preview.insert(PARAM_BS.to_string(), 1.0);
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    assert_eq!(mesh_a.positions[0], Vec2::new(5.0, -10.0));
+    assert_eq!(mesh_a.positions[1], Vec2::new(15.0, -10.0));
+    assert_eq!(mesh_a.draw_order, 50);
+
+    // Case 3: PARAM_BS = 0.5, constraint = 0.0 (weight 1.0) -> half delta (2.5, 5.0)
+    preview.insert(PARAM_BS.to_string(), 0.5);
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    assert_eq!(mesh_a.positions[0], Vec2::new(2.5, -5.0));
+    assert_eq!(mesh_a.positions[1], Vec2::new(12.5, -5.0));
+    assert_eq!(mesh_a.draw_order, 25);
+
+    // Case 4: PARAM_BS = 1.0, constraint param_bs2 = 0.5 (halfway between 0 and 1 -> weight 0.5)
+    // Effective weight = 1.0 * 0.5 = 0.5 -> delta is (2.5, 5.0)
+    preview.insert(PARAM_BS.to_string(), 1.0);
+    preview.insert(param_bs2.to_string(), 0.5);
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    assert_eq!(mesh_a.positions[0], Vec2::new(2.5, -5.0));
+    assert_eq!(mesh_a.positions[1], Vec2::new(12.5, -5.0));
+    assert_eq!(mesh_a.draw_order, 25);
+
+    // Case 5: PARAM_BS = 1.0, constraint param_bs2 = 1.0 (weight 0.0) -> 0 delta
+    preview.insert(PARAM_BS.to_string(), 1.0);
+    preview.insert(param_bs2.to_string(), 1.0);
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    assert_eq!(mesh_a.positions[0], Vec2::new(0.0, 0.0));
+    assert_eq!(mesh_a.draw_order, 0);
+}
+

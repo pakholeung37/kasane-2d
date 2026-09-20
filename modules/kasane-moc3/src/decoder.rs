@@ -2,7 +2,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use kasane_core::types::{
-    Appearance, BindingAxis, BlendMode, Canvas, Mesh, MeshBinding, MeshKeyform, Parameter,
+    Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
+    BlendShapeTargetKind, Canvas, DeltaKeyforms, DeltaMeshKeyform, DeltaPartKeyform,
+    DeltaRotationKeyform, DeltaWarpKeyform, Mesh, MeshBinding, MeshKeyform, Parameter,
     ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind,
     Vec2, VertexId,
 };
@@ -29,6 +31,9 @@ pub struct ImportIdMapping {
     pub deformer_by_index: Vec<String>, // index -> internal_id
     pub mesh_by_index: Vec<String>,     // index -> internal_id
     pub parameter_by_index: Vec<String>, // index -> internal_id
+    pub blend_key_table_by_index: Vec<String>, // index -> internal_id
+    pub blend_constraint_by_index: Vec<String>, // index -> internal_id
+    pub blend_binding_by_index: Vec<String>, // index -> internal_id
 }
 
 #[derive(Debug, Clone)]
@@ -224,6 +229,9 @@ pub fn decode_moc3(
         deformer_by_index: Vec::with_capacity(counts.deformers as usize),
         mesh_by_index: Vec::with_capacity(counts.art_meshes as usize),
         parameter_by_index: Vec::with_capacity(counts.parameters as usize),
+        blend_key_table_by_index: Vec::with_capacity(counts.blend_key_tables as usize),
+        blend_constraint_by_index: Vec::with_capacity(counts.bs_constraints as usize),
+        blend_binding_by_index: Vec::with_capacity(counts.blend_bindings as usize),
     };
 
     // Pre-calculate stable internal IDs
@@ -487,6 +495,8 @@ pub fn decode_moc3(
 
     let deformer_creation_order = parent_order(&deformer_parents, "Deformer")?;
 
+    let mut warp_by_local_idx = vec![String::new(); counts.warps as usize];
+    let mut rotation_by_local_idx = vec![String::new(); counts.rotations as usize];
     let mut deformer_scene_bindings = Vec::new();
     for &d in &deformer_creation_order {
         let id = mapping.deformer_by_index[d].clone();
@@ -604,6 +614,7 @@ pub fn decode_moc3(
                 })
                 .status
             );
+            warp_by_local_idx[local_idx] = id.clone();
 
             if is_bound {
                 deformer_scene_bindings.push(SceneBinding {
@@ -712,6 +723,7 @@ pub fn decode_moc3(
                 })
                 .status
             );
+            rotation_by_local_idx[local_idx] = id.clone();
 
             if is_bound {
                 deformer_scene_bindings.push(SceneBinding {
@@ -936,6 +948,277 @@ pub fn decode_moc3(
     }
     for b in mesh_bindings {
         check_status!(doc.create_binding(b).status);
+    }
+
+    // 9. Decode BlendShapes (BlendShapeKeyTables, BlendShapeConstraints, BlendShapeBindings)
+    if counts.blend_key_tables > 0 {
+        for i in 0..counts.blend_key_tables as usize {
+            let mut owner_param: Option<usize> = None;
+            for p in 0..counts.parameters as usize {
+                let p_off = read_i32(bytes, offsets[115] as usize + p * 4)? as usize;
+                let p_len = read_i32(bytes, offsets[116] as usize + p * 4)? as usize;
+                if i >= p_off && i < p_off + p_len {
+                    owner_param = Some(p);
+                    break;
+                }
+            }
+            let p = owner_param.ok_or_else(|| {
+                Status::error(
+                    "INVALID_KEY_TABLE",
+                    format!("Blend key table {i} not referenced by any parameter"),
+                )
+            })?;
+            let parameter_id = mapping.parameter_by_index[p].clone();
+            let keys_off = read_i32(bytes, offsets[117] as usize + i * 4)? as usize;
+            let keys_len = read_i32(bytes, offsets[118] as usize + i * 4)? as usize;
+            let base_key_idx = read_i32(bytes, offsets[119] as usize + i * 4)? as usize;
+            let mut keys = Vec::with_capacity(keys_len);
+            for k in 0..keys_len {
+                keys.push(read_f32(bytes, offsets[77] as usize + (keys_off + k) * 4)?);
+            }
+            let bkt_id = stable_id(&doc_id, "blend_key_table", i, &format!("bkt_{i}"));
+            mapping.blend_key_table_by_index.push(bkt_id.clone());
+            check_status!(doc.create_blend_key_table(BlendShapeKeyTable {
+                id: bkt_id,
+                parameter_id,
+                keys,
+                base_key_idx,
+            }).status);
+        }
+    }
+
+    if counts.bs_constraints > 0 {
+        for i in 0..counts.bs_constraints as usize {
+            let param_idx = read_i32(bytes, offsets[132] as usize + i * 4)? as usize;
+            if param_idx >= mapping.parameter_by_index.len() {
+                return Err(Status::error(
+                    "INVALID_CONSTRAINT",
+                    format!("Constraint {i}: invalid parameter {param_idx}"),
+                ));
+            }
+            let parameter_id = mapping.parameter_by_index[param_idx].clone();
+            let val_off = read_i32(bytes, offsets[133] as usize + i * 4)? as usize;
+            let val_len = read_i32(bytes, offsets[134] as usize + i * 4)? as usize;
+            let mut keys = Vec::with_capacity(val_len);
+            let mut weights = Vec::with_capacity(val_len);
+            for k in 0..val_len {
+                keys.push(read_f32(bytes, offsets[135] as usize + (val_off + k) * 4)?);
+                weights.push(read_f32(bytes, offsets[136] as usize + (val_off + k) * 4)?);
+            }
+            let bsc_id = stable_id(&doc_id, "blend_constraint", i, &format!("bsc_{i}"));
+            mapping.blend_constraint_by_index.push(bsc_id.clone());
+            check_status!(doc.create_blend_constraint(BlendShapeConstraint {
+                id: bsc_id,
+                parameter_id,
+                keys,
+                weights,
+            }).status);
+        }
+    }
+
+    if counts.blend_bindings > 0 {
+        let mut binding_targets: HashMap<usize, (String, BlendShapeTargetKind)> = HashMap::new();
+
+        for i in 0..counts.bs_warps as usize {
+            let target_local = read_i32(bytes, offsets[125] as usize + i * 4)? as usize;
+            let target_id = warp_by_local_idx[target_local].clone();
+            let b_off = read_i32(bytes, offsets[126] as usize + i * 4)? as usize;
+            let b_len = read_i32(bytes, offsets[127] as usize + i * 4)? as usize;
+            for b in b_off..b_off + b_len {
+                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Warp));
+            }
+        }
+
+        for i in 0..counts.bs_rotations as usize {
+            let target_local = read_i32(bytes, offsets[146] as usize + i * 4)? as usize;
+            let target_id = rotation_by_local_idx[target_local].clone();
+            let b_off = read_i32(bytes, offsets[147] as usize + i * 4)? as usize;
+            let b_len = read_i32(bytes, offsets[148] as usize + i * 4)? as usize;
+            for b in b_off..b_off + b_len {
+                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Rotation));
+            }
+        }
+
+        for i in 0..counts.bs_parts as usize {
+            let target_part = read_i32(bytes, offsets[143] as usize + i * 4)? as usize;
+            let target_id = mapping.part_by_index[target_part].clone();
+            let b_off = read_i32(bytes, offsets[144] as usize + i * 4)? as usize;
+            let b_len = read_i32(bytes, offsets[145] as usize + i * 4)? as usize;
+            for b in b_off..b_off + b_len {
+                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Part));
+            }
+        }
+
+        for i in 0..counts.bs_art_meshes as usize {
+            let target_mesh = read_i32(bytes, offsets[128] as usize + i * 4)? as usize;
+            let target_id = mapping.mesh_by_index[target_mesh].clone();
+            let b_off = read_i32(bytes, offsets[129] as usize + i * 4)? as usize;
+            let b_len = read_i32(bytes, offsets[130] as usize + i * 4)? as usize;
+            for b in b_off..b_off + b_len {
+                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Mesh));
+            }
+        }
+
+        let get_bs_colors = |sec_mul: usize, sec_scr: usize, key_idx: usize| -> Result<(Option<[f32; 3]>, Option<[f32; 3]>), Status> {
+            let mul = if offsets.len() > sec_mul && offsets[sec_mul] > 0 {
+                let idx = read_i32(bytes, offsets[sec_mul] as usize + key_idx * 4)?;
+                if idx >= 0 {
+                    Some([
+                        read_f32(bytes, offsets[108] as usize + idx as usize * 4)?,
+                        read_f32(bytes, offsets[109] as usize + idx as usize * 4)?,
+                        read_f32(bytes, offsets[110] as usize + idx as usize * 4)?,
+                    ])
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            let scr = if offsets.len() > sec_scr && offsets[sec_scr] > 0 {
+                let idx = read_i32(bytes, offsets[sec_scr] as usize + key_idx * 4)?;
+                if idx >= 0 {
+                    Some([
+                        read_f32(bytes, offsets[111] as usize + idx as usize * 4)?,
+                        read_f32(bytes, offsets[112] as usize + idx as usize * 4)?,
+                        read_f32(bytes, offsets[113] as usize + idx as usize * 4)?,
+                    ])
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            Ok((mul, scr))
+        };
+
+        for b in 0..counts.blend_bindings as usize {
+            let (target_id, target_kind) = binding_targets.get(&b).ok_or_else(|| {
+                Status::error("ORPHAN_BINDING", format!("Blend binding {b} has no target"))
+            })?.clone();
+
+            let kt_idx = read_i32(bytes, offsets[120] as usize + b * 4)? as usize;
+            let key_table_id = mapping.blend_key_table_by_index[kt_idx].clone();
+            let key_bs_off = read_i32(bytes, offsets[121] as usize + b * 4)? as usize;
+            let key_bs_len = read_i32(bytes, offsets[122] as usize + b * 4)? as usize;
+            let c_off = read_i32(bytes, offsets[123] as usize + b * 4)? as usize;
+            let c_len = read_i32(bytes, offsets[124] as usize + b * 4)? as usize;
+
+            let mut constraint_ids = Vec::with_capacity(c_len);
+            for c in 0..c_len {
+                let c_idx = read_i32(bytes, offsets[131] as usize + (c_off + c) * 4)? as usize;
+                constraint_ids.push(mapping.blend_constraint_by_index[c_idx].clone());
+            }
+
+            let keyforms = match target_kind {
+                BlendShapeTargetKind::Part => {
+                    let mut forms = Vec::with_capacity(key_bs_len);
+                    for k in 0..key_bs_len {
+                        let draw_order = read_f32(bytes, offsets[58] as usize + (key_bs_off + k) * 4)?;
+                        forms.push(DeltaPartKeyform { draw_order });
+                    }
+                    DeltaKeyforms::Part(forms)
+                }
+                BlendShapeTargetKind::Warp => {
+                    let warp = doc.get_transform(&target_id).unwrap();
+                    let pt_count = ((warp.rows + 1) * (warp.columns + 1)) as usize;
+                    let is_root = warp.parent_id.is_empty();
+                    let mut forms = Vec::with_capacity(key_bs_len);
+                    for k in 0..key_bs_len {
+                        let ki = key_bs_off + k;
+                        let op = read_f32(bytes, offsets[59] as usize + ki * 4)?;
+                        let pos_off = read_i32(bytes, offsets[60] as usize + ki * 4)? as usize;
+                        let mut points = Vec::with_capacity(pt_count);
+                        for p in 0..pt_count {
+                            let rx = read_f32(bytes, offsets[71] as usize + (pos_off + p * 2) * 4)?;
+                            let ry = read_f32(bytes, offsets[71] as usize + (pos_off + p * 2 + 1) * 4)?;
+                            if is_root {
+                                points.push(Vec2::new(rx * ppu, -ry * ppu));
+                            } else {
+                                points.push(Vec2::new(rx, ry));
+                            }
+                        }
+                        let (mul, scr) = get_bs_colors(137, 138, ki)?;
+                        forms.push(DeltaWarpKeyform {
+                            points,
+                            opacity: Some(op),
+                            multiply: mul,
+                            screen: scr,
+                        });
+                    }
+                    DeltaKeyforms::Warp(forms)
+                }
+                BlendShapeTargetKind::Rotation => {
+                    let rot = doc.get_transform(&target_id).unwrap();
+                    let is_root = rot.parent_id.is_empty();
+                    let mut forms = Vec::with_capacity(key_bs_len);
+                    for k in 0..key_bs_len {
+                        let ki = key_bs_off + k;
+                        let op = read_f32(bytes, offsets[61] as usize + ki * 4)?;
+                        let ang = read_f32(bytes, offsets[62] as usize + ki * 4)?;
+                        let ox = read_f32(bytes, offsets[63] as usize + ki * 4)?;
+                        let oy = read_f32(bytes, offsets[64] as usize + ki * 4)?;
+                        let sc = read_f32(bytes, offsets[65] as usize + ki * 4)?;
+                        let origin = if is_root {
+                            Vec2::new(ox * ppu, -oy * ppu)
+                        } else {
+                            Vec2::new(ox, oy)
+                        };
+                        let (mul, scr) = get_bs_colors(139, 140, ki)?;
+                        forms.push(DeltaRotationKeyform {
+                            origin: Some(origin),
+                            angle: Some(ang),
+                            scale: Some(sc),
+                            opacity: Some(op),
+                            multiply: mul,
+                            screen: scr,
+                        });
+                    }
+                    DeltaKeyforms::Rotation(forms)
+                }
+                BlendShapeTargetKind::Mesh => {
+                    let mesh = doc.get_mesh(&target_id).unwrap();
+                    let vc = mesh.vertex_ids.len();
+                    let is_root = mesh.deformer_id.is_empty();
+                    let mut forms = Vec::with_capacity(key_bs_len);
+                    for k in 0..key_bs_len {
+                        let ki = key_bs_off + k;
+                        let op = read_f32(bytes, offsets[68] as usize + ki * 4)?;
+                        let d_order = read_f32(bytes, offsets[69] as usize + ki * 4)?;
+                        let pos_off = read_i32(bytes, offsets[70] as usize + ki * 4)? as usize;
+                        let mut positions = Vec::with_capacity(vc);
+                        for v in 0..vc {
+                            let rx = read_f32(bytes, offsets[71] as usize + (pos_off + v * 2) * 4)?;
+                            let ry = read_f32(bytes, offsets[71] as usize + (pos_off + v * 2 + 1) * 4)?;
+                            if is_root {
+                                positions.push(Vec2::new(rx * ppu, -ry * ppu));
+                            } else {
+                                positions.push(Vec2::new(rx, ry));
+                            }
+                        }
+                        let (mul, scr) = get_bs_colors(141, 142, ki)?;
+                        forms.push(DeltaMeshKeyform {
+                            positions,
+                            opacity: Some(op),
+                            draw_order: Some(d_order),
+                            multiply: mul,
+                            screen: scr,
+                        });
+                    }
+                    DeltaKeyforms::Mesh(forms)
+                }
+            };
+
+            let b_id = stable_id(&doc_id, "blend_binding", b, &format!("bb_{b}"));
+            mapping.blend_binding_by_index.push(b_id.clone());
+            check_status!(doc.create_blend_binding(BlendShapeBinding {
+                id: b_id,
+                target_id,
+                target_kind,
+                key_table_id,
+                constraint_ids,
+                keyforms,
+            }).status);
+        }
     }
 
     // Drawing hierarchy and tie order are independent of organization Parts.

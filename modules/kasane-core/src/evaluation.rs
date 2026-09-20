@@ -5,8 +5,8 @@ use crate::document::Document;
 use crate::geometry::{to_runtime_positions, validate_positions};
 use crate::keyforms::{blend_vectors, find_key_segment, key_combinations, KeyAxis};
 use crate::types::{
-    Appearance, BindingAxis, BlendMode, Canvas, RotationPose, Status, Transform, TransformKind,
-    Vec2,
+    Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, Canvas,
+    DeltaKeyforms, RotationPose, Status, Transform, TransformKind, Vec2,
 };
 
 pub type PreviewValues = HashMap<String, f32>;
@@ -157,6 +157,95 @@ fn inherit_appearance(child: &mut Appearance, parent: &Appearance) {
     }
 }
 
+fn evaluate_constraint(c: &BlendShapeConstraint, val: f32) -> f32 {
+    let n = c.keys.len();
+    if n == 0 {
+        return 1.0;
+    }
+    if n == 1 || val <= c.keys[0] {
+        return c.weights[0];
+    }
+    if val >= c.keys[n - 1] {
+        return c.weights[n - 1];
+    }
+    let mut idx = 0;
+    while idx + 1 < n && val >= c.keys[idx + 1] {
+        idx += 1;
+    }
+    let span = c.keys[idx + 1] - c.keys[idx];
+    if span <= 0.0 {
+        return c.weights[idx];
+    }
+    let t = (val - c.keys[idx]) / span;
+    c.weights[idx] * (1.0 - t) + c.weights[idx + 1] * t
+}
+
+pub fn evaluate_blend_binding(
+    doc: &Document,
+    values: &HashMap<String, f32>,
+    b: &BlendShapeBinding,
+) -> Vec<(usize, f32)> {
+    let kt = match doc.get_blend_key_table(&b.key_table_id) {
+        Some(kt) => kt,
+        None => return Vec::new(),
+    };
+    let v = values.get(&kt.parameter_id).copied().unwrap_or(0.0);
+    let key_count = kt.keys.len();
+    if key_count < 2 {
+        return Vec::new();
+    }
+
+    let mut index = 0usize;
+    let mut weight = 0.0f32;
+    if v > kt.keys[0] {
+        while index + 1 < key_count && v >= kt.keys[index + 1] {
+            index += 1;
+        }
+        if index < key_count - 1 {
+            let span = kt.keys[index + 1] - kt.keys[index];
+            if span > 0.0 {
+                weight = (v - kt.keys[index]) / span;
+            }
+        }
+    }
+
+    let base_key_idx = kt.base_key_idx;
+    let mut keyforms = Vec::with_capacity(2);
+    if weight != 0.0 && index == base_key_idx {
+        keyforms.push((index + 1, weight));
+    } else if weight == 0.0 {
+        if index != base_key_idx {
+            keyforms.push((index, 1.0));
+        }
+    } else {
+        if index + 1 == base_key_idx {
+            keyforms.push((index, 1.0 - weight));
+        } else {
+            keyforms.push((index, 1.0 - weight));
+            keyforms.push((index + 1, weight));
+        }
+    }
+
+    let mut constraint_weight = 1.0f32;
+    for c_id in &b.constraint_ids {
+        if let Some(c) = doc.get_blend_constraint(c_id) {
+            let cv = values.get(&c.parameter_id).copied().unwrap_or(0.0);
+            let cw = evaluate_constraint(c, cv);
+            constraint_weight = constraint_weight.min(cw);
+        }
+    }
+
+    if constraint_weight == 0.0 {
+        return Vec::new();
+    }
+
+    keyforms
+        .into_iter()
+        .map(|(idx, w)| (idx, w * constraint_weight))
+        .filter(|(_, w)| *w != 0.0)
+        .collect()
+}
+
 fn blend_positions<F>(
     doc: &Document,
     parent: &str,
@@ -303,6 +392,19 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 }
             }
         }
+        let bs_list = doc.blend_bindings_for_target(id);
+        if !bs_list.is_empty() {
+            for bs in bs_list {
+                if let DeltaKeyforms::Part(ref forms) = bs.keyforms {
+                    for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                        if kf_idx < forms.len() {
+                            order += forms[kf_idx].draw_order * eff_w;
+                        }
+                    }
+                }
+            }
+            order = (order + 0.001).clamp(0.0, 1000.0);
+        }
         enabled_parts.insert(id.clone(), enabled);
         part_orders.insert(id.clone(), f32_to_i32(order + 0.001));
     }
@@ -377,6 +479,91 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     Err(s) => return s,
                 };
                 state.pose.origin = origin[0];
+            }
+
+            let bs_list = doc.blend_bindings_for_target(id);
+            if !bs_list.is_empty() {
+                for bs in bs_list {
+                    match (&bs.keyforms, t.kind) {
+                        (DeltaKeyforms::Warp(ref forms), TransformKind::Warp) => {
+                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                                if kf_idx < forms.len() {
+                                    let f = &forms[kf_idx];
+                                    for (p, dp) in points.iter_mut().zip(&f.points) {
+                                        if t.parent_id.is_empty() {
+                                            let ppu = doc.canvas().pixels_per_unit;
+                                            p.x += (dp.x / ppu) * eff_w;
+                                            p.y += (-dp.y / ppu) * eff_w;
+                                        } else {
+                                            p.x += dp.x * eff_w;
+                                            p.y += dp.y * eff_w;
+                                        }
+                                    }
+                                    if let Some(d_op) = f.opacity {
+                                        state.appearance.opacity += d_op * eff_w;
+                                    }
+                                    if let Some(d_mul) = f.multiply {
+                                        for c in 0..3 {
+                                            state.appearance.multiply[c] += d_mul[c] * eff_w;
+                                        }
+                                    }
+                                    if let Some(d_scr) = f.screen {
+                                        for c in 0..3 {
+                                            state.appearance.screen[c] += d_scr[c] * eff_w;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        (DeltaKeyforms::Rotation(ref forms), TransformKind::Rotation) => {
+                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                                if kf_idx < forms.len() {
+                                    let f = &forms[kf_idx];
+                                    if let Some(d_orig) = f.origin {
+                                        if t.parent_id.is_empty() {
+                                            let ppu = doc.canvas().pixels_per_unit;
+                                            state.pose.origin.x += (d_orig.x / ppu) * eff_w;
+                                            state.pose.origin.y += (-d_orig.y / ppu) * eff_w;
+                                        } else {
+                                            state.pose.origin.x += d_orig.x * eff_w;
+                                            state.pose.origin.y += d_orig.y * eff_w;
+                                        }
+                                    }
+                                    if let Some(d_ang) = f.angle {
+                                        state.pose.angle += d_ang * eff_w;
+                                    }
+                                    if let Some(d_scale) = f.scale {
+                                        state.pose.scale += d_scale * eff_w;
+                                    }
+                                    if let Some(d_op) = f.opacity {
+                                        state.appearance.opacity += d_op * eff_w;
+                                    }
+                                    if let Some(d_mul) = f.multiply {
+                                        for c in 0..3 {
+                                            state.appearance.multiply[c] += d_mul[c] * eff_w;
+                                        }
+                                    }
+                                    if let Some(d_scr) = f.screen {
+                                        for c in 0..3 {
+                                            state.appearance.screen[c] += d_scr[c] * eff_w;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                if t.kind == TransformKind::Rotation {
+                    state.pose.angle = state.pose.angle.clamp(-3600.0, 3600.0);
+                    state.pose.scale = state.pose.scale.clamp(0.0001, 100.0);
+                }
+                state.appearance.opacity = state.appearance.opacity.clamp(0.0, 1.0);
+                for c in 0..3 {
+                    state.appearance.multiply[c] = state.appearance.multiply[c].clamp(0.0, 1.0);
+                    state.appearance.screen[c] = state.appearance.screen[c].clamp(0.0, 1.0);
+                }
             }
 
             state.inherited_scale = if t.kind == TransformKind::Rotation {
@@ -511,6 +698,52 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                         * sel_ref.weights[k];
                 }
                 order = sum;
+            }
+
+            let bs_list = doc.blend_bindings_for_target(id);
+            if !bs_list.is_empty() {
+                for bs in bs_list {
+                    if let DeltaKeyforms::Mesh(ref forms) = bs.keyforms {
+                        for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                            if kf_idx < forms.len() {
+                                let f = &forms[kf_idx];
+                                for (p, dp) in d.positions.iter_mut().zip(&f.positions) {
+                                    if mesh.deformer_id.is_empty() {
+                                        let ppu = doc.canvas().pixels_per_unit;
+                                        p.x += (dp.x / ppu) * eff_w;
+                                        p.y += (-dp.y / ppu) * eff_w;
+                                    } else {
+                                        p.x += dp.x * eff_w;
+                                        p.y += dp.y * eff_w;
+                                    }
+                                }
+                                if let Some(d_do) = f.draw_order {
+                                    order += d_do * eff_w;
+                                }
+                                if let Some(d_op) = f.opacity {
+                                    appearance.opacity += d_op * eff_w;
+                                }
+                                if let Some(d_mul) = f.multiply {
+                                    for c in 0..3 {
+                                        appearance.multiply[c] += d_mul[c] * eff_w;
+                                    }
+                                }
+                                if let Some(d_scr) = f.screen {
+                                    for c in 0..3 {
+                                        appearance.screen[c] += d_scr[c] * eff_w;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                order = order.clamp(0.0, 1000.0);
+                appearance.opacity = appearance.opacity.clamp(0.0, 1.0);
+                for c in 0..3 {
+                    appearance.multiply[c] = appearance.multiply[c].clamp(0.0, 1.0);
+                    appearance.screen[c] = appearance.screen[c].clamp(0.0, 1.0);
+                }
             }
 
             if !mesh.deformer_id.is_empty() {
