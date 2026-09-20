@@ -16,6 +16,9 @@ benchmarks/cubism-matrix/.godot/
 benchmarks/cubism-matrix/runners/native/build*/
 **/__pycache__/
 
-# Standalone Godot applications.
+# Standalone Godot applications and tests.
 apps/**/.godot/
 apps/**/export_credentials.cfg
+tests/.godot/
+tests/*.uid
+

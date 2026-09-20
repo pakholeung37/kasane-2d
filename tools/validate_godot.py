@@ -106,11 +106,11 @@ def main():
 
     suites = []
     if args.suite in ['all', 'boundary']:
-        suites.append(('boundary', ROOT / 'modules/kasane-godot/tests/document_boundary.gd'))
+        suites.append(('boundary', ROOT / 'tests/document_boundary.gd'))
     if args.suite in ['all', 'lifecycle']:
-        suites.append(('lifecycle', ROOT / 'modules/kasane-godot/tests/lifecycle_boundary.gd'))
+        suites.append(('lifecycle', ROOT / 'tests/lifecycle_boundary.gd'))
     if args.suite in ['all', 'workflow']:
-        suites.append(('workflow', ROOT / 'modules/kasane-godot/tests/full_workflow_e2e.gd'))
+        suites.append(('workflow', ROOT / 'tests/full_workflow_e2e.gd'))
 
     overall_report = {
         'status': 'passed',

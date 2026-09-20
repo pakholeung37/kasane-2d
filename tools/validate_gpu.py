@@ -41,7 +41,7 @@ def main():
     project = args.output_dir.resolve()
     project.mkdir(parents=True, exist_ok=True)
     try:
-        fixtures_gpu = ROOT / 'modules/kasane-godot/tests/fixtures/gpu'
+        fixtures_gpu = ROOT / 'tests/fixtures/gpu'
         if (fixtures_gpu / 'gpu-package').is_dir() and (fixtures_gpu / 'gpu-source.json').is_file():
             shutil.copytree(fixtures_gpu, project / 'fixtures/publication', dirs_exist_ok=True)
         elif (args.core_build.resolve() / 'kasane_moc3_official_tests').is_file():
@@ -60,7 +60,7 @@ def main():
             (project/asset['source']).write_bytes(data)
         (project/'gpu-source.json').write_text(json.dumps(fixture))
         (project/'roundtrip.json').unlink(missing_ok=True)
-        shutil.copyfile(ROOT/'modules/kasane-godot/tests/gpu_regression.gd', project/'test.gd')
+        shutil.copyfile(ROOT/'tests/gpu_regression.gd', project/'test.gd')
         addon = project/'addons/gd_cubism'
         shutil.copytree(ROOT/'modules/gd-cubism/addons/gd_cubism/res', addon/'res', dirs_exist_ok=True)
         framework = 'libgd_cubism.cubism.macos.release.framework'
