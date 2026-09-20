@@ -1,5 +1,7 @@
 extends Control
 ## The same M4 renderer draws the canvas and observation images.
+const EditorTheme = preload("res://ui/theme.gd")
+signal view_changed(zoom: float, offset: Vector2)
 var zoom := 1.0
 var offset := Vector2.ZERO
 var workspace: RefCounted
@@ -55,6 +57,11 @@ func update_camera() -> void:
 	preview.scale = Vector2.ONE * zoom
 	preview.refresh()
 	queue_redraw()
+	view_changed.emit(zoom, offset)
+
+func set_zoom_centered(new_zoom: float) -> void:
+	zoom = clampf(new_zoom, 0.001, 100.0)
+	update_camera()
 
 func reset_view() -> void:
 	zoom = 1.0
@@ -193,6 +200,6 @@ func _process(_delta: float) -> void:
 	queue_redraw()
 
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, size), Color("171d29"))
+	draw_rect(Rect2(Vector2.ZERO, size), EditorTheme.BG_BASE)
 	if viewport != null:
 		draw_texture_rect(viewport.get_texture(), Rect2(Vector2.ZERO, size), false)

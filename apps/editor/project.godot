@@ -24,11 +24,11 @@ settings/gdscript/always_track_call_stacks=true
 
 [display]
 
-window/size/viewport_width=1440
-window/size/viewport_height=900
+window/size/viewport_width=2560
+window/size/viewport_height=1440
 window/size/window_width_override=1280
 window/size/window_height_override=800
-window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
 
 [dotnet]
 
@@ -38,4 +38,4 @@ project/assembly_name="Kasane Editor"
 
 renderer/rendering_method="gl_compatibility"
 textures/vram_compression/import_etc2_astc=true
-environment/defaults/default_clear_color=Color(0.06, 0.075, 0.11, 1)
+environment/defaults/default_clear_color=Color(0.078, 0.078, 0.086, 1)
