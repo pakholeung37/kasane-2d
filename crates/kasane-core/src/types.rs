@@ -252,6 +252,10 @@ impl Default for Mesh {
     }
 }
 
+fn default_decimal_places() -> i32 {
+    6
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Parameter {
     pub id: String,
@@ -260,6 +264,7 @@ pub struct Parameter {
     pub minimum: f32,
     pub maximum: f32,
     pub default_value: f32,
+    #[serde(default = "default_decimal_places")]
     pub decimal_places: i32,
 }
 

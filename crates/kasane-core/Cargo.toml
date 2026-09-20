@@ -16,3 +16,7 @@ serde_json = { workspace = true }
 [[bench]]
 name = "eval_benchmark"
 harness = false
+
+[[bench]]
+name = "production_scale_benchmark"
+harness = false
