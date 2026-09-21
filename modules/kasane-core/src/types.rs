@@ -612,6 +612,7 @@ pub enum ChangeKind {
     #[default]
     None,
     Metadata,
+    Resources,
     Positions,
     Structure,
 }

@@ -71,6 +71,8 @@ func run():
         preview.set_texture_store(textures)
         preview.set_document(doc)
         check(preview.get_last_result().ok, "Packaged PNG loads directly without import cache")
+    var geometry_creations_before: int = preview_a.get_render_stats().creations
+    var geometry_uploads_before: int = preview_a.get_render_stats().uploads
     var evaluations_before: int = doc.get_parameter_samples().evaluation_count
     var preview_revision_before: int = doc.get_parameter_samples().preview_revision
     var callback_counts := []
@@ -79,6 +81,8 @@ func run():
     var parameter_result: Dictionary = doc.set_preview_parameter(PARAM, 0.75)
     check(parameter_result.ok and not parameter_result.has("drawables"), "Single parameter update returns lightweight samples")
     check(parameter_result.evaluation_count == evaluations_before + 1, "Two previews share one candidate evaluation")
+    check(preview_a.get_render_stats().creations == geometry_creations_before, "Parameter changes reuse static render geometry")
+    check(preview_a.get_render_stats().uploads > geometry_uploads_before, "Parameter changes still upload dynamic positions")
     check(callback_counts == [evaluations_before + 1], "Signal readers observe the committed cached frame")
     doc.get_frame()
     doc.evaluate_mesh(MESH)
@@ -93,7 +97,18 @@ func run():
     var reset_result: Dictionary = doc.reset_preview_values()
     check(reset_result.ok and not reset_result.has("drawables") and reset_result.parameters[0].value == 0.0, "Reset uses lightweight samples and defaults")
     doc.set_preview_values({PARAM: 0.5})
+    var rename_evaluations: int = doc.get_parameter_samples().evaluation_count
+    var rename_submission: int = preview_a.get_last_result().submission_id
     check(doc.rename_mesh(MESH, "renamed while texture missing").ok, "Preview failure cannot fail a committed source edit")
+    check(doc.get_parameter_samples().evaluation_count == rename_evaluations, "Name edit does not evaluate")
+    check(preview_a.get_last_result().submission_id == rename_submission, "Name edit does not submit rendering")
+    check(doc.get_frame().revision == doc.get_document_summary().revision, "Cached frame reports current document revision separately")
+    check(doc.begin_action("Name only").ok and doc.rename_mesh(MESH, "name action").ok and doc.end_action().ok, "Name-only action")
+    check(doc.undo().ok and doc.redo().ok, "Name-only undo and redo")
+    check(doc.get_parameter_samples().evaluation_count == rename_evaluations and doc.get_parameter_samples().parameters[0].requested == 0.5, "Name history preserves preview values and evaluated frame")
+    check(preview_a.get_last_result().submission_id == rename_submission, "Name history does not submit rendering")
+
+
     var image = Image.create(8, 8, false, Image.FORMAT_RGBA8)
     image.fill(Color(1, 0, 0, 1))
     check(textures.set_texture(ASSET, ImageTexture.create_from_image(image)).ok, "Supply external resource")

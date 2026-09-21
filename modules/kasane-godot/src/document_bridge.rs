@@ -93,6 +93,7 @@ impl KasaneDocumentBridge {
             ChangeKind::Structure => "structure",
             ChangeKind::Positions => "positions",
             ChangeKind::Metadata => "metadata",
+            ChangeKind::Resources => "resources",
             ChangeKind::None => "none",
         };
         out.set("change_kind", kind_str);
@@ -1037,7 +1038,8 @@ impl KasaneDocumentBridge {
             Err(status) => return status_to_dict(&status),
         };
         let mut out = status_to_dict(&Status::ok());
-        out.set("revision", frame.source_revision as i64);
+        out.set("revision", self.session.document().revision() as i64);
+        out.set("evaluated_revision", frame.source_revision as i64);
         out.set("coordinate_units", "runtime");
         let mut canvas = Dictionary::new();
         canvas.set("width", frame.canvas.width);
@@ -1274,7 +1276,8 @@ impl KasaneDocumentBridge {
         }
         out.set("parameters", &parameters);
         out.set("generation", self.generation as i64);
-        out.set("revision", frame.source_revision as i64);
+        out.set("revision", self.session.document().revision() as i64);
+        out.set("evaluated_revision", frame.source_revision as i64);
         out.set("preview_revision", self.preview.borrow().revision() as i64);
         out.set("evaluation_count", self.preview.borrow().evaluation_count() as i64);
         out
@@ -1778,7 +1781,12 @@ impl KasaneDocumentBridge {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
         let result = self.session.cancel_action();
-        if result.status.is_ok() && result.changes.kind != ChangeKind::None {
+        if result.status.is_ok()
+            && matches!(
+                result.changes.kind,
+                ChangeKind::Positions | ChangeKind::Structure | ChangeKind::Resources
+            )
+        {
             self.preview.get_mut().reset();
         }
         self.publish_edit(result)
@@ -1790,7 +1798,12 @@ impl KasaneDocumentBridge {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
         let result = self.session.undo();
-        if result.status.is_ok() && result.changes.kind != ChangeKind::None {
+        if result.status.is_ok()
+            && matches!(
+                result.changes.kind,
+                ChangeKind::Positions | ChangeKind::Structure | ChangeKind::Resources
+            )
+        {
             self.preview.get_mut().reset();
         }
         self.publish_edit(result)
@@ -1802,7 +1815,12 @@ impl KasaneDocumentBridge {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
         let result = self.session.redo();
-        if result.status.is_ok() && result.changes.kind != ChangeKind::None {
+        if result.status.is_ok()
+            && matches!(
+                result.changes.kind,
+                ChangeKind::Positions | ChangeKind::Structure | ChangeKind::Resources
+            )
+        {
             self.preview.get_mut().reset();
         }
         self.publish_edit(result)

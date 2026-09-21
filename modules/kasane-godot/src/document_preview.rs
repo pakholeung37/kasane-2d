@@ -22,8 +22,8 @@ use crate::render_frame_validation::validate_frame;
 use crate::texture_store::KasaneTextureStore;
 
 struct MeshKey {
-    uvs: Vec<Vec2>,
-    indices: Vec<u32>,
+    uvs: std::sync::Arc<[Vec2]>,
+    indices: std::sync::Arc<[u32]>,
     texture: Gd<Texture2D>,
 }
 
@@ -224,7 +224,20 @@ impl KasaneDocumentPreview {
     }
 
     #[func]
-    pub fn _document_changed(&mut self, _change: Dictionary) {
+    pub fn _document_changed(&mut self, change: Dictionary) {
+        let kind = change
+            .get("change_kind")
+            .and_then(|v| v.try_to::<GString>().ok());
+        if kind
+            .as_ref()
+            .is_some_and(|k| *k == "metadata" || *k == "none")
+        {
+            return;
+        }
+        if kind.as_ref().is_some_and(|k| *k == "positions") {
+            self.refresh_inner(false);
+            return;
+        }
         let reload_assets = self.document.as_ref().is_none_or(|doc| {
             let doc = doc.bind();
             let session = doc.session();
@@ -639,7 +652,9 @@ impl KasaneDocumentPreview {
             }
 
             let reuse = self.mesh_keys.get(&d.id).is_some_and(|key| {
-                key.indices == d.indices && key.uvs == d.uvs && key.texture == tex
+                std::sync::Arc::ptr_eq(&key.indices, &d.indices)
+                    && std::sync::Arc::ptr_eq(&key.uvs, &d.uvs)
+                    && key.texture == tex
             });
             let mut view = self
                 .views

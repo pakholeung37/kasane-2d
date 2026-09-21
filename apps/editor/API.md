@@ -189,3 +189,24 @@ saves preserve history. Rust clients should use `DocumentSession::edit` or call
 `record_edit` immediately after a mutation; unrecorded revision changes invalidate
 history before playback. Derived indices, saved baselines and preview caches are
 never included in history entries.
+
+### Evaluation and render invalidation
+
+`metadata` changes now mean display-name edits only. They notify document observers
+without evaluating or submitting a new render. `resources` means replacement asset
+metadata and revalidates textures; adding an asset is `structure`. Position changes
+reuse prepared topology, ordering groups, asset slots and immutable UV/index buffers.
+Keyform draw-order changes are structural because they can expand group bounds.
+
+`get_frame()` and `get_parameter_samples()` return the current document `revision`
+and the snapshot's `evaluated_revision` separately. The latter can precede the
+current revision after a rename. Rust `DrawableFrame::source_revision` continues to
+identify the revision actually evaluated, and its UV/index slices are now immutable
+`Arc` buffers. Each Document owns its prepared evaluation data; structural edits
+invalidate it, so independent documents and restored snapshots cannot share stale
+geometry. Dynamic transform, selection and ordering workspaces are reused.
+
+Position/parameter changes still evaluate the complete dynamic dependency chain,
+including Glue, masks and nested offscreens. This does not rely on `changed_meshes`
+as a complete dependency list. Render mesh reuse compares static buffer identity
+and texture identity instead of scanning UV/index arrays on each update.

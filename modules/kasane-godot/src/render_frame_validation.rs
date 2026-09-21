@@ -175,8 +175,8 @@ mod tests {
                     Vec2::new(1.0, 0.0),
                     Vec2::new(0.0, 1.0),
                 ],
-                uvs: vec![Vec2::new(0.0, 0.0); 3],
-                indices: vec![0, 1, 2],
+                uvs: vec![Vec2::new(0.0, 0.0); 3].into(),
+                indices: vec![0, 1, 2].into(),
                 ..Default::default()
             }],
             ..Default::default()
@@ -207,12 +207,12 @@ mod tests {
     #[test]
     fn allows_zero_triangles_and_rejects_incomplete_triangles() {
         let mut f = frame();
-        f.drawables[0].indices = vec![];
+        f.drawables[0].indices = vec![].into();
         assert!(validate_frame(&f).is_ok());
 
         for indices in [vec![0], vec![0, 1], vec![0, 1, 2, 0]] {
             let mut f = frame();
-            f.drawables[0].indices = indices;
+            f.drawables[0].indices = indices.into();
             assert!(!validate_frame(&f).is_ok());
         }
     }
@@ -220,10 +220,10 @@ mod tests {
     #[test]
     fn rejects_out_of_range_indices_and_mismatched_uvs() {
         let mut frame = frame();
-        frame.drawables[0].indices[2] = u32::MAX;
+        std::sync::Arc::make_mut(&mut frame.drawables[0].indices)[2] = u32::MAX;
         assert!(!validate_frame(&frame).is_ok());
-        frame.drawables[0].indices[2] = 2;
-        frame.drawables[0].uvs.pop();
+        std::sync::Arc::make_mut(&mut frame.drawables[0].indices)[2] = 2;
+        frame.drawables[0].uvs = frame.drawables[0].uvs[..2].into();
         assert!(!validate_frame(&frame).is_ok());
     }
 

@@ -916,7 +916,7 @@ pub fn encode_moc3_with_version(
             keyform_offset = checked(keyform_offset as usize + 1, &format!("{}.keyforms", d.id))?;
         }
 
-        for p in &d.uvs {
+        for p in d.uvs.iter() {
             l.scalar("uv_src.xy", p.x)?;
             l.scalar(
                 "uv_src.xy",

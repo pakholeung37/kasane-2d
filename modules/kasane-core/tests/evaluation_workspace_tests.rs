@@ -112,6 +112,10 @@ fn workspace_reuses_geometry_and_preserves_output_on_late_failure() {
         reused * 2 < one_shot,
         "reused={reused}, one_shot={one_shot}"
     );
+    assert_eq!(
+        reused, 0,
+        "Warmed static meshes must not allocate per frame"
+    );
     println!("100 meshes: reused={reused}, one_shot={one_shot} allocations");
 
     let valid_canvas = doc.canvas();
@@ -169,4 +173,110 @@ fn binding_index_tracks_retarget_delete_and_restore() {
     doc.restore_from(&saved);
     assert_eq!(doc.binding_for_mesh(&id(3)).unwrap().id, binding.id);
     assert!(doc.binding_for_mesh(&id(4)).is_none());
+}
+
+#[test]
+fn static_geometry_survives_positions_and_names_but_not_topology_changes() {
+    use std::sync::Arc;
+    let mut doc = document(1);
+    let mut evaluator = FrameEvaluator::default();
+    let mut frame = DrawableFrame::default();
+    assert!(evaluator
+        .evaluate(&doc, &PreviewValues::new(), &mut frame)
+        .is_ok());
+    let indices = frame.drawables[0].indices.clone();
+    let uvs = frame.drawables[0].uvs.clone();
+    assert!(doc.rename_mesh(&id(3), "renamed".into()).status.is_ok());
+    assert!(doc
+        .set_vertex_positions(&id(3), &[1], &[Vec2::new(2., 3.)])
+        .status
+        .is_ok());
+    assert!(evaluator
+        .evaluate(&doc, &PreviewValues::new(), &mut frame)
+        .is_ok());
+    assert!(Arc::ptr_eq(&indices, &frame.drawables[0].indices));
+    assert!(Arc::ptr_eq(&uvs, &frame.drawables[0].uvs));
+    let mut mesh = doc.get_mesh(&id(3)).unwrap().clone();
+    mesh.uvs[0] = Vec2::new(0.5, 0.75);
+    assert!(doc.replace_mesh(mesh).status.is_ok());
+    assert!(evaluator
+        .evaluate(&doc, &PreviewValues::new(), &mut frame)
+        .is_ok());
+    assert!(!Arc::ptr_eq(&uvs, &frame.drawables[0].uvs));
+    assert_eq!(uvs[0], Vec2::new(0., 1.));
+    // Reusing an evaluator on another document with the same revision is safe.
+    let other = document(2);
+    assert!(evaluator
+        .evaluate(&other, &PreviewValues::new(), &mut frame)
+        .is_ok());
+    assert_eq!(frame.drawables.len(), 2);
+}
+
+#[test]
+fn metadata_reuses_preview_but_resources_and_restore_invalidate() {
+    use kasane_core::preview::PreviewState;
+    use std::sync::Arc;
+    let mut doc = document(1);
+    let saved = doc.clone();
+    let mut preview = PreviewState::default();
+    let first = preview.frame(&doc, 1).unwrap();
+    assert!(doc.rename_mesh(&id(3), "renamed".into()).status.is_ok());
+    assert!(Arc::ptr_eq(&first, &preview.frame(&doc, 1).unwrap()));
+    assert_eq!(preview.evaluation_count(), 1);
+    let mut asset = doc.get_asset(&id(2)).unwrap().clone();
+    asset.source = "replacement.png".into();
+    assert_eq!(doc.replace_asset(asset).changes.kind, ChangeKind::Resources);
+    let second = preview.frame(&doc, 1).unwrap();
+    assert!(!Arc::ptr_eq(&first, &second));
+    assert!(Arc::ptr_eq(
+        &first.drawables[0].uvs,
+        &second.drawables[0].uvs
+    ));
+    doc.restore_from(&saved);
+    assert!(!Arc::ptr_eq(&second, &preview.frame(&doc, 1).unwrap()));
+}
+
+#[test]
+fn keyform_order_edit_invalidates_prepared_group_bounds() {
+    let mut doc = document(2);
+    assert!(doc
+        .create_parameter(Parameter {
+            id: id(10),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut form = MeshKeyform {
+        keys: vec![0.],
+        positions: doc.get_mesh(&id(3)).unwrap().base_positions.clone(),
+        draw_order: Some(0.),
+        ..Default::default()
+    };
+    assert!(doc
+        .create_binding(MeshBinding {
+            id: id(11),
+            mesh_id: id(3),
+            axes: vec![BindingAxis {
+                parameter_id: id(10),
+                keys: vec![0.]
+            }],
+            keyforms: vec![form.clone()],
+        })
+        .status
+        .is_ok());
+    let mut evaluator = FrameEvaluator::default();
+    let mut frame = DrawableFrame::default();
+    assert!(evaluator
+        .evaluate(&doc, &PreviewValues::new(), &mut frame)
+        .is_ok());
+    assert!(frame.drawables[0].render_order < frame.drawables[1].render_order);
+    form.draw_order = Some(10.);
+    assert_eq!(
+        doc.set_mesh_keyform(&id(11), form).changes.kind,
+        ChangeKind::Structure
+    );
+    assert!(evaluator
+        .evaluate(&doc, &PreviewValues::new(), &mut frame)
+        .is_ok());
+    assert!(frame.drawables[0].render_order > frame.drawables[1].render_order);
 }

@@ -71,6 +71,7 @@ pub struct Document {
     id: String,
     canvas: Canvas,
     revision: u64,
+    evaluation_revision: u64,
     transaction_active: bool,
     staged_updates: Vec<VertexPositionUpdate>,
     receipt: crate::history::Receipt,
@@ -115,6 +116,7 @@ pub struct Document {
 
     saved_content: Option<Box<DocumentContent>>,
     lookup: OnceLock<DocumentLookup>,
+    prepared: OnceLock<Result<crate::evaluation::PreparedEvaluation, Status>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -267,6 +269,11 @@ impl Document {
 
     pub fn canvas(&self) -> Canvas {
         self.canvas
+    }
+
+    /// Last document revision that changed visual inputs. Names do not affect frames.
+    pub fn evaluation_revision(&self) -> u64 {
+        self.evaluation_revision
     }
 
     pub fn revision(&self) -> u64 {
@@ -436,6 +443,7 @@ impl Document {
         *self = source.clone();
         self.saved_content = saved;
         self.revision = next_rev;
+        self.evaluation_revision = next_rev;
         self.transaction_active = false;
         self.staged_updates.clear();
     }
@@ -477,6 +485,14 @@ impl Document {
         }
     }
 
+    pub(crate) fn prepared_evaluation(
+        &self,
+    ) -> Result<&crate::evaluation::PreparedEvaluation, &Status> {
+        self.prepared
+            .get_or_init(|| crate::evaluation::PreparedEvaluation::new(self))
+            .as_ref()
+    }
+
     fn changed(
         &mut self,
         kind: ChangeKind,
@@ -489,8 +505,12 @@ impl Document {
         // References only change with structure edits; vertex drags retain the index.
         if kind == ChangeKind::Structure {
             self.lookup.take();
+            self.prepared.take();
         }
         self.revision += 1;
+        if kind != ChangeKind::Metadata {
+            self.evaluation_revision = self.revision;
+        }
         self.receipt.0 = None;
         EditResult {
             status: Status::ok(),
@@ -548,7 +568,7 @@ impl Document {
         let key = asset.id.clone();
         self.assets.insert(key.clone(), asset);
         self.asset_order.push(key.clone());
-        self.changed(ChangeKind::Metadata, Vec::new(), vec![key])
+        self.changed(ChangeKind::Structure, Vec::new(), vec![key])
     }
 
     pub fn replace_asset(&mut self, asset: ImageAsset) -> EditResult {
@@ -564,7 +584,7 @@ impl Document {
         let key = asset.id.clone();
         self.assets.insert(key.clone(), asset);
         let meshes = self.mesh_order.clone();
-        self.changed(ChangeKind::Metadata, meshes, vec![key])
+        self.changed(ChangeKind::Resources, meshes, vec![key])
     }
 
     // --- Parts ---
@@ -1247,6 +1267,10 @@ impl Document {
         )
     }
 
+    pub(crate) fn vertex_slot(&self, mesh: &str, vertex: VertexId) -> Option<usize> {
+        self.vertex_slots.get(mesh)?.get(&vertex).copied()
+    }
+
     pub fn render_indices(&self, id: &str) -> Result<Vec<u32>, Status> {
         let mut out = Vec::new();
         self.render_indices_into(id, &mut out)?;
@@ -1858,10 +1882,14 @@ impl Document {
             None => return self.failed(Status::error("MISSING_BINDING", id)),
         };
         let it = b.keyforms.iter_mut().find(|f| f.keys == form.keys);
-        match it {
-            Some(f) => *f = form,
+        let changes_order = match it {
+            Some(f) => {
+                let changes_order = f.draw_order != form.draw_order;
+                *f = form;
+                changes_order
+            }
             None => return self.failed(Status::error("INVALID_KEY_COMBINATION", id)),
-        }
+        };
         let s = self.canonicalize_binding(&mut b);
         if !s.is_ok() {
             return self.failed(s);
@@ -1869,7 +1897,11 @@ impl Document {
         let mesh = b.mesh_id.clone();
         self.bindings.insert(id.to_string(), b);
         self.changed(
-            ChangeKind::Positions,
+            if changes_order {
+                ChangeKind::Structure
+            } else {
+                ChangeKind::Positions
+            },
             vec![mesh.clone()],
             vec![id.to_string(), mesh],
         )

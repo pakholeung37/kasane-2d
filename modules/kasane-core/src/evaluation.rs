@@ -1,12 +1,13 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use crate::deformers::{rotation_parent_angle, rotation_points, warp_points, PsmVec2};
 use crate::document::Document;
 use crate::geometry::{to_runtime_positions, validate_positions};
-use crate::keyforms::{find_key_segment, key_combinations, KeyAxis};
+use crate::keyforms::find_key_segment;
 use crate::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, Canvas,
-    DeltaKeyforms, Mesh, RotationPose, Status, Transform, TransformKind, Vec2, VertexId,
+    DeltaKeyforms, RotationPose, Status, Transform, TransformKind, Vec2,
 };
 
 pub type PreviewValues = HashMap<String, f32>;
@@ -20,8 +21,8 @@ pub struct Drawable {
     pub texture_asset_id: String,
     pub texture_slot: i32,
     pub positions: Vec<Vec2>,
-    pub uvs: Vec<Vec2>,
-    pub indices: Vec<u32>,
+    pub uvs: Arc<[Vec2]>,
+    pub indices: Arc<[u32]>,
     pub draw_order: i32,
     pub render_order: i32,
     pub opacity: f32,
@@ -45,8 +46,8 @@ impl Default for Drawable {
             texture_asset_id: String::new(),
             texture_slot: 0,
             positions: Vec::new(),
-            uvs: Vec::new(),
-            indices: Vec::new(),
+            uvs: Arc::from([]),
+            indices: Arc::from([]),
             draw_order: 0,
             render_order: 0,
             opacity: 1.0,
@@ -62,7 +63,7 @@ impl Default for Drawable {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct EvaluatedParameter {
     pub id: String,
     pub requested: f32,
@@ -95,6 +96,7 @@ pub struct OffscreenFrame {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct DrawableFrame {
+    /// Revision used to evaluate this immutable snapshot; later name edits may reuse it.
     pub source_revision: u64,
     pub canvas: Canvas,
     pub parameters: Vec<EvaluatedParameter>,
@@ -168,49 +170,42 @@ impl Default for RuntimeRotationPose {
     }
 }
 
-fn find_vertex_index(mesh: &Mesh, vid: VertexId) -> Option<usize> {
-    if vid >= 1 && (vid as usize) <= mesh.vertex_ids.len() {
-        let idx = (vid - 1) as usize;
-        if mesh.vertex_ids[idx] == vid {
-            return Some(idx);
-        }
-    }
-    mesh.vertex_ids.iter().position(|&v| v == vid)
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 struct Selection {
     indices: Vec<usize>,
     weights: Vec<f32>,
     enabled: bool,
 }
 
-fn select(doc: &Document, values: &HashMap<String, f32>, binding: &[BindingAxis]) -> Selection {
-    let mut axes = Vec::with_capacity(binding.len());
-    let mut enabled = true;
-
+fn select<'a>(
+    doc: &Document,
+    values: &HashMap<String, f32>,
+    binding: &[BindingAxis],
+    out: &'a mut Selection,
+) -> &'a Selection {
+    out.indices.clear();
+    out.weights.clear();
+    out.indices.push(0);
+    out.weights.push(1.0);
+    out.enabled = true;
+    let mut stride = 1;
     for axis in binding {
         let p = doc.get_parameter(&axis.parameter_id).unwrap();
         let epsilon = 0.1f32.powi(p.decimal_places);
         let segment = find_key_segment(values[&p.id], &axis.keys, epsilon, epsilon * 1.5);
-        enabled &= !segment.is_outside;
-        axes.push(KeyAxis {
-            index: segment.index,
-            key_count: axis.keys.len() as i32,
-            weight: segment.weight,
-        });
+        out.enabled &= !segment.is_outside;
+        let count = out.indices.len();
+        for i in 0..count {
+            out.indices[i] += segment.index as usize * stride;
+            if segment.weight != 0.0 {
+                out.indices.push(out.indices[i] + stride);
+                out.weights.push(out.weights[i] * segment.weight);
+                out.weights[i] *= 1.0 - segment.weight;
+            }
+        }
+        stride *= axis.keys.len();
     }
-
-    let max_count = 1usize << axes.len();
-    let mut indices = vec![0i32; max_count];
-    let mut weights = vec![1.0f32; max_count];
-    let count = key_combinations(&axes, &mut indices, &mut weights);
-
-    Selection {
-        indices: indices[..count].iter().map(|&i| i as usize).collect(),
-        weights: weights[..count].to_vec(),
-        enabled,
-    }
+    out
 }
 
 fn blend_appearance<F>(s: &Selection, mut get: F) -> Appearance
@@ -393,9 +388,29 @@ where
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct TransformState<'a> {
-    source: &'a Transform,
+#[derive(Debug, Clone, Default)]
+struct TransformSource {
+    kind: TransformKind,
+    rows: usize,
+    columns: usize,
+    quad: bool,
+    base_angle: f32,
+}
+impl From<&Transform> for TransformSource {
+    fn from(t: &Transform) -> Self {
+        Self {
+            kind: t.kind,
+            rows: t.rows as usize,
+            columns: t.columns as usize,
+            quad: t.quad,
+            base_angle: t.base_angle,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct TransformState {
+    source: TransformSource,
     pose: RuntimeRotationPose,
     points: Vec<f32>,
     appearance: Appearance,
@@ -403,7 +418,7 @@ struct TransformState<'a> {
     enabled: bool,
 }
 
-impl<'a> TransformState<'a> {
+impl TransformState {
     fn point(&self, p: PsmVec2) -> PsmVec2 {
         let input = [p.x, p.y];
         let mut output = [0.0f32; 2];
@@ -442,11 +457,121 @@ fn f32_to_i32(v: f32) -> i32 {
     }
 }
 
+#[derive(Debug, Clone)]
+struct StaticGeometry {
+    uvs: Arc<[Vec2]>,
+    indices: Arc<[u32]>,
+}
+
+/// Immutable evaluation inputs, owned by the document and invalidated by structural edits.
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedEvaluation {
+    parts: Vec<String>,
+    transforms: Vec<String>,
+    transform_slots: HashMap<String, usize>,
+    assets: HashMap<String, usize>,
+    meshes: HashMap<String, usize>,
+    groups: Vec<crate::draw_order::DrawOrderGroup>,
+    order_slots: HashMap<String, usize>,
+    offscreen_slots: HashMap<String, usize>,
+    totals: HashMap<String, usize>,
+    geometry: Vec<StaticGeometry>,
+}
+impl PreparedEvaluation {
+    pub(crate) fn new(doc: &Document) -> Result<Self, Status> {
+        let groups = crate::draw_order::resolved_groups(doc);
+        let totals = crate::draw_order::descendant_counts_with_offscreens(doc, &groups)
+            .into_iter()
+            .map(|(id, n)| (id.to_owned(), n))
+            .collect();
+        let mut geometry = Vec::new();
+        for id in doc.mesh_order() {
+            let mesh = doc.get_mesh(id).unwrap();
+            let uvs = mesh
+                .uvs
+                .iter()
+                .map(|uv| {
+                    Vec2::new(
+                        uv.x,
+                        if doc.canvas().flag & 1 == 0 {
+                            uv.y
+                        } else {
+                            1.0 - uv.y
+                        },
+                    )
+                })
+                .collect::<Vec<_>>();
+            let mut indices = Vec::new();
+            doc.render_indices_into(id, &mut indices)?;
+            for tri in indices.as_chunks_mut::<3>().0 {
+                tri.swap(1, 2);
+                if doc.canvas().flag & 1 == 0 {
+                    tri.swap(0, 2);
+                }
+            }
+            geometry.push(StaticGeometry {
+                uvs: uvs.into(),
+                indices: indices.into(),
+            });
+        }
+        let transforms = doc.sorted_transforms();
+        Ok(Self {
+            parts: doc.sorted_parts(),
+            transform_slots: transforms
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect(),
+            transforms,
+            assets: doc
+                .asset_order()
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect(),
+            meshes: doc
+                .mesh_order()
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect(),
+            order_slots: doc
+                .mesh_order()
+                .iter()
+                .chain(doc.part_order())
+                .chain(std::iter::once(&String::new()))
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect(),
+            offscreen_slots: doc
+                .offscreen_order()
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (id.clone(), i))
+                .collect(),
+            groups,
+            totals,
+            geometry,
+        })
+    }
+}
+
 /// Reusable, transactional evaluator. Retain both this workspace and the output
 /// frame across updates. Failure leaves the last successful output untouched.
 #[derive(Debug, Default)]
 pub struct FrameEvaluator {
     scratch: DrawableFrame,
+    values: HashMap<String, f32>,
+    enabled_parts: HashMap<String, bool>,
+    part_orders: HashMap<String, i32>,
+    selection: Selection,
+    transforms: Vec<TransformState>,
+    points: Vec<Vec2>,
+    orders: Vec<i32>,
+    offscreen_orders: Vec<i32>,
+    items: Vec<(usize, i32)>,
+    plan_items: Vec<(i32, usize)>,
+    active_offscreens: Vec<usize>,
 }
 
 impl FrameEvaluator {
@@ -456,7 +581,7 @@ impl FrameEvaluator {
         preview: &PreviewValues,
         out: &mut DrawableFrame,
     ) -> Status {
-        let status = evaluate_into(doc, preview, &mut self.scratch);
+        let status = evaluate_into(doc, preview, self);
         if status.is_ok() {
             std::mem::swap(out, &mut self.scratch);
         }
@@ -468,7 +593,33 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
     FrameEvaluator::default().evaluate(doc, preview, out)
 }
 
-fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFrame) -> Status {
+fn set_value<T>(map: &mut HashMap<String, T>, id: &str, value: T) {
+    if let Some(slot) = map.get_mut(id) {
+        *slot = value;
+    } else {
+        map.insert(id.to_owned(), value);
+    }
+}
+
+fn evaluate_into(
+    doc: &Document,
+    preview: &PreviewValues,
+    workspace: &mut FrameEvaluator,
+) -> Status {
+    let FrameEvaluator {
+        scratch: frame,
+        values,
+        enabled_parts,
+        part_orders,
+        selection: selection_workspace,
+        transforms,
+        points,
+        orders,
+        offscreen_orders,
+        items,
+        plan_items,
+        active_offscreens,
+    } = workspace;
     if !doc.initialized() {
         return Status::error("NOT_INITIALIZED", "Initialize Document first");
     }
@@ -487,15 +638,21 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
 
     frame.source_revision = doc.revision();
     frame.canvas = doc.canvas();
-    frame.parameters.clear();
+    frame
+        .parameters
+        .resize_with(doc.parameter_order().len(), EvaluatedParameter::default);
     frame.offscreens.clear();
-    frame.render_plan.clear();
+
     frame
         .drawables
         .resize_with(doc.mesh_order().len(), Drawable::default);
 
-    let mut values = HashMap::new();
-    for id in doc.parameter_order() {
+    let prepared = match doc.prepared_evaluation() {
+        Ok(p) => p,
+        Err(s) => return s.clone(),
+    };
+    values.retain(|id, _| doc.get_parameter(id).is_some());
+    for (parameter_slot, id) in doc.parameter_order().iter().enumerate() {
         let p = doc.get_parameter(id).unwrap();
         let requested = preview.get(id).copied().unwrap_or(p.default_value);
         if !requested.is_finite() {
@@ -527,23 +684,22 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
             let clamped_val = requested.clamp(p.minimum, p.maximum);
             (clamped_val, requested != clamped_val)
         };
-        frame.parameters.push(EvaluatedParameter {
-            id: id.clone(),
-            requested,
-            value: v,
-            clamped,
-        });
-        values.insert(id.clone(), v);
+        let sample = &mut frame.parameters[parameter_slot];
+        sample.id.clone_from(id);
+        sample.requested = requested;
+        sample.value = v;
+        sample.clamped = clamped;
+        set_value(values, id, v);
     }
 
-    let mut enabled_parts = HashMap::new();
-    let mut part_orders = HashMap::new();
-    for id in &doc.sorted_parts() {
+    enabled_parts.retain(|id, _| doc.get_part(id).is_some());
+    part_orders.retain(|id, _| doc.get_part(id).is_some());
+    for id in &prepared.parts {
         let p = doc.get_part(id).unwrap();
         let mut enabled = p.enabled && (p.parent_id.is_empty() || enabled_parts[&p.parent_id]);
         let mut order = p.draw_order;
         if let Some(b) = doc.binding_for_scene(id) {
-            let s = select(doc, &values, &b.axes);
+            let s = select(doc, values, &b.axes, selection_workspace);
             enabled &= s.enabled;
             if s.enabled {
                 order = 0.0;
@@ -557,7 +713,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
             order = f32_to_i32(order + 0.001) as f32;
             for bs in bs_list {
                 if let DeltaKeyforms::Part(ref forms) = bs.keyforms {
-                    for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                    for (kf_idx, eff_w) in evaluate_blend_binding(doc, values, bs) {
                         if kf_idx < forms.len() {
                             order += forms[kf_idx].draw_order * eff_w;
                         }
@@ -566,30 +722,32 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
             }
             order = f32_to_i32((order + 0.001).clamp(0.0, 1000.0)) as f32;
         }
-        enabled_parts.insert(id.clone(), enabled);
-        part_orders.insert(id.clone(), f32_to_i32(order + 0.001));
+        set_value(enabled_parts, id, enabled);
+        set_value(part_orders, id, f32_to_i32(order + 0.001));
     }
 
-    let mut transforms: HashMap<String, TransformState> = HashMap::new();
-    for id in &doc.sorted_transforms() {
+    transforms.resize_with(prepared.transforms.len(), TransformState::default);
+    for (transform_slot, id) in prepared.transforms.iter().enumerate() {
         let t = doc.get_transform(id).unwrap();
-        let mut state = TransformState {
-            source: t,
+        let mut state = std::mem::take(&mut transforms[transform_slot]);
+        state.points.clear();
+        state = TransformState {
+            source: t.into(),
             pose: t.rotation.into(),
-            points: Vec::new(),
+            points: state.points,
             appearance: t.appearance,
             inherited_scale: 1.0,
             enabled: t.enabled && (t.part_id.is_empty() || enabled_parts[&t.part_id]),
         };
-        let mut points = t.points.clone();
+        points.clone_from(&t.points);
         let b = doc.binding_for_scene(id);
-        let selection = b.map(|binding| select(doc, &values, &binding.axes));
+        let selection = b.map(|binding| select(doc, values, &binding.axes, selection_workspace));
 
-        if let Some(ref sel) = selection {
+        if let Some(sel) = selection {
             state.enabled &= sel.enabled;
         }
         if !t.parent_id.is_empty() {
-            state.enabled &= transforms[&t.parent_id].enabled;
+            state.enabled &= transforms[prepared.transform_slots[&t.parent_id]].enabled;
         }
 
         if state.enabled {
@@ -617,7 +775,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                 }
             }
             if t.kind == TransformKind::Warp {
-                let sel_ref = selection.as_ref().unwrap_or(default_selection());
+                let sel_ref = selection.unwrap_or(default_selection());
                 let blended = blend_positions(
                     doc,
                     &t.parent_id,
@@ -629,7 +787,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                             &t.points
                         }
                     },
-                    &mut points,
+                    points,
                 );
                 match blended {
                     Ok(()) => (),
@@ -648,7 +806,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                 for bs in bs_list {
                     match (&bs.keyforms, t.kind) {
                         (DeltaKeyforms::Warp(ref forms), TransformKind::Warp) => {
-                            let selection = evaluate_blend_binding(doc, &values, bs);
+                            let selection = evaluate_blend_binding(doc, values, bs);
                             let has_multiply =
                                 selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
                             let has_screen =
@@ -687,7 +845,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                             }
                         }
                         (DeltaKeyforms::Rotation(ref forms), TransformKind::Rotation) => {
-                            let selection = evaluate_blend_binding(doc, &values, bs);
+                            let selection = evaluate_blend_binding(doc, values, bs);
                             let has_multiply =
                                 selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
                             let has_screen =
@@ -753,10 +911,10 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
             };
 
             if !t.parent_id.is_empty() {
-                let parent = transforms.get(&t.parent_id).unwrap();
+                let parent = &transforms[prepared.transform_slots[&t.parent_id]];
                 inherit_appearance(&mut state.appearance, &parent.appearance);
                 if t.kind == TransformKind::Warp {
-                    for p in &mut points {
+                    for p in points.iter_mut() {
                         let q = parent.point(PsmVec2::new(p.x, p.y));
                         *p = Vec2::new(q.x, q.y);
                     }
@@ -776,24 +934,19 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
             }
 
             state.points.reserve(points.len() * 2);
-            for p in &points {
+            for p in points.iter() {
                 state.points.push(p.x);
                 state.points.push(p.y);
             }
-            let s = validate_positions(&points);
+            let s = validate_positions(points);
             if !s.is_ok() {
                 return Status::error(s.code, format!("{}.evaluated_points", id));
             }
         }
-        transforms.insert(id.clone(), state);
+        transforms[transform_slot] = state;
     }
 
-    let asset_slots: HashMap<&str, usize> = doc
-        .asset_order()
-        .iter()
-        .enumerate()
-        .map(|(i, id)| (id.as_str(), i))
-        .collect();
+    let asset_slots = &prepared.assets;
     for (mesh_index, id) in doc.mesh_order().iter().enumerate() {
         let mesh = doc.get_mesh(id).unwrap();
         let d = &mut frame.drawables[mesh_index];
@@ -809,8 +962,8 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
         d.multiply_color[3] = 1.0;
         d.screen_color[3] = 1.0;
         d.positions.clear();
-        d.uvs.clear();
-        d.indices.clear();
+        d.uvs = prepared.geometry[mesh_index].uvs.clone();
+        d.indices = prepared.geometry[mesh_index].indices.clone();
         let mut order = mesh.draw_order.unwrap_or(mesh_index as f32);
         let mut appearance = mesh.appearance;
 
@@ -822,42 +975,18 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
 
         d.visible = mesh.enabled
             && (mesh.part_id.is_empty() || enabled_parts[&mesh.part_id])
-            && (mesh.deformer_id.is_empty() || transforms[&mesh.deformer_id].enabled);
-
-        d.uvs.reserve(mesh.uvs.len());
-        for uv in &mesh.uvs {
-            d.uvs.push(Vec2::new(
-                uv.x,
-                if doc.canvas().flag & 1 == 0 {
-                    uv.y
-                } else {
-                    1.0 - uv.y
-                },
-            ));
-        }
-
-        match doc.render_indices_into(id, &mut d.indices) {
-            Ok(()) => (),
-            Err(s) => return s,
-        }
-
-        // Swap triangle indices winding for runtime
-        for i in (0..d.indices.len()).step_by(3) {
-            d.indices.swap(i + 1, i + 2);
-            if doc.canvas().flag & 1 == 0 {
-                d.indices.swap(i, i + 2);
-            }
-        }
+            && (mesh.deformer_id.is_empty()
+                || transforms[prepared.transform_slots[&mesh.deformer_id]].enabled);
 
         let b = doc.binding_for_mesh(id);
-        let selection = b.map(|binding| select(doc, &values, &binding.axes));
-        if let Some(ref sel) = selection {
+        let selection = b.map(|binding| select(doc, values, &binding.axes, selection_workspace));
+        if let Some(sel) = selection {
             d.visible &= sel.enabled;
         }
         d.enabled = d.visible;
 
         if d.visible {
-            let sel_ref = selection.as_ref().unwrap_or(default_selection());
+            let sel_ref = selection.unwrap_or(default_selection());
             let blended = blend_positions(
                 doc,
                 &mesh.deformer_id,
@@ -893,7 +1022,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                 order = f32_to_i32(order + 0.001) as f32;
                 for bs in bs_list {
                     if let DeltaKeyforms::Mesh(ref forms) = bs.keyforms {
-                        let selection = evaluate_blend_binding(doc, &values, bs);
+                        let selection = evaluate_blend_binding(doc, values, bs);
                         let has_multiply =
                             selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
                         let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
@@ -943,7 +1072,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
             }
 
             if !mesh.deformer_id.is_empty() {
-                let parent = transforms.get(&mesh.deformer_id).unwrap();
+                let parent = &transforms[prepared.transform_slots[&mesh.deformer_id]];
                 inherit_appearance(&mut appearance, &parent.appearance);
                 for p in &mut d.positions {
                     let q = parent.point(PsmVec2::new(p.x, p.y));
@@ -968,17 +1097,12 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
     // Apply Glues across transformed mesh positions (before canvas Y-reversal, matching PurismCore)
     let glue_order = doc.glue_order();
     if !glue_order.is_empty() {
-        let mesh_slots: HashMap<&str, usize> = doc
-            .mesh_order()
-            .iter()
-            .enumerate()
-            .map(|(i, id)| (id.as_str(), i))
-            .collect();
+        let mesh_slots = &prepared.meshes;
 
         for gid in glue_order {
             if let Some(glue) = doc.get_glue(gid) {
                 let mut intensity = if let Some(binding) = &glue.binding {
-                    let selection = select(doc, &values, &binding.axes);
+                    let selection = select(doc, values, &binding.axes, selection_workspace);
                     selection
                         .indices
                         .iter()
@@ -993,7 +1117,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                 if !bs_list.is_empty() {
                     for bs in bs_list {
                         if let DeltaKeyforms::Glue(ref forms) = bs.keyforms {
-                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, values, bs) {
                                 if kf_idx < forms.len() {
                                     intensity += forms[kf_idx].intensity * eff_w;
                                 }
@@ -1015,15 +1139,12 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                     None => continue,
                 };
 
-                let mesh_a = doc.get_mesh(&glue.mesh_a_id).unwrap();
-                let mesh_b = doc.get_mesh(&glue.mesh_b_id).unwrap();
-
                 for pair in &glue.pairs {
-                    let idx_a = match find_vertex_index(mesh_a, pair.vertex_a) {
+                    let idx_a = match doc.vertex_slot(&glue.mesh_a_id, pair.vertex_a) {
                         Some(idx) => idx,
                         None => continue,
                     };
-                    let idx_b = match find_vertex_index(mesh_b, pair.vertex_b) {
+                    let idx_b = match doc.vertex_slot(&glue.mesh_b_id, pair.vertex_b) {
                         Some(idx) => idx,
                         None => continue,
                     };
@@ -1079,50 +1200,45 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
         }
     }
 
-    let groups = crate::draw_order::resolved_groups(doc);
-    let totals = crate::draw_order::descendant_counts_with_offscreens(doc, &groups);
-    let slots: HashMap<&str, usize> = frame
-        .drawables
-        .iter()
-        .enumerate()
-        .map(|(i, d)| (d.id.as_str(), i))
-        .collect();
-    let mut orders = HashMap::new();
-    let mut offscreen_orders = HashMap::new();
-    for group in &groups {
-        let mut items: Vec<(&str, i32)> = group
-            .items
-            .iter()
-            .map(|id| {
-                let (order, enabled) = if let Some(&slot) = slots.get(id.as_str()) {
-                    let d = &frame.drawables[slot];
-                    (d.draw_order, d.enabled)
+    let groups = &prepared.groups;
+    let totals = &prepared.totals;
+    let slots = &prepared.meshes;
+    orders.clear();
+    orders.resize(prepared.order_slots.len(), 0);
+    offscreen_orders.clear();
+    offscreen_orders.resize(prepared.offscreen_slots.len(), 0);
+    for group in groups {
+        items.clear();
+        items.extend(group.items.iter().enumerate().map(|(item_slot, id)| {
+            let (order, enabled) = if let Some(&slot) = slots.get(id.as_str()) {
+                let d = &frame.drawables[slot];
+                (d.draw_order, d.enabled)
+            } else {
+                (part_orders[id], enabled_parts[id])
+            };
+            (
+                item_slot,
+                if enabled {
+                    order.clamp(group.min_order, group.max_order)
                 } else {
-                    (part_orders[id], enabled_parts[id])
-                };
-                (
-                    id.as_str(),
-                    if enabled {
-                        order.clamp(group.min_order, group.max_order)
-                    } else {
-                        group.min_order
-                    },
-                )
-            })
-            .collect();
-        items.sort_by_key(|item| item.1);
-        let mut rank = orders.get(group.owner.as_str()).copied().unwrap_or(0);
-        for (id, _) in items {
+                    group.min_order
+                },
+            )
+        }));
+        items.sort_unstable_by_key(|&(slot, order)| (order, slot));
+        let mut rank = orders[prepared.order_slots[&group.owner]];
+        for &(item_slot, _) in items.iter() {
+            let id = group.items[item_slot].as_str();
             if let Some(os) = doc.offscreen_for_part(id) {
-                offscreen_orders.insert(os.id.as_str(), rank);
+                offscreen_orders[prepared.offscreen_slots[&os.id]] = rank;
                 rank += 1;
             }
-            orders.insert(id, rank);
+            orders[prepared.order_slots[id]] = rank;
             rank += totals.get(id).copied().unwrap_or(1) as i32;
         }
     }
     for d in &mut frame.drawables {
-        d.render_order = orders[d.id.as_str()];
+        d.render_order = orders[prepared.order_slots[&d.id]];
     }
 
     for os_id in doc.offscreen_order() {
@@ -1135,7 +1251,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
 
             if owner_enabled {
                 if let Some(b) = doc.binding_for_scene(part_id) {
-                    let s = select(doc, &values, &b.axes);
+                    let s = select(doc, values, &b.axes, selection_workspace);
                     let mut interp_opa = 0.0f32;
                     let mut interp_mul = [0.0f32; 3];
                     let mut interp_scr = [0.0f32; 3];
@@ -1199,7 +1315,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                 // Apply blendshapes
                 for bs in doc.blend_bindings_for_target(os_id) {
                     if let DeltaKeyforms::Offscreen(ref forms) = bs.keyforms {
-                        for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                        for (kf_idx, eff_w) in evaluate_blend_binding(doc, values, bs) {
                             if kf_idx < forms.len() {
                                 let df = &forms[kf_idx];
                                 opacity += df.opacity * eff_w;
@@ -1220,7 +1336,7 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
                 opacity = opacity.clamp(0.0, 1.0);
             }
 
-            let ro = offscreen_orders.get(os.id.as_str()).copied().unwrap_or(0);
+            let ro = offscreen_orders[prepared.offscreen_slots[&os.id]];
             let parent_os_id = doc
                 .parent_offscreen_for_part(&os.part_id)
                 .map(|p| p.id.clone());
@@ -1242,83 +1358,168 @@ fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFr
         }
     }
 
-    // Build render_plan: sort all drawables and offscreens by render_order
-    #[derive(Copy, Clone)]
-    enum PlanItem<'a> {
-        Mesh {
-            id: &'a str,
-            part_id: &'a str,
-            render_order: i32,
-        },
-        Offscreen {
-            id: &'a str,
-            owner_part_id: &'a str,
-            render_order: i32,
-        },
-    }
-
-    let mut plan_items: Vec<PlanItem> =
-        Vec::with_capacity(frame.drawables.len() + frame.offscreens.len());
-    for d in &frame.drawables {
-        plan_items.push(PlanItem::Mesh {
-            id: d.id.as_str(),
-            part_id: d.part_id.as_str(),
-            render_order: d.render_order,
-        });
-    }
-    for os in &frame.offscreens {
-        plan_items.push(PlanItem::Offscreen {
-            id: os.id.as_str(),
-            owner_part_id: os.owner_part_id.as_str(),
-            render_order: os.render_order,
-        });
-    }
-    plan_items.sort_by_key(|item| match item {
-        PlanItem::Mesh { render_order, .. } => *render_order,
-        PlanItem::Offscreen { render_order, .. } => *render_order,
-    });
-
-    let mut active_offscreens: Vec<(&str, &str)> = Vec::new(); // (offscreen_id, owner_part_id)
-    for item in plan_items {
-        match item {
-            PlanItem::Offscreen {
-                id, owner_part_id, ..
-            } => {
-                while let Some(&(top_os, top_owner)) = active_offscreens.last() {
-                    if doc.is_part_ancestor(top_owner, owner_part_id) {
-                        break;
-                    }
-                    active_offscreens.pop();
-                    frame.render_plan.push(RenderCommand::EndOffscreen {
-                        offscreen_id: top_os.to_string(),
-                    });
-                }
-                active_offscreens.push((id, owner_part_id));
-                frame.render_plan.push(RenderCommand::BeginOffscreen {
-                    offscreen_id: id.to_string(),
-                });
+    // Preserve tie order explicitly while sorting in place without a sort workspace.
+    plan_items.clear();
+    let mesh_count = frame.drawables.len();
+    plan_items.extend(
+        frame
+            .drawables
+            .iter()
+            .enumerate()
+            .map(|(i, d)| (d.render_order, i)),
+    );
+    plan_items.extend(
+        frame
+            .offscreens
+            .iter()
+            .enumerate()
+            .map(|(i, o)| (o.render_order, mesh_count + i)),
+    );
+    plan_items.sort_unstable();
+    active_offscreens.clear();
+    let mut cursor = 0;
+    for &(_, slot) in plan_items.iter() {
+        let (id, part_id, is_offscreen) = if slot < mesh_count {
+            let mesh = &frame.drawables[slot];
+            (mesh.id.as_str(), mesh.part_id.as_str(), false)
+        } else {
+            let os = &frame.offscreens[slot - mesh_count];
+            (os.id.as_str(), os.owner_part_id.as_str(), true)
+        };
+        while let Some(&top) = active_offscreens.last() {
+            let os = &frame.offscreens[top];
+            if doc.is_part_ancestor(&os.owner_part_id, part_id) {
+                break;
             }
-            PlanItem::Mesh { id, part_id, .. } => {
-                while let Some(&(top_os, top_owner)) = active_offscreens.last() {
-                    if doc.is_part_ancestor(top_owner, part_id) {
-                        break;
-                    }
-                    active_offscreens.pop();
-                    frame.render_plan.push(RenderCommand::EndOffscreen {
-                        offscreen_id: top_os.to_string(),
-                    });
-                }
-                frame.render_plan.push(RenderCommand::DrawMesh {
-                    mesh_id: id.to_string(),
-                });
+            active_offscreens.pop();
+            write_command(
+                &mut frame.render_plan,
+                &mut cursor,
+                CommandKind::End,
+                &os.id,
+            );
+        }
+        if is_offscreen {
+            active_offscreens.push(slot - mesh_count);
+            write_command(&mut frame.render_plan, &mut cursor, CommandKind::Begin, id);
+        } else {
+            write_command(&mut frame.render_plan, &mut cursor, CommandKind::Mesh, id);
+        }
+    }
+    while let Some(top) = active_offscreens.pop() {
+        write_command(
+            &mut frame.render_plan,
+            &mut cursor,
+            CommandKind::End,
+            &frame.offscreens[top].id,
+        );
+    }
+    frame.render_plan.truncate(cursor);
+
+    Status::ok()
+}
+
+enum CommandKind {
+    Mesh,
+    Begin,
+    End,
+}
+
+// Reuse command IDs in both transactional frame buffers.
+fn write_command(plan: &mut Vec<RenderCommand>, cursor: &mut usize, kind: CommandKind, id: &str) {
+    let existing = plan.get_mut(*cursor);
+    match (&kind, existing) {
+        (CommandKind::Mesh, Some(RenderCommand::DrawMesh { mesh_id })) => id.clone_into(mesh_id),
+        (CommandKind::Begin, Some(RenderCommand::BeginOffscreen { offscreen_id }))
+        | (CommandKind::End, Some(RenderCommand::EndOffscreen { offscreen_id })) => {
+            id.clone_into(offscreen_id)
+        }
+        _ => {
+            let command = match kind {
+                CommandKind::Mesh => RenderCommand::DrawMesh {
+                    mesh_id: id.to_owned(),
+                },
+                CommandKind::Begin => RenderCommand::BeginOffscreen {
+                    offscreen_id: id.to_owned(),
+                },
+                CommandKind::End => RenderCommand::EndOffscreen {
+                    offscreen_id: id.to_owned(),
+                },
+            };
+            if *cursor < plan.len() {
+                plan[*cursor] = command;
+            } else {
+                plan.push(command);
             }
         }
     }
-    while let Some((top_os, _)) = active_offscreens.pop() {
-        frame.render_plan.push(RenderCommand::EndOffscreen {
-            offscreen_id: top_os.to_string(),
-        });
-    }
+    *cursor += 1;
+}
 
-    Status::ok()
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+    use crate::keyforms::{key_combinations, KeyAxis};
+    use crate::Parameter;
+
+    #[test]
+    fn sparse_selection_matches_cartesian_reference() {
+        let mut doc = Document::new();
+        doc.initialize(
+            "00000000-0000-4000-8000-000000000001",
+            Canvas::new(100., 100., Vec2::default(), 1.),
+        );
+        let id = "00000000-0000-4000-8000-000000000002";
+        assert!(doc
+            .create_parameter(Parameter {
+                id: id.into(),
+                ..Default::default()
+            })
+            .status
+            .is_ok());
+        let binding = vec![
+            BindingAxis {
+                parameter_id: id.into(),
+                keys: vec![-1., 0., 1.]
+            };
+            5
+        ];
+        let mut scratch = Selection::default();
+        for value in [-2., -1., -0.8, -0.5, 0., 0.3, 1., 2.] {
+            let values = [(id.to_owned(), value)].into();
+            let result = select(&doc, &values, &binding, &mut scratch);
+            let segment = find_key_segment(value, &binding[0].keys, 0.000001, 0.0000015);
+            let axes = vec![
+                KeyAxis {
+                    index: segment.index,
+                    key_count: 3,
+                    weight: segment.weight
+                };
+                5
+            ];
+            let mut indices = vec![0; 32];
+            let mut weights = vec![0.; 32];
+            let count = key_combinations(&axes, &mut indices, &mut weights);
+            assert_eq!(
+                result.indices,
+                indices[..count]
+                    .iter()
+                    .map(|&i| i as usize)
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(result.weights, weights[..count]);
+            assert_eq!(result.enabled, !segment.is_outside);
+        }
+        // Many snapped single-key axes need one combination, with no 2^axis allocation/shift.
+        let binding = vec![
+            BindingAxis {
+                parameter_id: id.into(),
+                keys: vec![0.]
+            };
+            80
+        ];
+        let result = select(&doc, &[(id.into(), 0.)].into(), &binding, &mut scratch);
+        assert_eq!(result.indices, [0]);
+        assert_eq!(result.weights, [1.]);
+    }
 }

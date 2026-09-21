@@ -72,7 +72,7 @@ impl PreviewState {
     pub fn frame(&mut self, doc: &Document, generation: u64) -> Result<Arc<DrawableFrame>, Status> {
         let key = FrameKey {
             generation,
-            document_revision: doc.revision(),
+            document_revision: doc.evaluation_revision(),
             preview_revision: self.revision,
         };
         if let Some((cached_key, result)) = &self.cached {
@@ -80,8 +80,13 @@ impl PreviewState {
                 return result.clone();
             }
         }
-        let values = self.values.clone();
-        let result = self.evaluate(doc, &values);
+        self.evaluations += 1;
+        let status = self.evaluator.evaluate(doc, &self.values, &mut self.output);
+        let result = if status.is_ok() {
+            Ok(Arc::new(std::mem::take(&mut self.output)))
+        } else {
+            Err(status)
+        };
         self.invalidate();
         self.cached = Some((key, result.clone()));
         result
@@ -105,7 +110,7 @@ impl PreviewState {
         self.cached = Some((
             FrameKey {
                 generation,
-                document_revision: doc.revision(),
+                document_revision: doc.evaluation_revision(),
                 preview_revision: self.revision,
             },
             Ok(frame),
