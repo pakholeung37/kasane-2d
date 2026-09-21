@@ -26,15 +26,6 @@ func import_model(path: String) -> Dictionary:
 func export_model(path: String) -> Dictionary:
 	return files.export_package(document, path)
 
-var undo_redo := UndoRedo.new()
-var action_before: RefCounted
-var action_name := ""
-var action_generation := 0
-
-func _notification(what: int) -> void:
-	if what == NOTIFICATION_PREDELETE and is_instance_valid(undo_redo):
-		undo_redo.free()
-
 func _init() -> void:
 	for native_class in ["KasaneDocumentBridge", "KasaneProjectIO", "KasaneDocumentPreview"]:
 		if not ClassDB.class_exists(native_class):
@@ -45,47 +36,24 @@ func _init() -> void:
 	if document == null or files == null:
 		startup_error = "原生扩展对象创建失败，请检查 Godot 的 GDExtension 加载错误。"
 		return
-	document.changed.connect(_document_changed)
-
-func _document_changed(_change: Dictionary) -> void:
-	var generation: int = document.get_document_state().generation
-	if action_generation != generation:
-		undo_redo.clear_history()
-		action_before = null
-		action_generation = generation
 
 func failure(code: String, message: String) -> Dictionary:
 	return {"ok": false, "code": code, "message": message}
 
 func begin_action(label: String) -> Dictionary:
-	if action_before != null:
-		return failure("ACTION_ACTIVE", "Finish the current Action first.")
-	action_before = document.capture_state()
-	if action_before == null:
-		return failure("SNAPSHOT_UNAVAILABLE", "Finish any explicit document transaction first.")
-	action_name = label
-	return {"ok": true}
+	return document.begin_action(label)
 
 func end_action() -> Dictionary:
-	if action_before == null:
-		return failure("NO_ACTION", "No Action is active.")
-	var after = document.capture_state()
-	if after == null:
-		return failure("SNAPSHOT_UNAVAILABLE", "Finish any explicit document transaction first.")
-	undo_redo.create_action(action_name)
-	undo_redo.add_do_method(document.restore_state.bind(after))
-	undo_redo.add_undo_method(document.restore_state.bind(action_before))
-	undo_redo.commit_action(false)
-	action_before = null
-	return {"ok": true}
+	return document.end_action()
 
 func cancel_action() -> Dictionary:
-	if action_before == null:
-		return failure("NO_ACTION", "No Action is active.")
-	var result: Dictionary = document.restore_state(action_before)
-	if result.ok:
-		action_before = null
-	return result
+	return document.cancel_action()
+
+func undo() -> Dictionary:
+	return document.undo()
+
+func redo() -> Dictionary:
+	return document.redo()
 
 func import_png(path: String, original_size: Vector2 = Vector2.ZERO, crop_offset: Vector2 = Vector2.ZERO) -> Dictionary:
 	var summary: Dictionary = document.get_document_state()

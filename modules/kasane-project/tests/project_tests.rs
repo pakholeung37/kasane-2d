@@ -1774,3 +1774,77 @@ fn test_project_v4_blendshape_glue_roundtrip() {
         assert_eq!(d1.positions, d2.positions);
     }
 }
+
+#[test]
+fn delta_history_survives_save_without_restoring_resource_paths() {
+    let tmp = TestDirectory::new();
+    let mut session = tmp.saved_session();
+    let path = session.manifest().to_path_buf();
+    let mesh_id = session.document().mesh_order()[0].clone();
+    let original = session.document().get_mesh(&mesh_id).unwrap().name.clone();
+    let edit = session.edit(|doc| doc.rename_mesh(&mesh_id, "history saved name".into()));
+    assert!(edit.status.is_ok());
+    assert_eq!(session.history().undo_len(), 1);
+    assert!(session.save(&path).status.is_ok());
+    assert!(!session.document().modified());
+    assert!(session.undo().status.is_ok());
+    assert_eq!(
+        session.document().get_mesh(&mesh_id).unwrap().name,
+        original
+    );
+    assert!(session.document().modified());
+    assert!(session.redo().status.is_ok());
+    assert!(!session.document().modified());
+    assert!(session
+        .begin_action("cannot save pending edits".into())
+        .is_ok());
+    assert_eq!(session.save(&path).status.code, "ACTION_ACTIVE");
+    assert!(session.cancel_action().status.is_ok());
+    assert!(session.open(&path).status.is_ok());
+    assert_eq!(session.history().undo_len(), 0);
+    assert!(!session.undo().status.is_ok());
+}
+
+#[test]
+fn failed_save_keeps_delta_history_and_save_as_preserves_replay() {
+    let tmp = TestDirectory::new();
+    let original = tmp.saved_session();
+    let path = original.manifest().to_path_buf();
+    let mut failing = DocumentSession::with_filesystem(FailingFileSystem::new(Failure::ShortWrite));
+    assert!(failing.open(&path).status.is_ok());
+    let mesh_id = failing.document().mesh_order()[0].clone();
+    assert!(failing
+        .edit(|d| d.rename_mesh(&mesh_id, "unsaved".into()))
+        .status
+        .is_ok());
+    assert!(!failing.save(&path).status.is_ok());
+    assert_eq!(failing.history().undo_len(), 1);
+    assert!(failing.undo().status.is_ok());
+    assert!(!failing.document().modified());
+
+    let mut session = original;
+    assert!(session
+        .edit(|d| d.rename_mesh(&mesh_id, "new location".into()))
+        .status
+        .is_ok());
+    assert!(session.save(&tmp.0.join("save-as")).status.is_ok());
+    let sources: Vec<_> = session
+        .document()
+        .asset_order()
+        .iter()
+        .map(|id| session.document().get_asset(id).unwrap().source.clone())
+        .collect();
+    assert!(session.undo().status.is_ok());
+    assert_eq!(
+        sources,
+        session
+            .document()
+            .asset_order()
+            .iter()
+            .map(|id| session.document().get_asset(id).unwrap().source.clone())
+            .collect::<Vec<_>>()
+    );
+    assert!(session.diagnose().is_empty());
+    assert!(session.redo().status.is_ok());
+    assert!(!session.document().modified());
+}

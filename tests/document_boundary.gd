@@ -172,6 +172,36 @@ func run():
     check(not clone.write_transform(cycle, true).ok, "reject formal transform cycle")
     check(clone.get_document_summary().revision == revision, "rejected cycle is atomic")
     check(not clone.erase_object(warp_id).ok, "formal reference-aware deletion")
+    # Engine-independent delta history, observed through the actual Godot boundary.
+    var history_before: Dictionary = doc.get_mesh_snapshot(MESH)
+    var history_revision: int = doc.get_document_summary().revision
+    var history_steps_before: int = doc.get_history_state().undo_steps
+    var history_notifications := []
+    var history_observer = func(_change): history_notifications.append(doc.get_history_state())
+    doc.changed.connect(history_observer)
+    check(doc.begin_action("name and vertex").ok, "Begin native history group")
+    check(doc.rename_mesh(MESH, "delta group").ok, "Record grouped name")
+    var vertex_id: int = history_before.vertex_ids[0]
+    var original_position: Vector2 = history_before.base_positions[0]
+    check(doc.set_vertex_positions(MESH, PackedInt64Array([vertex_id]), PackedVector2Array([original_position + Vector2(1, 2)])).ok, "Record grouped vertex")
+    check(doc.set_vertex_positions(MESH, PackedInt64Array([vertex_id]), PackedVector2Array([original_position + Vector2(3, 4)])).ok, "Merge repeated vertex write")
+    check(doc.end_action().ok and doc.get_history_state().undo_steps == history_steps_before + 1, "Group creates one history entry")
+    check(doc.get_history_state().estimated_bytes < 2048, "History contains field deltas only")
+    var history_edited: Dictionary = doc.get_mesh_snapshot(MESH)
+    check(doc.undo().ok, "Undo grouped fields")
+    var history_undone: Dictionary = doc.get_mesh_snapshot(MESH)
+    check(history_undone.name == history_before.name and history_undone.base_positions == history_before.base_positions, "Undo restores both initial values")
+    check(doc.get_document_summary().revision > history_revision, "Undo advances revision")
+    check(preview_b.get_last_result().ok, "Undo refreshes remaining preview")
+    check(doc.redo().ok and doc.get_mesh_snapshot(MESH).base_positions == history_edited.base_positions, "Redo restores final positions")
+    check(doc.begin_action("cancel").ok and doc.rename_mesh(MESH, "cancelled").ok, "Begin cancelable group")
+    check(doc.cancel_action().ok and doc.get_mesh_snapshot(MESH).name == "delta group", "Cancel restores group without snapshots")
+    check(history_notifications.size() >= 6, "History notifications allow reentrant state reads")
+    doc.changed.disconnect(history_observer)
+    check(doc.begin_action("unsupported").ok, "Begin unsupported edit group")
+    var barrier: Dictionary = doc.replace_mesh(doc.get_mesh_snapshot(MESH))
+    check(barrier.ok and barrier.get("history_warning") == "HISTORY_UNSUPPORTED_EDIT", "Unsupported edit explicitly clears history")
+    check(doc.get_history_state().undo_steps == 0 and not doc.cancel_action().ok, "History barrier abandons pending group")
     preview_b.free()
     print(JSON.stringify({"status": "passed" if failures.is_empty() else "failed", "checks": checks, "failures": failures, "gpu": "not_run"}))
     quit(0 if failures.is_empty() else 1)

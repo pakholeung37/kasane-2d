@@ -12,7 +12,7 @@ mod selection_overlay;
 mod texture_store;
 
 pub use deformer_data::KasaneDeformerData;
-pub use document_bridge::{KasaneDocumentBridge, KasaneDocumentState};
+pub use document_bridge::KasaneDocumentBridge;
 pub use document_preview::KasaneDocumentPreview;
 pub use mesh_data::KasaneMeshData;
 pub use mesh_view::KasaneMeshView;

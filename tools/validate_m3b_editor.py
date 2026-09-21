@@ -112,7 +112,7 @@ def main():
         for provider in ['official','purism']:
             reference = read_probe(ROOT/f'target/probes/kasane_document_{provider}_probe', package/'model.moc3', values, output/(provider+'.json'))
             numerical.append({'provider':provider, **compare_samples(frames, reference['samples'], saved['pixels_per_unit'], provider+'/edited-export')})
-        report['gates']['new_feature_edit_roundtrips'] = {'status':'passed', 'kinds':edited['edited_kinds'], 'undo':edited['undo_ok'], 'redo':edited['redo_ok'], 'invalid_write_atomic':edited['invalid_ok'], 'numerical':numerical}
+        report['gates']['new_feature_edit_roundtrips'] = {'status':'passed', 'kinds':edited['edited_kinds'], 'history_barrier':edited['history_barrier_ok'], 'invalid_write_atomic':edited['invalid_ok'], 'numerical':numerical}
         report['gates']['packaged_editor_workflow'] = {'status':'passed', 'executable':str(executable), 'cwd':str(standalone), 'PATH':env['PATH']}
         process.terminate(); process.wait(timeout=10)
         process = None

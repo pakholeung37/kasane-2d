@@ -3,6 +3,7 @@ pub mod document;
 pub mod draw_order;
 pub mod evaluation;
 pub mod geometry;
+pub mod history;
 pub mod image;
 pub mod keyforms;
 pub mod preview;

@@ -248,7 +248,6 @@ func run():
 
     # New project is an atomic replacement, including the saved path and handles.
     var before_new = doc.get_document_summary()
-    var previous_state = doc.capture_state()
     var previous_mesh = doc.get_mesh(MESH_ID)
     check(not doc.new_project(DOC_ID, Vector2(-1, 100)).ok, "Reject invalid new canvas")
     check(doc.get_document_summary() == before_new, "Failed new preserves project")
@@ -258,7 +257,7 @@ func run():
     check(after_new.generation == before_new.generation + 1, "New advances generation")
     check(after_new.path.is_empty() and after_new.modified, "New clears saved path")
     check(not previous_mesh.is_valid(), "New invalidates previous mesh")
-    check(not doc.restore_state(previous_state).ok, "New rejects previous snapshot")
+    check(not doc.undo().ok, "New clears previous history")
     check(after_new.meshes.is_empty(), "New starts without objects")
 
     # Report results

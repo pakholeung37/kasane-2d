@@ -36,15 +36,14 @@ func run(w) -> Dictionary:
 	var reject_ok: bool = not rejected.ok and untouched.revision == before.revision and untouched.offscreens == before.offscreens and untouched.scene_bindings == before.scene_bindings
 	var operations: Array = [w.begin_action("M3C joint keyform insert")]
 	operations.append(d.replace_part_binding_with_offscreen(binding, surface))
-	operations.append(w.end_action())
+	var ended: Dictionary = w.end_action()
 	var edited: Dictionary = d.get_document_summary()
 	var revision_ok: bool = edited.revision == before.revision + 1
-	w.undo_redo.undo()
-	var undone: Dictionary = d.get_document_summary()
-	var undo_ok: bool = undone.offscreens == before.offscreens and undone.scene_bindings == before.scene_bindings
-	w.undo_redo.redo()
+	# Complex edits are explicit history barriers until their local deltas are implemented.
+	var denied_undo: Dictionary = w.undo()
+	var denied_redo: Dictionary = w.redo()
 	var redone: Dictionary = d.get_document_summary()
-	var redo_ok: bool = redone.offscreens == edited.offscreens and redone.scene_bindings == edited.scene_bindings
-	return {"ok": operations.all(func(r): return r.ok) and reject_ok and revision_ok and undo_ok and redo_ok,
+	var history_barrier_ok: bool = ended.code == "NO_ACTION" and denied_undo.code == "NO_UNDO" and denied_redo.code == "NO_REDO" and redone == edited and d.get_history_state().warning == "HISTORY_UNSUPPORTED_EDIT"
+	return {"ok": operations.all(func(r): return r.ok) and reject_ok and revision_ok and history_barrier_ok,
 		"parameter_id": axis.parameter_id, "samples": [float(axis.keys[0]), middle, (middle + float(axis.keys[2])) * 0.5],
-		"operations": operations, "reject_ok": reject_ok, "revision_ok": revision_ok, "undo_ok": undo_ok, "redo_ok": redo_ok}
+		"operations": operations, "reject_ok": reject_ok, "revision_ok": revision_ok, "history_barrier_ok": history_barrier_ok}

@@ -212,7 +212,7 @@ def editor_gate(output, probe, godot, sdk):
             name = 'editor-joint-sample-' + str(index)
             sample = send(name, f'return w.document.set_preview_values({{{json.dumps(joint["business"]["parameter_id"])}: {value}}})', True)
             compare(name, sample, joint_package/joint_model['Moc'], joint_package/joint_model['Textures'][0])
-        send('editor-joint-restore', 'w.undo_redo.undo()\nreturn w.document.set_preview_values({})')
+        send('editor-joint-restore', f'var r=w.import_model({json.dumps(str(source/"Ren.model3.json"))})\nif not r.ok: return r\nw.fit_view()\nreturn w.document.set_preview_values({{}})')
         result=send('editor-edit',\
 """var d = w.document
 var before: Dictionary = d.get_document_summary()
@@ -225,17 +225,16 @@ for keyform in value.keyforms:
     keyform.opacity *= 0.8
     keyform.multiply = [0.9, 0.95, 1.0]
 results.append(d.write_offscreen(value, true))
-results.append(w.end_action())
+var ended: Dictionary = w.end_action()
 var edited: Dictionary = d.get_document_summary()
-w.undo_redo.undo()
-var undo_ok: bool = before.offscreens == d.get_document_summary().offscreens
-w.undo_redo.redo()
-var redo_ok: bool = edited.offscreens == d.get_document_summary().offscreens
+var denied_undo: Dictionary = w.undo()
+var denied_redo: Dictionary = w.redo()
+var history_barrier_ok: bool = ended.code == "NO_ACTION" and denied_undo.code == "NO_UNDO" and denied_redo.code == "NO_REDO" and edited == d.get_document_summary()
 var application = w.surface.get_ref().get_tree().root.get_child(0)
 application._on_object_selected(value.id)
 var inspect_ok: bool = application.inspector_dock.id_val.text == value.id
 application._on_object_selected("")
-return {"ok": results.all(func(r): return r.ok) and undo_ok and redo_ok and inspect_ok, "undo_ok":undo_ok,"redo_ok":redo_ok,"inspect_ok":inspect_ok,"edited":value,"summary":d.get_document_summary()}""",True)
+return {"ok": results.all(func(r): return r.ok) and history_barrier_ok and inspect_ok, "history_barrier_ok":history_barrier_ok,"inspect_ok":inspect_ok,"edited":value,"summary":d.get_document_summary()}""",True)
         project=output/'saved/project.json';package=output/'exported'
         send('editor-save',f'return w.save_project({json.dumps(str(project))})')
         shutil.rmtree(source)

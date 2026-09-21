@@ -35,7 +35,7 @@ Root geometry is original-canvas pixels: X right, Y down. Runtime X = `(source.x
 | `set_keyform(binding_id: String, form: Dictionary)` | Replace that explicit combination while preserving all other forms |
 | `complete_binding(description, template, scene=false, replace=false)` | Fill missing Cartesian combinations from a copied template; existing forms remain. Axes have 1–3 nonempty Array key lists, at most 4096 combinations in this helper. Core still validates completeness, values and duplicates atomically. |
 | `fit_view(id: String = "")` | Fit all drawables, or the specified mesh, without changing model data |
-| `begin_action(label: String)` / `end_action()` / `cancel_action()` | Explicit whole-Document snapshot Action. `w.undo_redo.undo()` / `redo()` replay it. Generation changes clear history. Snapshots include model fields only, not project files, external side effects, camera or selection. Preview parameters reset on restore. A script failure does not implicitly cancel an Action. |
+| `begin_action(label)` / `end_action()` / `cancel_action()` | Groups supported Rust delta edits. `w.undo()` / `w.redo()` replay one group. No Document snapshots are captured. A script failure does not implicitly cancel an action. |
 
 ## Document methods
 
@@ -79,7 +79,7 @@ Root geometry is original-canvas pixels: X right, Y down. Runtime X = `(source.x
 | `reset_preview_values()` | Clears requested overrides and returns lightweight parameter samples, preserving the previous state if evaluation fails. |
 | `get_parameter_samples()` | Returns parameters `{id, requested, value, clamped}`, generation, document revision, preview revision and cumulative evaluation count. Reuses the current evaluated frame; no geometry serialization. |
 | `get_frame()` / `evaluate_mesh(id)` | Structured evaluation result; final runtime-unit positions, runtime UVs and dense indices. Queries share the session evaluation cache. Full frame includes revision, coordinate_units, drawables and `{id,requested,value,clamped}` parameter samples. |
-| `capture_state()` / `restore_state(state)` | KasaneDocumentState or null / structured restore; owner and generation checked. Does not restore files/session path. |
+| `begin_action(label)` / `end_action()` / `cancel_action()` / `undo()` / `redo()` / `get_history_state()` | Rust session history. State reports undo/redo steps, estimated bytes, active action and warning. Whole-document `capture_state` / `restore_state` have been removed. |
 | `begin_transaction()` / `stage_vertex_positions(mesh_id,vertex_ids,positions)` / `commit_transaction()` / `cancel_transaction()` | Explicit base-vertex batch only; ordinary direct scripts do not create a transaction. Other edits reject an active transaction. |
 | `commit_vertex_updates(updates: Array,expected_revision: int)` | Atomic base-position batch with optimistic revision check; each update is `{mesh_id,vertex_ids:PackedInt64Array,positions:PackedVector2Array}` |
 
@@ -130,8 +130,7 @@ Each collection has `get_<type>_snapshot(id)` and
 `write_<type>(description: Dictionary, replace: bool = false)`, where `<type>` is
 `blend_key_table`, `blend_constraint`, `blend_binding`, or `glue`.
 Use `erase_object(id)` and `references_to(id)` for reference-safe deletion.
-Writes validate before mutation, emit `changed`, and participate in
-`workspace.begin_action/end_action` undo/redo. Snapshots are detached values.
+Writes validate before mutation and emit `changed`. These complex edits are currently history barriers (see Rust history below). Object query snapshots remain detached values.
 
 - Key table: `{id, parameter_id, keys: Array[float], base_key_idx: int}`. The parameter must be BlendShape.
 - Constraint: `{id, parameter_id, keys: Array[float], weights: Array[float]}`. Either parameter kind is allowed; weights are in `[0,1]`.
@@ -159,3 +158,34 @@ Old non-null `binding_id` MeshBinding references are rejected instead of flatten
 Rotation 原点的作者坐标在 v3 中使用双精度保存，保证 root 的 runtime→像素→runtime 往返可逆。普通 pose Dictionary 的 `origin: [x,y]` 保留 f64；使用 Vector2 输入会采用该输入本身的 f32 精度。运行时求值仍为 f32。
 
 Preview 的 `refresh()` 重新校验磁盘资源；`refresh_geometry()` 复用已验证纹理，仅提交几何/外观/遮罩更新。参数和相机信号使用后者，截图前仍显式执行完整 refresh。
+
+## Rust history
+
+History currently records `rename_mesh`, vertex position writes, and committed
+vertex-update batches, including writes through mesh handles. Each successful
+standalone supported edit forms one undo step. Explicit actions merge repeated
+writes to the same field, retain the initial value, and omit net-zero changes.
+Cancel reverses only the pending action; a canceled or net-zero action preserves
+the redo branch. Successful undo/redo/cancel of changed content resets preview
+parameters, advances document revision and notifies preview consumers.
+
+History defaults to 50 steps and a 64 MiB estimated retained-data budget, including
+pending and redo entries. This is not a process-memory hard limit. Old steps are
+evicted first. An oversized action abandons recording, clears history and reports
+`HISTORY_LIMIT_EXCEEDED`; the applied edit remains successful and cannot be
+canceled through history. Limits do not bound transient allocation during a write.
+
+Other successful content edits (including topology, object creation/deletion,
+keyforms and deformer/property replacements) currently clear both stacks and
+abandon any active action. Their result and `get_history_state()` report
+`HISTORY_UNSUPPORTED_EDIT`. Do not treat a successful edit as a promise of undo
+support. `end_action`/`cancel_action` then return `NO_ACTION`. These are explicit
+barriers; there is no whole-document snapshot fallback.
+
+New/open/import clears history. Saving retains supported history and updates the
+saved baseline; it is rejected while an action is active. History stores no resource
+paths, so save-as does not change how recorded names/positions replay. Failed
+saves preserve history. Rust clients should use `DocumentSession::edit` or call
+`record_edit` immediately after a mutation; unrecorded revision changes invalidate
+history before playback. Derived indices, saved baselines and preview caches are
+never included in history entries.

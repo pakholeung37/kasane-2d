@@ -390,6 +390,7 @@ impl DocumentStore {
 }
 
 pub struct DocumentSession {
+    history: kasane_core::history::History,
     store: DocumentStore,
     document: Document,
     manifest: PathBuf,
@@ -403,11 +404,46 @@ impl DocumentSession {
 
     pub fn with_filesystem(filesystem: Arc<dyn FileSystem>) -> Self {
         Self {
+            history: kasane_core::history::History::default(),
             store: DocumentStore::with_filesystem(filesystem),
             document: Document::new(),
             manifest: PathBuf::new(),
             manifest_sha256: String::new(),
         }
+    }
+
+    pub fn history(&self) -> &kasane_core::history::History {
+        &self.history
+    }
+
+    pub fn record_edit(&mut self, edit: &kasane_core::EditResult) {
+        self.history.record(&mut self.document, edit);
+    }
+
+    /// Engine-independent entry point for a single recorded edit.
+    pub fn edit(
+        &mut self,
+        operation: impl FnOnce(&mut Document) -> kasane_core::EditResult,
+    ) -> kasane_core::EditResult {
+        let result = operation(&mut self.document);
+        self.record_edit(&result);
+        result
+    }
+
+    pub fn begin_action(&mut self, label: String) -> Status {
+        self.history.begin(&self.document, label)
+    }
+    pub fn end_action(&mut self) -> Status {
+        self.history.end(&self.document)
+    }
+    pub fn cancel_action(&mut self) -> kasane_core::EditResult {
+        self.history.cancel(&mut self.document)
+    }
+    pub fn undo(&mut self) -> kasane_core::EditResult {
+        self.history.undo(&mut self.document)
+    }
+    pub fn redo(&mut self) -> kasane_core::EditResult {
+        self.history.redo(&mut self.document)
     }
 
     pub fn document(&self) -> &Document {
@@ -437,6 +473,7 @@ impl DocumentSession {
         if result.status.is_ok() {
             let s = snapshot.unwrap();
             self.document = s.document;
+            self.history.clear(self.document.revision(), None);
             self.manifest = s.manifest;
             self.manifest_sha256 = s.manifest_sha256;
         }
@@ -444,6 +481,13 @@ impl DocumentSession {
     }
 
     pub fn save(&mut self, path: &Path) -> ProjectResult {
+        if self.history.active() {
+            return ProjectResult::failed(
+                "ACTION_ACTIVE",
+                "End or cancel the active action before saving",
+            );
+        }
+        let before_revision = self.document.revision();
         if self.document.transaction_active() {
             return ProjectResult::failed("TRANSACTION_ACTIVE", "Commit or cancel first");
         }
@@ -463,6 +507,8 @@ impl DocumentSession {
         if result.status.is_ok() {
             let s = snapshot.unwrap();
             self.document = s.document;
+            self.history
+                .saved(before_revision, self.document.revision());
             self.manifest = s.manifest;
             self.manifest_sha256 = s.manifest_sha256;
         }
@@ -480,6 +526,7 @@ impl DocumentSession {
         if result.status.is_ok() {
             let s = snapshot.unwrap();
             self.document = s.document;
+            self.history.clear(self.document.revision(), None);
             self.manifest = s.manifest;
             self.manifest_sha256 = s.manifest_sha256;
         }
@@ -501,6 +548,7 @@ impl DocumentSession {
         if result.status.is_ok() {
             let s = snapshot.unwrap();
             self.document = s.document;
+            self.history.clear(self.document.revision(), None);
             self.manifest = s.manifest;
             self.manifest_sha256 = s.manifest_sha256;
         }

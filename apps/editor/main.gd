@@ -132,8 +132,8 @@ func _ready() -> void:
 	center_vsplit.add_child(console_dock)
 
 	console_dock.run_script_requested.connect(func(): choose_file(FileDialog.FILE_MODE_OPEN_FILE, PackedStringArray(["*.gd ; GDScript"]), run_script))
-	console_dock.undo_requested.connect(func(): workspace.undo_redo.undo())
-	console_dock.redo_requested.connect(func(): workspace.undo_redo.redo())
+	console_dock.undo_requested.connect(func(): perform(workspace.undo()))
+	console_dock.redo_requested.connect(func(): perform(workspace.redo()))
 
 	# Right Column: Inspector Dock
 	inspector_dock = InspectorDock.new()

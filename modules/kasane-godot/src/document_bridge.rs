@@ -1,7 +1,6 @@
 use godot::prelude::*;
 use std::collections::HashMap;
 
-use kasane_core::document::Document;
 use kasane_core::evaluation::DrawableFrame;
 use kasane_core::preview::PreviewState;
 use std::cell::RefCell;
@@ -21,15 +20,6 @@ use crate::conversions::{
 };
 use crate::deformer_data::KasaneDeformerData;
 use crate::mesh_data::KasaneMeshData;
-
-#[derive(GodotClass)]
-#[class(init, base=RefCounted)]
-pub struct KasaneDocumentState {
-    base: Base<RefCounted>,
-    pub document: Document,
-    pub owner_id: u64,
-    pub generation: u64,
-}
 
 #[derive(GodotClass)]
 #[class(base=RefCounted)]
@@ -92,6 +82,11 @@ impl KasaneDocumentBridge {
     }
 
     pub fn apply(&mut self, edit: EditResult) -> Dictionary {
+        self.session.record_edit(&edit);
+        self.publish_edit(edit)
+    }
+
+    fn publish_edit(&mut self, edit: EditResult) -> Dictionary {
         let mut out = status_to_dict(&edit.status);
         out.set("revision", edit.changes.revision as i64);
         let kind_str = match edit.changes.kind {
@@ -116,6 +111,10 @@ impl KasaneDocumentBridge {
             referrers.push(&GString::from(id.as_str()));
         }
         out.set("referrers", &referrers);
+        out.set("history", &self.get_history_state());
+        if let Some(notice) = self.session.history().notice() {
+            out.set("history_warning", notice);
+        }
 
         if !edit.status.is_ok() {
             return out;
@@ -1736,59 +1735,76 @@ impl KasaneDocumentBridge {
     }
 
     #[func]
-    pub fn capture_state(&self) -> Option<Gd<KasaneDocumentState>> {
+    pub fn get_history_state(&self) -> Dictionary {
         if !is_main_thread() {
-            return None;
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        if self.session.document().transaction_active() {
-            return None;
-        }
-        let mut state = Gd::<KasaneDocumentState>::default();
-        let inst_id = self.base().instance_id().to_i64() as u64;
-        let mut b = state.bind_mut();
-        b.document = self.session.document().clone();
-        b.owner_id = inst_id;
-        b.generation = self.generation;
-        drop(b);
-        Some(state)
+        let history = self.session.history();
+        let mut out = Dictionary::new();
+        out.set("undo_steps", history.undo_len() as i64);
+        out.set("redo_steps", history.redo_len() as i64);
+        out.set("estimated_bytes", history.estimated_bytes() as i64);
+        out.set("action_active", history.active());
+        out.set("warning", history.notice().unwrap_or(""));
+        out
     }
 
     #[func]
-    pub fn restore_state(&mut self, state: Option<Gd<KasaneDocumentState>>) -> Dictionary {
+    pub fn begin_action(&mut self, label: GString) -> Dictionary {
         if !is_main_thread() {
-            return error_dict("WRONG_THREAD", "Document bridge requires the main thread.");
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        let Some(s) = state else {
-            return error_dict("STALE_STATE", "State belongs to another document session.");
-        };
-        let b = s.bind();
-        let inst_id = self.base().instance_id().to_i64() as u64;
-        if b.owner_id != inst_id || b.generation != self.generation {
-            return error_dict("STALE_STATE", "State belongs to another document session.");
+        let status = self.session.begin_action(label.to_string());
+        status_to_dict(&status)
+    }
+
+    #[func]
+    pub fn end_action(&mut self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        if self.session.document().transaction_active() {
-            return error_dict(
-                "TRANSACTION_ACTIVE",
-                "Commit or cancel the transaction first.",
-            );
+        let status = self.session.end_action();
+        let mut out = status_to_dict(&status);
+        out.set("history", &self.get_history_state());
+        if let Some(notice) = self.session.history().notice() {
+            out.set("history_warning", notice);
         }
-        let doc = self.session.document();
-        let removed: Vec<String> = doc
-            .mesh_order()
-            .iter()
-            .chain(doc.transform_order())
-            .filter(|id| !b.document.contains_id(id))
-            .cloned()
-            .collect();
-        for id in removed {
-            *self.object_epochs.entry(id).or_default() += 1;
-        }
-        self.session.document_mut().restore_from(&b.document);
-        drop(b);
-        self.preview.get_mut().reset();
-        let mut out = status_to_dict(&Status::ok());
-        out.set("revision", self.session.document().revision() as i64);
-        self.base_mut().emit_signal("changed", &[out.to_variant()]);
         out
+    }
+
+    #[func]
+    pub fn cancel_action(&mut self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let result = self.session.cancel_action();
+        if result.status.is_ok() && result.changes.kind != ChangeKind::None {
+            self.preview.get_mut().reset();
+        }
+        self.publish_edit(result)
+    }
+
+    #[func]
+    pub fn undo(&mut self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let result = self.session.undo();
+        if result.status.is_ok() && result.changes.kind != ChangeKind::None {
+            self.preview.get_mut().reset();
+        }
+        self.publish_edit(result)
+    }
+
+    #[func]
+    pub fn redo(&mut self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let result = self.session.redo();
+        if result.status.is_ok() && result.changes.kind != ChangeKind::None {
+            self.preview.get_mut().reset();
+        }
+        self.publish_edit(result)
     }
 }

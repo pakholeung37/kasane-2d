@@ -44,14 +44,13 @@ func run(w) -> Dictionary:
 			if g.mesh_a_id == topology.mesh.id and pair.vertex_a == old_vertex: pair.vertex_a = new_vertex
 			if g.mesh_b_id == topology.mesh.id and pair.vertex_b == old_vertex: pair.vertex_b = new_vertex
 	operations.append(d.replace_mesh_topology(topology))
-	operations.append(w.end_action())
+	var ended: Dictionary = w.end_action()
 	var edited = d.get_document_summary()
-	w.undo_redo.undo()
-	var undone = d.get_document_summary()
-	var undo_ok: bool = undone.blend_key_tables == summary.blend_key_tables and undone.blend_constraints == summary.blend_constraints and undone.blend_bindings == summary.blend_bindings and undone.glues == summary.glues
-	w.undo_redo.redo()
-	var redone = d.get_document_summary()
-	var redo_ok: bool = edited.blend_key_tables == redone.blend_key_tables and edited.blend_constraints == redone.blend_constraints and edited.blend_bindings == redone.blend_bindings and edited.glues == redone.glues
+	# Complex edits are explicit history barriers until their local deltas are implemented.
+	var denied_undo: Dictionary = w.undo()
+	var denied_redo: Dictionary = w.redo()
+	var redone: Dictionary = d.get_document_summary()
+	var history_barrier_ok: bool = ended.code == "NO_ACTION" and denied_undo.code == "NO_UNDO" and denied_redo.code == "NO_REDO" and redone == edited and d.get_history_state().warning == "HISTORY_UNSUPPORTED_EDIT"
 	# Both rejected writes must preserve content/revision, including through the bridge.
 	var revision: int = redone.revision
 	var bad: Dictionary = glue.duplicate(true)
@@ -64,6 +63,6 @@ func run(w) -> Dictionary:
 		application._on_object_selected(object_id)
 		inspection_ok = inspection_ok and application.inspector_dock.id_val.text == object_id
 	application._on_object_selected("")
-	return {"ok": operations.all(func(r): return r.ok) and undo_ok and redo_ok and invalid_ok and kinds.size() == 4 and inspection_ok,
-		"inspection_ok": inspection_ok, "operations": operations, "undo_ok": undo_ok, "redo_ok": redo_ok, "invalid_ok": invalid_ok, "edited_kinds": kinds,
+	return {"ok": operations.all(func(r): return r.ok) and history_barrier_ok and invalid_ok and kinds.size() == 4 and inspection_ok,
+		"inspection_ok": inspection_ok, "operations": operations, "history_barrier_ok": history_barrier_ok, "invalid_ok": invalid_ok, "edited_kinds": kinds,
 		"summary": redone, "glue_parameter": parameter}
