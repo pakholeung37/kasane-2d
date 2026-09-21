@@ -32,8 +32,8 @@ pub fn variant(source: &[u8], name: &str) -> Vec<u8> {
             set_i32(&mut bytes, 106, 0, 3);
             // Reverse the six-entry pools as well, keeping the independent
             // per-keyform offsets untouched.
-            for section in 108..=113 {
-                let p = offsets[section] as usize;
+            for &offset in &offsets[108..=113] {
+                let p = offset as usize;
                 for k in 0..3 {
                     for i in 0..4 {
                         bytes.swap(p + k * 4 + i, p + (5 - k) * 4 + i);

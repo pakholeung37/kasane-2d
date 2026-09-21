@@ -224,12 +224,12 @@ fn inspect_moc3_internal(
     }
 
     let mut counts_raw = vec![0i32; count_ints];
-    for i in 0..count_ints {
-        counts_raw[i] = read_i32(bytes, counts_off + i * 4)?;
-        if counts_raw[i] < 0 {
+    for (i, count) in counts_raw.iter_mut().enumerate() {
+        *count = read_i32(bytes, counts_off + i * 4)?;
+        if *count < 0 {
             return Err(Status::error(
                 "FILE_CORRUPT",
-                format!("count_info[{i}] has negative count {}", counts_raw[i]),
+                format!("count_info[{i}] has negative count {count}"),
             ));
         }
     }
@@ -293,8 +293,8 @@ fn inspect_moc3_internal(
     // Section bounds and 8-byte alignment verification across all valid sections of this version
     let valid_section_count = layout.section_count();
 
-    for i in 0..valid_section_count {
-        let off = section_offsets[i] as usize;
+    for (i, &offset) in section_offsets.iter().enumerate().take(valid_section_count) {
+        let off = offset as usize;
         if (off & 7) != 0 {
             return Err(Status::error(
                 "FILE_CORRUPT",

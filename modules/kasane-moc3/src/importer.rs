@@ -219,21 +219,20 @@ pub fn import_from_model3_json(
     for id in document.mesh_order() {
         if let Some(m) = document.get_mesh(id) {
             if let Some(asset) = document.get_asset(&m.texture_asset_id) {
-                if asset.source.contains("unmapped_slot_") {
-                    if !diagnostics
+                if asset.source.contains("unmapped_slot_")
+                    && !diagnostics
                         .iter()
                         .any(|d| d.code == "UNMAPPED_TEXTURE_SLOT")
-                    {
-                        diagnostics.push(ImportDiagnostic {
-                            severity: DiagnosticSeverity::Warning,
-                            code: "UNMAPPED_TEXTURE_SLOT".to_string(),
-                            message: format!(
-                                "Mesh '{}' references texture slot not provided; path was not guessed",
-                                m.name
-                            ),
-                        });
-                        textures_complete = false;
-                    }
+                {
+                    diagnostics.push(ImportDiagnostic {
+                        severity: DiagnosticSeverity::Warning,
+                        code: "UNMAPPED_TEXTURE_SLOT".to_string(),
+                        message: format!(
+                            "Mesh '{}' references texture slot not provided; path was not guessed",
+                            m.name
+                        ),
+                    });
+                    textures_complete = false;
                 }
             }
         }
@@ -343,12 +342,12 @@ pub fn import_from_bare_moc3(
     for id in document.mesh_order() {
         if let Some(m) = document.get_mesh(id) {
             if let Some(asset) = document.get_asset(&m.texture_asset_id) {
-                if asset.source.contains("unmapped_slot_") {
-                    if !diagnostics
+                if asset.source.contains("unmapped_slot_")
+                    && !diagnostics
                         .iter()
                         .any(|d| d.code == "UNMAPPED_TEXTURE_SLOT")
-                    {
-                        diagnostics.push(ImportDiagnostic {
+                {
+                    diagnostics.push(ImportDiagnostic {
                             severity: DiagnosticSeverity::Warning,
                             code: "UNMAPPED_TEXTURE_SLOT".to_string(),
                             message: format!(
@@ -356,8 +355,7 @@ pub fn import_from_bare_moc3(
                                 m.name
                             ),
                         });
-                        textures_complete = false;
-                    }
+                    textures_complete = false;
                 }
             }
         }

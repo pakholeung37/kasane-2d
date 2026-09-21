@@ -1,7 +1,7 @@
 use kasane_core::types::{
     BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind, Canvas,
-    DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform, Glue, GlueVertexPair, ImageAsset, Mesh, Parameter,
-    ParameterKind, Vec2,
+    DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform, Glue, GlueVertexPair, ImageAsset, Mesh,
+    Parameter, ParameterKind, Vec2,
 };
 use kasane_core::Document;
 
@@ -30,7 +30,6 @@ fn create_base_document() -> Document {
             width: 100,
             height: 100,
             sha256: "0".repeat(64),
-            ..Default::default()
         })
         .status
         .is_ok());
@@ -42,8 +41,16 @@ fn create_base_document() -> Document {
             name: "MeshA".to_string(),
             texture_asset_id: ASSET.to_string(),
             vertex_ids: vec![1, 2, 3],
-            base_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0)],
-            uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)],
+            base_positions: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(10.0, 0.0),
+                Vec2::new(0.0, 10.0)
+            ],
+            uvs: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(0.0, 1.0)
+            ],
             triangles: vec![[1, 2, 3]],
             ..Default::default()
         })
@@ -57,8 +64,16 @@ fn create_base_document() -> Document {
             name: "MeshB".to_string(),
             texture_asset_id: ASSET.to_string(),
             vertex_ids: vec![10, 20, 30],
-            base_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0)],
-            uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)],
+            base_positions: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(10.0, 0.0),
+                Vec2::new(0.0, 10.0)
+            ],
+            uvs: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(0.0, 1.0)
+            ],
             triangles: vec![[10, 20, 30]],
             ..Default::default()
         })
@@ -129,7 +144,10 @@ fn test_blendshape_key_table_and_constraint_crud() {
         keys: vec![0.0, 1.0],
         weights: vec![0.0, 1.0],
     };
-    assert!(doc.create_blend_constraint(constraint.clone()).status.is_ok());
+    assert!(doc
+        .create_blend_constraint(constraint.clone())
+        .status
+        .is_ok());
     assert_eq!(doc.blend_constraint_order(), &[CONSTRAINT]);
     assert_eq!(doc.get_blend_constraint(CONSTRAINT), Some(&constraint));
 
@@ -168,11 +186,19 @@ fn test_blendshape_binding_and_mesh_topology_guard() {
         constraint_ids: vec![CONSTRAINT.to_string()],
         keyforms: DeltaKeyforms::Mesh(vec![
             DeltaMeshKeyform {
-                positions: vec![Vec2::new(0.0, 0.0), Vec2::new(0.0, 0.0), Vec2::new(0.0, 0.0)],
+                positions: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(0.0, 0.0),
+                ],
                 ..Default::default()
             },
             DeltaMeshKeyform {
-                positions: vec![Vec2::new(1.0, 0.0), Vec2::new(2.0, 0.0), Vec2::new(3.0, 0.0)],
+                positions: vec![
+                    Vec2::new(1.0, 0.0),
+                    Vec2::new(2.0, 0.0),
+                    Vec2::new(3.0, 0.0),
+                ],
                 ..Default::default()
             },
         ]),
@@ -232,8 +258,16 @@ fn test_glue_crud_and_references() {
     // Mesh topology change that drops a glued vertex must be rejected
     let mut modified_mesh = doc.get_mesh(MESH_A).unwrap().clone();
     modified_mesh.vertex_ids = vec![2, 3, 4]; // vertex 1 dropped!
-    modified_mesh.base_positions = vec![Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0), Vec2::new(5.0, 5.0)];
-    modified_mesh.uvs = vec![Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::new(0.5, 0.5)];
+    modified_mesh.base_positions = vec![
+        Vec2::new(10.0, 0.0),
+        Vec2::new(0.0, 10.0),
+        Vec2::new(5.0, 5.0),
+    ];
+    modified_mesh.uvs = vec![
+        Vec2::new(1.0, 0.0),
+        Vec2::new(0.0, 1.0),
+        Vec2::new(0.5, 0.5),
+    ];
     modified_mesh.triangles = vec![[2, 3, 4]];
     let replace_res = doc.replace_mesh(modified_mesh);
     assert!(!replace_res.status.is_ok());
@@ -305,7 +339,11 @@ fn test_blendshape_evaluation() {
                 ..Default::default()
             },
             DeltaMeshKeyform {
-                positions: vec![Vec2::new(5.0, 10.0), Vec2::new(5.0, 10.0), Vec2::new(5.0, 10.0)],
+                positions: vec![
+                    Vec2::new(5.0, 10.0),
+                    Vec2::new(5.0, 10.0),
+                    Vec2::new(5.0, 10.0),
+                ],
                 opacity: None,
                 draw_order: Some(50.0),
                 multiply: None,
@@ -379,14 +417,12 @@ fn test_glue_evaluation() {
         name: "Glue 0".to_string(),
         mesh_a_id: MESH_A.to_string(),
         mesh_b_id: MESH_B.to_string(),
-        pairs: vec![
-            GlueVertexPair {
-                vertex_a: 1, // at (0, 0)
-                vertex_b: 10, // at (10, 20)
-                weight_a: 0.5,
-                weight_b: 0.5,
-            },
-        ],
+        pairs: vec![GlueVertexPair {
+            vertex_a: 1,  // at (0, 0)
+            vertex_b: 10, // at (10, 20)
+            weight_a: 0.5,
+            weight_b: 0.5,
+        }],
         intensity: 1.0,
         binding: None,
     };
@@ -419,7 +455,6 @@ fn test_glue_evaluation() {
     assert_eq!(mesh_a.positions[0], Vec2::new(2.5, -5.0));
     assert_eq!(mesh_b.positions[0], Vec2::new(7.5, -15.0));
 }
-
 
 #[test]
 fn parameter_edits_validate_blend_dependents_atomically() {
@@ -604,7 +639,9 @@ fn assert_vec2_near(a: Vec2, b: Vec2, eps: f32) {
     assert!(
         (a.x - b.x).abs() <= eps && (a.y - b.y).abs() <= eps,
         "left: {:?}, right: {:?}, eps: {}",
-        a, b, eps
+        a,
+        b,
+        eps
     );
 }
 
@@ -1012,8 +1049,16 @@ fn test_glue_blendshape_ordered_multiple_glues() {
             name: "MeshC".to_string(),
             texture_asset_id: ASSET.to_string(),
             vertex_ids: vec![100, 200, 300],
-            base_positions: vec![Vec2::new(20.0, 0.0), Vec2::new(30.0, 0.0), Vec2::new(20.0, 10.0)],
-            uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)],
+            base_positions: vec![
+                Vec2::new(20.0, 0.0),
+                Vec2::new(30.0, 0.0),
+                Vec2::new(20.0, 10.0)
+            ],
+            uvs: vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(1.0, 0.0),
+                Vec2::new(0.0, 1.0)
+            ],
             triangles: vec![[100, 200, 300]],
             ..Default::default()
         })
@@ -1183,7 +1228,11 @@ fn test_glue_blendshape_faceless_endpoints() {
     let mut frame = DrawableFrame::default();
     assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
 
-    let faceless = frame.drawables.iter().find(|d| d.id == faceless_id).unwrap();
+    let faceless = frame
+        .drawables
+        .iter()
+        .find(|d| d.id == faceless_id)
+        .unwrap();
     let b = frame.drawables.iter().find(|d| d.id == MESH_B).unwrap();
     // d = (10, 10)
     // faceless += (5, 5) -> canvas (5, -5)
@@ -1258,12 +1307,27 @@ fn test_glue_blendshape_seam_a_b_a() {
     preview.insert(PARAM_BS.to_string(), 0.0);
     assert!(evaluate_frame(&doc, &preview, &mut frame_returned).is_ok());
 
-    let a_init = frame_initial.drawables.iter().find(|d| d.id == MESH_A).unwrap();
-    let a_ret = frame_returned.drawables.iter().find(|d| d.id == MESH_A).unwrap();
-    let b_init = frame_initial.drawables.iter().find(|d| d.id == MESH_B).unwrap();
-    let b_ret = frame_returned.drawables.iter().find(|d| d.id == MESH_B).unwrap();
+    let a_init = frame_initial
+        .drawables
+        .iter()
+        .find(|d| d.id == MESH_A)
+        .unwrap();
+    let a_ret = frame_returned
+        .drawables
+        .iter()
+        .find(|d| d.id == MESH_A)
+        .unwrap();
+    let b_init = frame_initial
+        .drawables
+        .iter()
+        .find(|d| d.id == MESH_B)
+        .unwrap();
+    let b_ret = frame_returned
+        .drawables
+        .iter()
+        .find(|d| d.id == MESH_B)
+        .unwrap();
 
     assert_eq!(a_init.positions, a_ret.positions);
     assert_eq!(b_init.positions, b_ret.positions);
 }
-

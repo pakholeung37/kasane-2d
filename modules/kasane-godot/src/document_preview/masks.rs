@@ -1,5 +1,12 @@
 use super::*;
 
+type MaskSourceSnapshot = (
+    String,
+    Option<Gd<godot::classes::Mesh>>,
+    Option<Gd<Texture2D>>,
+    PackedVector2Array,
+);
+
 impl KasaneDocumentPreview {
     pub(super) fn update_mask_texture(
         &mut self,
@@ -14,12 +21,7 @@ impl KasaneDocumentPreview {
             return None;
         }
 
-        let sources: Vec<(
-            String,
-            Option<Gd<godot::classes::Mesh>>,
-            Option<Gd<Texture2D>>,
-            PackedVector2Array,
-        )> = mask_ids
+        let sources: Vec<MaskSourceSnapshot> = mask_ids
             .iter()
             .filter_map(|id| {
                 self.views.get(id).map(|view| {

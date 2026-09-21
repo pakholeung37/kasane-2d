@@ -5,9 +5,9 @@ use std::path::Path;
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
     Appearance, BindingAxis, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
-    BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, Glue, GlueVertexPair, ImageAsset,
-    Mesh, MeshBinding, MeshKeyform, Offscreen, OffscreenKeyform, Parameter, ParameterKind, Part,
-    RotationPose, Transform, TransformKind, Vec2,
+    BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, Glue, GlueVertexPair,
+    ImageAsset, Mesh, MeshBinding, MeshKeyform, Offscreen, OffscreenKeyform, Parameter,
+    ParameterKind, Part, RotationPose, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::encode_moc3;
@@ -49,7 +49,7 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
             Canvas {
                 width: 640.0,
                 height: 480.0,
-                origin: Vec2::new(271.0, 193.0).into(),
+                origin: Vec2::new(271.0, 193.0),
                 pixels_per_unit: 100.0,
                 flag: 1,
             }
@@ -1373,10 +1373,17 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
         .is_ok());
 
     let glue_parameter = id(105);
-    assert!(doc.create_parameter(Parameter {
-        id: glue_parameter.clone(), runtime_id: "GlueStrength".into(), minimum: 0.0,
-        maximum: 1.0, default_value: 0.0, ..Default::default()
-    }).status.is_ok());
+    assert!(doc
+        .create_parameter(Parameter {
+            id: glue_parameter.clone(),
+            runtime_id: "GlueStrength".into(),
+            minimum: 0.0,
+            maximum: 1.0,
+            default_value: 0.0,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
     let glue_id = id(104);
     assert!(doc
         .create_glue(Glue {
@@ -1393,8 +1400,14 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
             }],
             intensity: 1.0,
             binding: Some(kasane_core::types::GlueBinding {
-                axes: vec![BindingAxis { parameter_id: glue_parameter, keys: vec![0.0, 1.0] }],
-                keyforms: vec![kasane_core::types::GlueKeyform { intensity: 0.0 }, kasane_core::types::GlueKeyform { intensity: 1.0 }],
+                axes: vec![BindingAxis {
+                    parameter_id: glue_parameter,
+                    keys: vec![0.0, 1.0]
+                }],
+                keyforms: vec![
+                    kasane_core::types::GlueKeyform { intensity: 0.0 },
+                    kasane_core::types::GlueKeyform { intensity: 1.0 }
+                ],
             }),
         })
         .status
@@ -1423,7 +1436,10 @@ fn test_project_v1_v2_v3_migration_to_v4() {
 
     for old_ver in [1, 2, 3] {
         let mut encoded = encode_project(&doc).unwrap();
-        encoded = encoded.replace("\"format_version\": 4", &format!("\"format_version\": {}", old_ver));
+        encoded = encoded.replace(
+            "\"format_version\": 4",
+            &format!("\"format_version\": {}", old_ver),
+        );
         if old_ver == 1 {
             // v1 had no blend or glue fields
             encoded = encoded.replace("\"blend_key_tables\": [],\n", "");
@@ -1432,11 +1448,16 @@ fn test_project_v1_v2_v3_migration_to_v4() {
             encoded = encoded.replace("\"glues\": [],\n", "");
         }
 
-        let decoded = decode_project(&encoded).unwrap_or_else(|e| panic!("Failed to decode v{} project: {:?}", old_ver, e));
+        let decoded = decode_project(&encoded)
+            .unwrap_or_else(|e| panic!("Failed to decode v{} project: {:?}", old_ver, e));
         // Verify default value populated for repeat
         for p_id in decoded.parameter_order() {
             let p = decoded.get_parameter(p_id).unwrap();
-            assert!(!p.repeat, "Migrated v{} parameter must have repeat: false by default", old_ver);
+            assert!(
+                !p.repeat,
+                "Migrated v{} parameter must have repeat: false by default",
+                old_ver
+            );
         }
 
         // Saving automatically upgrades to v4
@@ -1511,7 +1532,9 @@ fn test_project_v4_preserves_offscreen() {
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert_eq!(decoded.offscreen_count(), 1);
-    let decoded_os = decoded.get_offscreen(&id(10)).expect("offscreen must exist");
+    let decoded_os = decoded
+        .get_offscreen(&id(10))
+        .expect("offscreen must exist");
     assert_eq!(decoded_os.runtime_id, "Offscreen0");
     assert_eq!(decoded_os.name, "Offscreen 0");
     assert_eq!(decoded_os.part_id, sid(1));
@@ -1545,7 +1568,10 @@ fn test_project_v4_preserves_repeat_parameter() {
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     let decoded_param = decoded.get_parameter(&param_id).unwrap();
-    assert!(decoded_param.repeat, "repeat: true must be preserved after project decode");
+    assert!(
+        decoded_param.repeat,
+        "repeat: true must be preserved after project decode"
+    );
 }
 
 #[test]
@@ -1556,7 +1582,10 @@ fn test_project_failure_preserves_document() {
     let snap = doc.clone();
 
     // Attempt invalid parameter edit
-    let mut bad_p = doc.get_parameter(&doc.parameter_order()[0]).unwrap().clone();
+    let mut bad_p = doc
+        .get_parameter(&doc.parameter_order()[0])
+        .unwrap()
+        .clone();
     bad_p.maximum = bad_p.minimum - 1.0; // invalid range
     let res = doc.replace_parameter(bad_p);
     assert!(!res.status.is_ok());

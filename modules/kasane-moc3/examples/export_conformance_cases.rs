@@ -52,7 +52,7 @@ fn base_doc() -> Document {
             Canvas {
                 width: 640.0,
                 height: 480.0,
-                origin: Vec2::new(271.0, 193.0).into(),
+                origin: Vec2::new(271.0, 193.0),
                 pixels_per_unit: 100.0,
                 flag: 1,
             }

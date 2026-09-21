@@ -924,7 +924,7 @@ pub fn encode_moc3_with_version(
         let idx_field = l.field("idx_src.idx")?;
         // evaluate_frame exposes revived runtime winding. Undo the canvas
         // reversal here because Core applies it while reviving the file.
-        for triangle in d.indices.chunks_exact(3) {
+        for triangle in d.indices.as_chunks::<3>().0 {
             let stored = if doc.canvas().flag & 1 == 0 {
                 [triangle[2], triangle[1], triangle[0]]
             } else {

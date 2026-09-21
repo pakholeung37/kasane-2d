@@ -523,7 +523,8 @@ fn test_random_operation_sequences_and_invariants() {
                         parent_id,
                         kind: TransformKind::Rotation,
                         rotation: RotationPose {
-                            origin: Vec2::new(rng.next_f32(0.0, 600.0), rng.next_f32(0.0, 400.0)).into(),
+                            origin: Vec2::new(rng.next_f32(0.0, 600.0), rng.next_f32(0.0, 400.0))
+                                .into(),
                             angle: rng.next_f32(-45.0, 45.0),
                             scale: rng.next_f32(0.8, 1.2),
                             reflect_x: false,

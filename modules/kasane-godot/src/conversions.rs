@@ -196,15 +196,25 @@ pub fn pose_from_dict(d: &Dictionary) -> Result<RotationPose, Status> {
         None => return Err(fail()),
     };
     let xy: Vec<f64> = if let Ok(array) = origin_val.try_to::<Array>() {
-        array.iter_shared().map(|v| match v.get_type() {
-            VariantType::FLOAT => Ok(v.to::<f64>()),
-            VariantType::INT => Ok(v.to::<i64>() as f64),
-            _ => Err(fail()),
-        }).collect::<Result<_, _>>()?
+        array
+            .iter_shared()
+            .map(|v| match v.get_type() {
+                VariantType::FLOAT => Ok(v.to::<f64>()),
+                VariantType::INT => Ok(v.to::<i64>() as f64),
+                _ => Err(fail()),
+            })
+            .collect::<Result<_, _>>()?
     } else if let Ok(point) = origin_val.try_to::<Vector2>() {
         vec![point.x as f64, point.y as f64]
-    } else { extract_floats(&origin_val)?.into_iter().map(f64::from).collect() };
-    if xy.len() != 2 { return Err(fail()); }
+    } else {
+        extract_floats(&origin_val)?
+            .into_iter()
+            .map(f64::from)
+            .collect()
+    };
+    if xy.len() != 2 {
+        return Err(fail());
+    }
     Ok(RotationPose {
         origin: kasane_core::types::PreciseVec2::new(xy[0], xy[1]),
         angle,
@@ -249,7 +259,12 @@ pub fn parameter_from_dict(d: &Dictionary) -> Result<Parameter, Status> {
         match get_str(d, "kind")?.as_str() {
             "blend_shape" => kasane_core::types::ParameterKind::BlendShape,
             "normal" => kasane_core::types::ParameterKind::Normal,
-            _ => return Err(Status::error("INVALID_PARAMETER_KIND", "Expected normal or blend_shape")),
+            _ => {
+                return Err(Status::error(
+                    "INVALID_PARAMETER_KIND",
+                    "Expected normal or blend_shape",
+                ))
+            }
         }
     };
     let repeat = if d.contains_key("repeat") {
@@ -430,7 +445,9 @@ pub fn mesh_properties_from_dict(d: &Dictionary, m: &mut Mesh) -> Result<(), Sta
         _ => return Err(fail()),
     };
     if let Some(raw) = d.get("raw_blend_mode") {
-        m.raw_blend_mode = if raw.get_type() == VariantType::NIL { None } else {
+        m.raw_blend_mode = if raw.get_type() == VariantType::NIL {
+            None
+        } else {
             Some(raw.try_to::<u32>().map_err(|_| fail())?)
         };
     }
@@ -475,7 +492,12 @@ pub fn dict_from_mesh_properties(m: &Mesh) -> Dictionary {
         BlendMode::Multiplicative => 2,
     };
     d.set("blend_mode", blend_int);
-    d.set("raw_blend_mode", &m.raw_blend_mode.map(|v| v.to_variant()).unwrap_or_else(Variant::nil));
+    d.set(
+        "raw_blend_mode",
+        &m.raw_blend_mode
+            .map(|v| v.to_variant())
+            .unwrap_or_else(Variant::nil),
+    );
     d.set("enabled", m.enabled);
     d.set("double_sided", m.double_sided);
     d.set("inverted_mask", m.inverted_mask);

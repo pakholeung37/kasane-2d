@@ -1848,10 +1848,11 @@ pub fn decode_moc3(
             register_group(&target_id, BlendShapeTargetKind::Mesh, b_off, b_len)?;
         }
 
+        type BlendShapeColors = (Option<[f32; 3]>, Option<[f32; 3]>);
         let get_bs_colors = |sec_mul: usize,
                              sec_scr: usize,
                              key_idx: usize|
-         -> Result<(Option<[f32; 3]>, Option<[f32; 3]>), Status> {
+         -> Result<BlendShapeColors, Status> {
             if ver < 5 {
                 return Ok((None, None));
             }

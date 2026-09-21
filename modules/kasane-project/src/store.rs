@@ -281,7 +281,11 @@ impl DocumentStore {
     pub fn import_model3(
         &self,
         path: &Path,
-    ) -> (ProjectResult, Option<DocumentSnapshot>, Option<ImportReport>) {
+    ) -> (
+        ProjectResult,
+        Option<DocumentSnapshot>,
+        Option<ImportReport>,
+    ) {
         let content = match fs::read_to_string(path) {
             Ok(c) => c,
             Err(e) => {
@@ -323,7 +327,11 @@ impl DocumentStore {
         &self,
         moc3_path: &Path,
         texture_map: &HashMap<usize, PathBuf>,
-    ) -> (ProjectResult, Option<DocumentSnapshot>, Option<ImportReport>) {
+    ) -> (
+        ProjectResult,
+        Option<DocumentSnapshot>,
+        Option<ImportReport>,
+    ) {
         let bytes = match fs::read(moc3_path) {
             Ok(b) => b,
             Err(e) => {

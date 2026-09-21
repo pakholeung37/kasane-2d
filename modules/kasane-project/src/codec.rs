@@ -6,9 +6,9 @@ use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint,
     BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms,
     DeltaMeshKeyform, DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform,
-    DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset, Mesh, MeshBinding, MeshKeyform,
-    Offscreen, OffscreenKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform,
-    Status, Transform, TransformKind, Vec2,
+    DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset, Mesh, MeshBinding, MeshKeyform, Offscreen,
+    OffscreenKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
+    TransformKind, Vec2,
 };
 use kasane_core::Document;
 use serde::de::{DeserializeSeed, Deserializer, MapAccess, SeqAccess, Visitor};
@@ -1143,7 +1143,10 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
 
     for g in doc.glues {
         if g.binding_id.is_some() {
-            return Err(Status::error("INVALID_GLUE_BINDING", "Legacy MeshBinding references cannot represent Glue intensity"));
+            return Err(Status::error(
+                "INVALID_GLUE_BINDING",
+                "Legacy MeshBinding references cannot represent Glue intensity",
+            ));
         }
         let pairs = g
             .pairs

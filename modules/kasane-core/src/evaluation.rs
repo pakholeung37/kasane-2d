@@ -624,13 +624,17 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                                         state.appearance.opacity += d_op * eff_w;
                                     }
                                     if let Some(d_mul) = f.multiply.filter(|_| has_multiply) {
-                                        for c in 0..3 {
-                                            state.appearance.multiply[c] += d_mul[c] * eff_w;
+                                        for (channel, delta) in
+                                            state.appearance.multiply.iter_mut().zip(d_mul)
+                                        {
+                                            *channel += delta * eff_w;
                                         }
                                     }
                                     if let Some(d_scr) = f.screen.filter(|_| has_screen) {
-                                        for c in 0..3 {
-                                            state.appearance.screen[c] += d_scr[c] * eff_w;
+                                        for (channel, delta) in
+                                            state.appearance.screen.iter_mut().zip(d_scr)
+                                        {
+                                            *channel += delta * eff_w;
                                         }
                                     }
                                 }
@@ -665,13 +669,17 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                                         state.appearance.opacity += d_op * eff_w;
                                     }
                                     if let Some(d_mul) = f.multiply.filter(|_| has_multiply) {
-                                        for c in 0..3 {
-                                            state.appearance.multiply[c] += d_mul[c] * eff_w;
+                                        for (channel, delta) in
+                                            state.appearance.multiply.iter_mut().zip(d_mul)
+                                        {
+                                            *channel += delta * eff_w;
                                         }
                                     }
                                     if let Some(d_scr) = f.screen.filter(|_| has_screen) {
-                                        for c in 0..3 {
-                                            state.appearance.screen[c] += d_scr[c] * eff_w;
+                                        for (channel, delta) in
+                                            state.appearance.screen.iter_mut().zip(d_scr)
+                                        {
+                                            *channel += delta * eff_w;
                                         }
                                     }
                                 }
@@ -857,13 +865,16 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                                     appearance.opacity += d_op * eff_w;
                                 }
                                 if let Some(d_mul) = f.multiply.filter(|_| has_multiply) {
-                                    for c in 0..3 {
-                                        appearance.multiply[c] += d_mul[c] * eff_w;
+                                    for (channel, delta) in
+                                        appearance.multiply.iter_mut().zip(d_mul)
+                                    {
+                                        *channel += delta * eff_w;
                                     }
                                 }
                                 if let Some(d_scr) = f.screen.filter(|_| has_screen) {
-                                    for c in 0..3 {
-                                        appearance.screen[c] += d_scr[c] * eff_w;
+                                    for (channel, delta) in appearance.screen.iter_mut().zip(d_scr)
+                                    {
+                                        *channel += delta * eff_w;
                                     }
                                 }
                             }
