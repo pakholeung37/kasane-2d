@@ -1,3 +1,5 @@
+use kasane_core::{PartKeyform, RotationKeyform, SceneTrack, WarpKeyform};
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashSet;
 use std::fmt;
 
@@ -7,7 +9,7 @@ use kasane_core::types::{
     BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms,
     DeltaMeshKeyform, DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform,
     DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset, Mesh, MeshBinding, MeshKeyform, Offscreen,
-    OffscreenKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
+    OffscreenKeyform, Parameter, Part, RotationPose, SceneBinding, Status, Transform,
     TransformKind, Vec2,
 };
 use kasane_core::Document;
@@ -554,19 +556,24 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             id: t.id.clone(),
             runtime_id: t.runtime_id.clone(),
             name: t.name.clone(),
-            part_id: t.part_id.clone(),
-            parent_id: t.parent_id.clone(),
-            kind: match t.kind {
+            part_id: t.part().to_owned(),
+            parent_id: t.parent().to_owned(),
+            kind: match t.kind() {
                 TransformKind::Rotation => 1,
                 TransformKind::Warp => 0,
             },
-            base_angle: t.base_angle,
-            rotation: RotationPoseWire::from(&t.rotation),
-            rows: t.rows,
-            columns: t.columns,
-            quad: t.quad,
+            base_angle: t.rotation().map_or(0.0, |r| r.base_angle),
+            rotation: RotationPoseWire::from(&t.rotation().map(|r| r.pose).unwrap_or_default()),
+            rows: t.warp().map_or(1, |w| w.rows),
+            columns: t.warp().map_or(1, |w| w.columns),
+            quad: t.warp().is_none_or(|w| w.quad),
             enabled: t.enabled,
-            points: t.points.iter().map(|p| [p.x, p.y]).collect(),
+            points: t
+                .warp()
+                .into_iter()
+                .flat_map(|w| w.points.iter())
+                .map(|p| [p.x, p.y])
+                .collect(),
             appearance: AppearanceWire::from(&t.appearance),
         });
     }
@@ -601,10 +608,10 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
     for id in document.scene_binding_order() {
         let sb = document.get_scene_binding(id).unwrap();
         let keyforms_wire = sb
-            .keyforms
-            .iter()
+            .track
+            .samples()
             .map(|f| SceneKeyformWire {
-                keys: f.keys.clone(),
+                keys: f.keys.to_vec(),
                 positions: f.positions.iter().map(|p| [p.x, p.y]).collect(),
                 rotation: RotationPoseWire::from(&f.rotation),
                 appearance: Some(AppearanceWire::from(&f.appearance)),
@@ -613,7 +620,7 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             .collect();
         scene_bindings_wire.push(SceneBindingWire {
             id: sb.id.clone(),
-            target_id: sb.target_id.clone(),
+            target_id: sb.target_id().to_owned(),
             axes: sb.axes.iter().map(BindingAxisWire::from).collect(),
             keyforms: keyforms_wire,
         });
@@ -925,23 +932,28 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             id: t.id.clone(),
             runtime_id: t.runtime_id.clone(),
             name: t.name.clone(),
-            part_id: t.part_id.clone(),
-            parent_id: String::new(),
-            kind: match t.kind {
+            part_id: kasane_core::PartId::optional(t.part_id.clone()),
+            parent_id: kasane_core::TransformId::optional(String::new()),
+            enabled: t.enabled,
+            appearance: t.appearance.clone().into(),
+            data: match match t.kind {
                 0 => TransformKind::Warp,
                 1 => TransformKind::Rotation,
                 _ => return Err(Status::error("INVALID_PROJECT", "Unknown Transform kind")),
+            } {
+                TransformKind::Warp => TransformData::Warp(WarpTransform {
+                    rows: t.rows,
+                    columns: t.columns,
+                    quad: t.quad,
+                    points: t.points.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
+                }),
+                TransformKind::Rotation => TransformData::Rotation(RotationTransform {
+                    base_angle: t.base_angle,
+                    pose: RotationPose::from(t.rotation.clone()),
+                }),
             },
-            base_angle: t.base_angle,
-            rotation: RotationPose::from(t.rotation.clone()),
-            rows: t.rows,
-            columns: t.columns,
-            quad: t.quad,
-            enabled: t.enabled,
-            points: t.points.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
-            appearance: t.appearance.clone().into(),
         };
-        tmp.parent_id.clear();
+        tmp.parent_id = None;
         let res = candidate.create_transform(tmp);
         if !res.status.is_ok() {
             return Err(res.status);
@@ -952,21 +964,26 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             id: t.id,
             runtime_id: t.runtime_id,
             name: t.name,
-            part_id: t.part_id,
-            parent_id: t.parent_id,
-            kind: match t.kind {
+            part_id: kasane_core::PartId::optional(t.part_id),
+            parent_id: kasane_core::TransformId::optional(t.parent_id),
+            enabled: t.enabled,
+            appearance: t.appearance.into(),
+            data: match match t.kind {
                 0 => TransformKind::Warp,
                 1 => TransformKind::Rotation,
                 _ => return Err(Status::error("INVALID_PROJECT", "Unknown Transform kind")),
+            } {
+                TransformKind::Warp => TransformData::Warp(WarpTransform {
+                    rows: t.rows,
+                    columns: t.columns,
+                    quad: t.quad,
+                    points: t.points.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
+                }),
+                TransformKind::Rotation => TransformData::Rotation(RotationTransform {
+                    base_angle: t.base_angle,
+                    pose: RotationPose::from(t.rotation),
+                }),
             },
-            base_angle: t.base_angle,
-            rotation: RotationPose::from(t.rotation),
-            rows: t.rows,
-            columns: t.columns,
-            quad: t.quad,
-            enabled: t.enabled,
-            points: t.points.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
-            appearance: t.appearance.into(),
         };
         let res = candidate.replace_transform(actual);
         if !res.status.is_ok() {
@@ -1088,22 +1105,51 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
 
     for sb in doc.scene_bindings {
         let axes = sb.axes.into_iter().map(BindingAxis::from).collect();
-        let keyforms = sb
-            .keyforms
-            .into_iter()
-            .map(|f| SceneKeyform {
-                keys: f.keys,
-                positions: f.positions.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
-                rotation: RotationPose::from(f.rotation),
-                appearance: f.appearance.map(Appearance::from).unwrap_or_default(),
-                draw_order: f.draw_order,
-            })
-            .collect();
+        let track = match candidate.get_transform(&sb.target_id).map(|t| t.kind()) {
+            Some(TransformKind::Warp) => SceneTrack::Warp {
+                target_id: sb.target_id.into(),
+                keyforms: sb
+                    .keyforms
+                    .into_iter()
+                    .map(|f| WarpKeyform {
+                        keys: f.keys,
+                        positions: f
+                            .positions
+                            .into_iter()
+                            .map(|p| Vec2::new(p[0], p[1]))
+                            .collect(),
+                        appearance: f.appearance.map(Appearance::from).unwrap_or_default(),
+                    })
+                    .collect(),
+            },
+            Some(TransformKind::Rotation) => SceneTrack::Rotation {
+                target_id: sb.target_id.into(),
+                keyforms: sb
+                    .keyforms
+                    .into_iter()
+                    .map(|f| RotationKeyform {
+                        keys: f.keys,
+                        rotation: f.rotation.into(),
+                        appearance: f.appearance.map(Appearance::from).unwrap_or_default(),
+                    })
+                    .collect(),
+            },
+            None => SceneTrack::Part {
+                target_id: sb.target_id.into(),
+                keyforms: sb
+                    .keyforms
+                    .into_iter()
+                    .map(|f| PartKeyform {
+                        keys: f.keys,
+                        draw_order: f.draw_order,
+                    })
+                    .collect(),
+            },
+        };
         let res = candidate.create_scene_binding(SceneBinding {
             id: sb.id,
-            target_id: sb.target_id,
             axes,
-            keyforms,
+            track,
         });
         if !res.status.is_ok() {
             return Err(res.status);

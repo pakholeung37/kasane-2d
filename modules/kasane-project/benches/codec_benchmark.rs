@@ -1,9 +1,10 @@
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::hint::black_box;
 use std::time::Instant;
 
 use kasane_core::{
     BindingAxis, Canvas, Document, ImageAsset, Mesh, MeshBinding, MeshKeyform, Parameter, Part,
-    RotationPose, SceneBinding, SceneKeyform, Transform, TransformKind, Vec2, VertexId,
+    RotationPose, SceneBinding, Transform, Vec2, VertexId,
 };
 use kasane_project::{decode_project, encode_project};
 
@@ -100,15 +101,17 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
         id: rot_root.clone(),
         runtime_id: "RootRotation".to_string(),
         name: "Root Rotation".to_string(),
-        part_id: part_root.clone(),
-        kind: TransformKind::Rotation,
-        rotation: RotationPose {
-            origin: Vec2::new(640.0, 360.0).into(),
-            angle: 0.0,
-            scale: 1.0,
-            reflect_x: false,
-            reflect_y: false,
-        },
+        part_id: kasane_core::PartId::optional(part_root.clone()),
+        data: TransformData::Rotation(RotationTransform {
+            base_angle: 0.0,
+            pose: RotationPose {
+                origin: Vec2::new(640.0, 360.0).into(),
+                angle: 0.0,
+                scale: 1.0,
+                reflect_x: false,
+                reflect_y: false,
+            },
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(tfm_rot.clone()).status.is_ok());
@@ -119,17 +122,21 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
         id: warp_child.clone(),
         runtime_id: "ChildWarp".to_string(),
         name: "Child Warp".to_string(),
-        parent_id: rot_root.clone(),
-        part_id: part_child.clone(),
-        kind: TransformKind::Warp,
-        rows: 3,
-        columns: 3,
-        quad: true,
+        parent_id: kasane_core::TransformId::optional(rot_root.clone()),
+        part_id: kasane_core::PartId::optional(part_child.clone()),
+        data: TransformData::Warp(WarpTransform {
+            rows: 3,
+            columns: 3,
+            quad: true,
+            points: Vec::new(),
+        }),
         ..Default::default()
     };
     for r in 0..=3 {
         for c in 0..=3 {
             tfm_warp
+                .warp_mut()
+                .unwrap()
                 .points
                 .push(Vec2::new(c as f32 * 50.0 - 75.0, r as f32 * 50.0 - 75.0));
         }
@@ -143,32 +150,50 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
         } else {
             warp_child.clone()
         };
-        let mut sb = SceneBinding {
+        let track = if t == 1 {
+            kasane_core::SceneTrack::Rotation {
+                target_id: tid.into(),
+                keyforms: [-1.0f32, 0., 1.]
+                    .into_iter()
+                    .map(|key| {
+                        let mut rotation = tfm_rot.rotation().unwrap().pose;
+                        rotation.angle = key * 25.;
+                        rotation.scale = 1. + key * 0.1;
+                        kasane_core::RotationKeyform {
+                            keys: vec![key],
+                            rotation,
+                            ..Default::default()
+                        }
+                    })
+                    .collect(),
+            }
+        } else {
+            kasane_core::SceneTrack::Warp {
+                target_id: tid.into(),
+                keyforms: [-1.0f32, 0., 1.]
+                    .into_iter()
+                    .map(|key| {
+                        let mut positions = tfm_warp.warp().unwrap().points.clone();
+                        for pt in &mut positions {
+                            pt.x += key * 15.;
+                        }
+                        kasane_core::WarpKeyform {
+                            keys: vec![key],
+                            positions,
+                            ..Default::default()
+                        }
+                    })
+                    .collect(),
+            }
+        };
+        let sb = SceneBinding {
             id: make_id(0x0006, t),
-            target_id: tid,
             axes: vec![BindingAxis {
                 parameter_id: out_params[0].clone(),
-                keys: vec![-1.0, 0.0, 1.0],
+                keys: vec![-1., 0., 1.],
             }],
-            ..Default::default()
+            track,
         };
-        for &key in &[-1.0f32, 0.0, 1.0] {
-            let mut kf = SceneKeyform {
-                keys: vec![key],
-                ..Default::default()
-            };
-            if t == 1 {
-                kf.rotation = tfm_rot.rotation;
-                kf.rotation.angle = key * 25.0;
-                kf.rotation.scale = 1.0 + key * 0.1;
-            } else {
-                kf.positions = tfm_warp.points.clone();
-                for pt in &mut kf.positions {
-                    pt.x += key * 15.0;
-                }
-            }
-            sb.keyforms.push(kf);
-        }
         assert!(doc.create_scene_binding(sb).status.is_ok());
     }
 

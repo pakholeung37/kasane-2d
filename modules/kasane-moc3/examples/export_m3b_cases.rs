@@ -176,7 +176,7 @@ fn sample_parameters_mao(doc: &Document) -> Vec<Vec<f32>> {
             if let Some(b) = doc.binding_for_scene(target) {
                 normal.extend(b.axes.iter().map(|a| a.parameter_id.as_str()));
             }
-            target = &transform.parent_id;
+            target = transform.parent();
         }
         dependencies.sort();
         dependencies.dedup();
@@ -265,7 +265,7 @@ fn document_samples(doc: &Document, samples: &[Vec<f32>]) -> serde_json::Value {
                         },
                         "positions": d.positions.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>(),
                         "uvs": d.uvs.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>(),
-                        "indices": d.indices,
+                        "indices": d.indices.as_ref(),
                         "mask_indices": d.masks.iter().map(|id| mesh_slots[id.as_str()]).collect::<Vec<_>>(),
                         "multiply_color": d.multiply_color,
                         "screen_color": d.screen_color,

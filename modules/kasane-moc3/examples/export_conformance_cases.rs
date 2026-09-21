@@ -1,3 +1,4 @@
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
@@ -5,7 +6,7 @@ use std::path::PathBuf;
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform,
-    Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Transform, TransformKind, Vec2,
+    Parameter, Part, RotationPose, SceneBinding, Transform, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::encode_moc3;
@@ -412,16 +413,18 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
         id: rot_id.clone(),
         runtime_id: "Rot_Parent".to_string(),
         name: "Rot Parent".to_string(),
-        part_id: part_id.clone(),
-        parent_id: String::new(),
-        kind: TransformKind::Rotation,
-        rotation: RotationPose {
-            origin: Vec2::new(271.0, 193.0).into(),
-            angle: 0.0,
-            scale: 1.0,
-            reflect_x: false,
-            reflect_y: false,
-        },
+        part_id: kasane_core::PartId::optional(part_id.clone()),
+        parent_id: kasane_core::TransformId::optional(String::new()),
+        data: TransformData::Rotation(RotationTransform {
+            base_angle: 0.0,
+            pose: RotationPose {
+                origin: Vec2::new(271.0, 193.0).into(),
+                angle: 0.0,
+                scale: 1.0,
+                reflect_x: false,
+                reflect_y: false,
+            },
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(rot).status.is_ok());
@@ -431,18 +434,21 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
         id: warp_id.clone(),
         runtime_id: "Warp_Child".to_string(),
         name: "Warp Child".to_string(),
-        part_id: part_id.clone(),
-        parent_id: rot_id.clone(),
-        kind: TransformKind::Warp,
-        rows: 2,
-        columns: 2,
-        quad: true,
-        points: Vec::new(),
+        part_id: kasane_core::PartId::optional(part_id.clone()),
+        parent_id: kasane_core::TransformId::optional(rot_id.clone()),
+        data: TransformData::Warp(WarpTransform {
+            rows: 2,
+            columns: 2,
+            quad: true,
+            points: Vec::new(),
+        }),
         ..Default::default()
     };
     for r in 0..=2 {
         for c in 0..=2 {
-            warp.points
+            warp.warp_mut()
+                .unwrap()
+                .points
                 .push(Vec2::new(c as f32 * 40.0 - 40.0, r as f32 * 40.0 - 40.0));
         }
     }
@@ -481,46 +487,48 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
     assert!(doc
         .create_scene_binding(SceneBinding {
             id: sid(60),
-            target_id: rot_id,
             axes: vec![BindingAxis {
                 parameter_id: p_id,
                 keys: vec![-1.0, 0.0, 1.0],
             }],
-            keyforms: vec![
-                SceneKeyform {
-                    keys: vec![-1.0],
-                    rotation: RotationPose {
-                        origin: Vec2::new(271.0, 193.0).into(),
-                        angle: -30.0,
-                        scale: 0.8,
-                        reflect_x: false,
-                        reflect_y: false,
+            track: kasane_core::SceneTrack::Rotation {
+                target_id: (rot_id).into(),
+                keyforms: vec![
+                    kasane_core::RotationKeyform {
+                        keys: vec![-1.0],
+                        rotation: RotationPose {
+                            origin: Vec2::new(271.0, 193.0).into(),
+                            angle: -30.0,
+                            scale: 0.8,
+                            reflect_x: false,
+                            reflect_y: false,
+                        },
+                        ..Default::default()
                     },
-                    ..Default::default()
-                },
-                SceneKeyform {
-                    keys: vec![0.0],
-                    rotation: RotationPose {
-                        origin: Vec2::new(271.0, 193.0).into(),
-                        angle: 0.0,
-                        scale: 1.0,
-                        reflect_x: false,
-                        reflect_y: false,
+                    kasane_core::RotationKeyform {
+                        keys: vec![0.0],
+                        rotation: RotationPose {
+                            origin: Vec2::new(271.0, 193.0).into(),
+                            angle: 0.0,
+                            scale: 1.0,
+                            reflect_x: false,
+                            reflect_y: false,
+                        },
+                        ..Default::default()
                     },
-                    ..Default::default()
-                },
-                SceneKeyform {
-                    keys: vec![1.0],
-                    rotation: RotationPose {
-                        origin: Vec2::new(271.0, 193.0).into(),
-                        angle: 30.0,
-                        scale: 1.2,
-                        reflect_x: false,
-                        reflect_y: false,
+                    kasane_core::RotationKeyform {
+                        keys: vec![1.0],
+                        rotation: RotationPose {
+                            origin: Vec2::new(271.0, 193.0).into(),
+                            angle: 30.0,
+                            scale: 1.2,
+                            reflect_x: false,
+                            reflect_y: false,
+                        },
+                        ..Default::default()
                     },
-                    ..Default::default()
-                },
-            ],
+                ]
+            }
         })
         .status
         .is_ok());
@@ -569,8 +577,8 @@ fn export_case(
                 },
                 masks: d.masks,
                 positions: d.positions,
-                uvs: d.uvs,
-                indices: d.indices,
+                uvs: d.uvs.to_vec(),
+                indices: d.indices.to_vec(),
                 opacity: d.opacity,
                 multiply_color: d.multiply_color,
                 screen_color: d.screen_color,

@@ -1,3 +1,5 @@
+use kasane_core::{PartKeyform, RotationKeyform, SceneTrack, WarpKeyform};
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 mod common;
 use common::purism::*;
 
@@ -7,7 +9,7 @@ use std::os::raw::c_void;
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame, PreviewValues};
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform,
-    Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Transform, TransformKind, Vec2,
+    Parameter, Part, RotationPose, SceneBinding, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::{encode_moc3, Moc3Artifact};
@@ -491,38 +493,43 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
         id: sid(3),
         runtime_id: "RootTransform".to_string(),
         name: "root_tfm".to_string(),
-        part_id: sid(1),
-        kind: if warp_root {
-            TransformKind::Warp
-        } else {
-            TransformKind::Rotation
-        },
-        rotation: RotationPose {
-            origin: Vec2::new(312.0, 207.0).into(),
-            angle: 13.0,
-            scale: 1.17,
-            reflect_x: true,
-            reflect_y: false,
-        },
-        base_angle: 7.0,
-        rows: 2,
-        columns: 2,
-        quad,
-        points: vec![
-            Vec2::new(100.0, 390.0),
-            Vec2::new(290.0, 380.0),
-            Vec2::new(500.0, 370.0),
-            Vec2::new(90.0, 215.0),
-            Vec2::new(300.0, 200.0),
-            Vec2::new(520.0, 195.0),
-            Vec2::new(70.0, 40.0),
-            Vec2::new(305.0, 35.0),
-            Vec2::new(530.0, 20.0),
-        ],
+        part_id: kasane_core::PartId::optional(sid(1)),
         appearance: Appearance {
             opacity: 0.83,
             multiply: [0.9, 0.8, 0.95],
             screen: [0.1, 0.2, 0.05],
+        },
+        data: match if warp_root {
+            TransformKind::Warp
+        } else {
+            TransformKind::Rotation
+        } {
+            TransformKind::Warp => TransformData::Warp(WarpTransform {
+                rows: 2,
+                columns: 2,
+                quad,
+                points: vec![
+                    Vec2::new(100.0, 390.0),
+                    Vec2::new(290.0, 380.0),
+                    Vec2::new(500.0, 370.0),
+                    Vec2::new(90.0, 215.0),
+                    Vec2::new(300.0, 200.0),
+                    Vec2::new(520.0, 195.0),
+                    Vec2::new(70.0, 40.0),
+                    Vec2::new(305.0, 35.0),
+                    Vec2::new(530.0, 20.0),
+                ],
+            }),
+            TransformKind::Rotation => TransformData::Rotation(RotationTransform {
+                base_angle: 7.0,
+                pose: RotationPose {
+                    origin: Vec2::new(312.0, 207.0).into(),
+                    angle: 13.0,
+                    scale: 1.17,
+                    reflect_x: true,
+                    reflect_y: false,
+                },
+            }),
         },
         ..Default::default()
     };
@@ -532,76 +539,107 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
         id: sid(4),
         runtime_id: "ChildTransform".to_string(),
         name: "child_tfm".to_string(),
-        parent_id: root.id.clone(),
-        part_id: sid(2),
-        kind: if warp_root {
-            TransformKind::Rotation
-        } else {
-            TransformKind::Warp
-        },
-        rotation: RotationPose {
-            origin: Vec2::new(0.37, 0.63).into(),
-            angle: -24.0,
-            scale: 0.86,
-            reflect_x: false,
-            reflect_y: true,
-        },
-        base_angle: -9.0,
-        rows: 2,
-        columns: 2,
-        quad,
-        points: vec![
-            Vec2::new(-1.0, -1.0),
-            Vec2::new(0.1, -1.1),
-            Vec2::new(1.2, -1.0),
-            Vec2::new(-1.1, 0.0),
-            Vec2::new(0.15, 0.2),
-            Vec2::new(1.3, 0.1),
-            Vec2::new(-0.9, 1.2),
-            Vec2::new(0.0, 1.1),
-            Vec2::new(1.1, 1.4),
-        ],
+        parent_id: kasane_core::TransformId::optional(root.id.clone()),
+        part_id: kasane_core::PartId::optional(sid(2)),
         appearance: Appearance {
             opacity: 0.77,
             multiply: [0.8, 1.0, 0.9],
             screen: [0.05, 0.1, 0.2],
+        },
+        data: match if warp_root {
+            TransformKind::Rotation
+        } else {
+            TransformKind::Warp
+        } {
+            TransformKind::Warp => TransformData::Warp(WarpTransform {
+                rows: 2,
+                columns: 2,
+                quad,
+                points: vec![
+                    Vec2::new(-1.0, -1.0),
+                    Vec2::new(0.1, -1.1),
+                    Vec2::new(1.2, -1.0),
+                    Vec2::new(-1.1, 0.0),
+                    Vec2::new(0.15, 0.2),
+                    Vec2::new(1.3, 0.1),
+                    Vec2::new(-0.9, 1.2),
+                    Vec2::new(0.0, 1.1),
+                    Vec2::new(1.1, 1.4),
+                ],
+            }),
+            TransformKind::Rotation => TransformData::Rotation(RotationTransform {
+                base_angle: -9.0,
+                pose: RotationPose {
+                    origin: Vec2::new(0.37, 0.63).into(),
+                    angle: -24.0,
+                    scale: 0.86,
+                    reflect_x: false,
+                    reflect_y: true,
+                },
+            }),
         },
         ..Default::default()
     };
     assert!(doc.create_transform(child.clone()).status.is_ok());
 
     for t in [&root, &child] {
-        let mut b = SceneBinding {
-            id: sid(if t.id == root.id { 5 } else { 6 }),
-            target_id: t.id.clone(),
-            axes: vec![BindingAxis {
-                parameter_id: id(6),
-                keys: vec![-1.0, 0.0, 1.0],
-            }],
-            keyforms: Vec::new(),
+        let track = match &t.data {
+            TransformData::Warp(w) => SceneTrack::Warp {
+                target_id: t.id.clone().into(),
+                keyforms: [-1.0f32, 0.0, 1.0]
+                    .into_iter()
+                    .map(|key| {
+                        let mut positions = w.points.clone();
+                        for (i, p) in positions.iter_mut().enumerate() {
+                            p.x += key
+                                * (i % 3) as f32
+                                * if t.parent_id.is_none() { 7.0 } else { 0.09 };
+                            p.y += key
+                                * (i / 3) as f32
+                                * if t.parent_id.is_none() { 3.0 } else { 0.03 };
+                        }
+                        let mut appearance = t.appearance;
+                        appearance.opacity += key * 0.05;
+                        WarpKeyform {
+                            keys: vec![key],
+                            positions,
+                            appearance,
+                        }
+                    })
+                    .collect(),
+            },
+            TransformData::Rotation(r) => SceneTrack::Rotation {
+                target_id: t.id.clone().into(),
+                keyforms: [-1.0f32, 0.0, 1.0]
+                    .into_iter()
+                    .map(|key| {
+                        let mut rotation = r.pose;
+                        rotation.angle += key * 17.0;
+                        rotation.scale += key * 0.13;
+                        rotation.origin.x +=
+                            key as f64 * if t.parent_id.is_none() { 11.0 } else { 0.07 };
+                        let mut appearance = t.appearance;
+                        appearance.opacity += key * 0.05;
+                        RotationKeyform {
+                            keys: vec![key],
+                            rotation,
+                            appearance,
+                        }
+                    })
+                    .collect(),
+            },
         };
-        for &key in &[-1.0f32, 0.0, 1.0] {
-            let mut f = SceneKeyform {
-                keys: vec![key],
-                rotation: t.rotation,
-                positions: Vec::new(),
-                appearance: t.appearance,
-                draw_order: 0.0,
-            };
-            f.rotation.angle += key * 17.0;
-            f.rotation.scale += key * 0.13;
-            f.rotation.origin.x += key as f64 * if t.parent_id.is_empty() { 11.0 } else { 0.07 };
-            f.appearance.opacity += key * 0.05;
-            if t.kind == TransformKind::Warp {
-                f.positions = t.points.clone();
-                for (i, p) in f.positions.iter_mut().enumerate() {
-                    p.x += key * (i % 3) as f32 * if t.parent_id.is_empty() { 7.0 } else { 0.09 };
-                    p.y += key * (i / 3) as f32 * if t.parent_id.is_empty() { 3.0 } else { 0.03 };
-                }
-            }
-            b.keyforms.push(f);
-        }
-        assert!(doc.create_scene_binding(b).status.is_ok());
+        assert!(doc
+            .create_scene_binding(SceneBinding {
+                id: sid(if t.id == root.id { 5 } else { 6 }),
+                axes: vec![BindingAxis {
+                    parameter_id: id(6),
+                    keys: vec![-1.0, 0.0, 1.0]
+                }],
+                track,
+            })
+            .status
+            .is_ok());
     }
 
     let mut mesh = doc.get_mesh(&id(4)).unwrap().clone();
@@ -634,19 +672,25 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
 
     let mut part_binding = SceneBinding {
         id: sid(7),
-        target_id: sid(1),
         axes: vec![BindingAxis {
             parameter_id: id(6),
             keys: vec![-1.0, 0.0, 1.0],
         }],
-        keyforms: Vec::new(),
+        track: SceneTrack::Part {
+            target_id: (sid(1)).into(),
+            keyforms: Vec::new(),
+        },
     };
     for &key in &[-1.0f32, 0.0, 1.0] {
-        part_binding.keyforms.push(SceneKeyform {
-            keys: vec![key],
-            draw_order: key * 20.0 + 20.0,
-            ..Default::default()
-        });
+        part_binding
+            .track
+            .part_keyforms_mut()
+            .unwrap()
+            .push(PartKeyform {
+                keys: vec![key],
+                draw_order: key * 20.0 + 20.0,
+                ..Default::default()
+            });
     }
     assert!(doc.create_scene_binding(part_binding).status.is_ok());
 

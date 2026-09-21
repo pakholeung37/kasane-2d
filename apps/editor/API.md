@@ -210,3 +210,26 @@ Position/parameter changes still evaluate the complete dynamic dependency chain,
 including Glue, masks and nested offscreens. This does not rely on `changed_meshes`
 as a complete dependency list. Render mesh reuse compares static buffer identity
 and texture identity instead of scanning UV/index arrays on each update.
+
+### Typed scene sources
+
+Rust `Transform` now owns `TransformData::Warp(WarpTransform)` or
+`TransformData::Rotation(RotationTransform)`. Warp owns its grid and points;
+Rotation owns its base angle and precise rotation pose. Transform parent and Part
+references are `Option<TransformId>` and `Option<PartId>`; missing parents use `None`.
+
+`SceneBinding` owns a `SceneTrack::{Warp, Rotation, Part}`. Each variant owns a typed
+target reference and a homogeneous keyform vector. `set_scene_keyform` accepts the
+matching `SceneKeyform` variant and rejects mismatches without changing the document.
+Bindings still validate referenced objects, grid dimensions, complete key combinations,
+and canonical ordering. Part track ordering remains the Offscreen mapping slot order.
+
+Project JSON and Godot dictionaries keep their existing flat representation. These
+boundaries select the typed variant from the transform tag or binding target. Legacy
+fields unrelated to that variant are ignored on input and emitted with neutral values
+on output. Godot callers may omit rotation fields for Warp, grid fields for Rotation,
+and unrelated Scene keyform fields. Warp row/column counts must be integers.
+Rotation origins retain `f64` precision throughout the document and project codec.
+
+This migration does not add batch import construction or general edit transactions;
+existing History limits and unsupported-edit barriers remain in effect.

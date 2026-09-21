@@ -399,11 +399,11 @@ struct TransformSource {
 impl From<&Transform> for TransformSource {
     fn from(t: &Transform) -> Self {
         Self {
-            kind: t.kind,
-            rows: t.rows as usize,
-            columns: t.columns as usize,
-            quad: t.quad,
-            base_angle: t.base_angle,
+            kind: t.kind(),
+            rows: t.warp().map_or(0, |w| w.rows as usize),
+            columns: t.warp().map_or(0, |w| w.columns as usize),
+            quad: t.warp().is_some_and(|w| w.quad),
+            base_angle: t.rotation().map_or(0.0, |r| r.base_angle),
         }
     }
 }
@@ -704,7 +704,7 @@ fn evaluate_into(
             if s.enabled {
                 order = 0.0;
                 for k in 0..s.indices.len() {
-                    order += b.keyforms[s.indices[k]].draw_order * s.weights[k];
+                    order += b.track.sample(s.indices[k]).draw_order * s.weights[k];
                 }
             }
         }
@@ -733,36 +733,39 @@ fn evaluate_into(
         state.points.clear();
         state = TransformState {
             source: t.into(),
-            pose: t.rotation.into(),
+            pose: t.rotation().map(|r| r.pose).unwrap_or_default().into(),
             points: state.points,
             appearance: t.appearance,
             inherited_scale: 1.0,
-            enabled: t.enabled && (t.part_id.is_empty() || enabled_parts[&t.part_id]),
+            enabled: t.enabled && (t.part_id.is_none() || enabled_parts[t.part()]),
         };
-        points.clone_from(&t.points);
+        points.clear();
+        if let Some(w) = t.warp() {
+            points.extend_from_slice(&w.points);
+        }
         let b = doc.binding_for_scene(id);
         let selection = b.map(|binding| select(doc, values, &binding.axes, selection_workspace));
 
         if let Some(sel) = selection {
             state.enabled &= sel.enabled;
         }
-        if !t.parent_id.is_empty() {
-            state.enabled &= transforms[prepared.transform_slots[&t.parent_id]].enabled;
+        if !t.parent_id.is_none() {
+            state.enabled &= transforms[prepared.transform_slots[t.parent()]].enabled;
         }
 
         if state.enabled {
             if let Some(b_ref) = b {
                 let sel = selection.as_ref().unwrap();
-                state.appearance = blend_appearance(sel, |i| b_ref.keyforms[i].appearance);
-                if t.kind == TransformKind::Rotation {
+                state.appearance = blend_appearance(sel, |i| b_ref.track.sample(i).appearance);
+                if t.kind() == TransformKind::Rotation {
                     state.pose = RuntimeRotationPose::default();
                     state.pose.scale = 0.0;
-                    let first = b_ref.keyforms[sel.indices[0]].rotation;
+                    let first = b_ref.track.sample(sel.indices[0]).rotation;
                     state.pose.reflect_x = first.reflect_x;
                     state.pose.reflect_y = first.reflect_y;
                     for k in 0..sel.indices.len() {
-                        let p = b_ref.keyforms[sel.indices[k]].rotation;
-                        let origin = match to_parent_origin(doc, &t.parent_id, p.origin) {
+                        let p = b_ref.track.sample(sel.indices[k]).rotation;
+                        let origin = match to_parent_origin(doc, t.parent(), p.origin) {
                             Ok(orig) => orig,
                             Err(s) => return s,
                         };
@@ -774,17 +777,17 @@ fn evaluate_into(
                     }
                 }
             }
-            if t.kind == TransformKind::Warp {
+            if t.kind() == TransformKind::Warp {
                 let sel_ref = selection.unwrap_or(default_selection());
                 let blended = blend_positions(
                     doc,
-                    &t.parent_id,
+                    t.parent(),
                     sel_ref,
                     |i| {
                         if let Some(b_ref) = b {
-                            &b_ref.keyforms[i].positions
+                            b_ref.track.sample(i).positions
                         } else {
-                            &t.points
+                            &t.warp().unwrap().points
                         }
                     },
                     points,
@@ -794,17 +797,18 @@ fn evaluate_into(
                     Err(s) => return s,
                 }
             } else if b.is_none() {
-                let origin = match to_parent_origin(doc, &t.parent_id, t.rotation.origin) {
-                    Ok(orig) => orig,
-                    Err(s) => return s,
-                };
+                let origin =
+                    match to_parent_origin(doc, t.parent(), t.rotation().unwrap().pose.origin) {
+                        Ok(orig) => orig,
+                        Err(s) => return s,
+                    };
                 state.pose.origin = origin;
             }
 
             let bs_list = doc.blend_bindings_for_target(id);
             if !bs_list.is_empty() {
                 for bs in bs_list {
-                    match (&bs.keyforms, t.kind) {
+                    match (&bs.keyforms, t.kind()) {
                         (DeltaKeyforms::Warp(ref forms), TransformKind::Warp) => {
                             let selection = evaluate_blend_binding(doc, values, bs);
                             let has_multiply =
@@ -815,7 +819,7 @@ fn evaluate_into(
                                 if kf_idx < forms.len() {
                                     let f = &forms[kf_idx];
                                     for (p, dp) in points.iter_mut().zip(&f.points) {
-                                        if t.parent_id.is_empty() {
+                                        if t.parent_id.is_none() {
                                             let ppu = doc.canvas().pixels_per_unit;
                                             p.x += (dp.x / ppu) * eff_w;
                                             p.y += (-dp.y / ppu) * eff_w;
@@ -854,7 +858,7 @@ fn evaluate_into(
                                 if kf_idx < forms.len() {
                                     let f = &forms[kf_idx];
                                     if let Some(d_orig) = f.origin {
-                                        if t.parent_id.is_empty() {
+                                        if t.parent_id.is_none() {
                                             let ppu = doc.canvas().pixels_per_unit;
                                             state.pose.origin.x += (d_orig.x / ppu) * eff_w;
                                             state.pose.origin.y += (-d_orig.y / ppu) * eff_w;
@@ -893,7 +897,7 @@ fn evaluate_into(
                     }
                 }
 
-                if t.kind == TransformKind::Rotation {
+                if t.kind() == TransformKind::Rotation {
                     state.pose.angle = state.pose.angle.clamp(-3600.0, 3600.0);
                     state.pose.scale = state.pose.scale.clamp(0.0001, 100.0);
                 }
@@ -904,16 +908,16 @@ fn evaluate_into(
                 }
             }
 
-            state.inherited_scale = if t.kind == TransformKind::Rotation {
+            state.inherited_scale = if t.kind() == TransformKind::Rotation {
                 state.pose.scale
             } else {
                 1.0
             };
 
-            if !t.parent_id.is_empty() {
-                let parent = &transforms[prepared.transform_slots[&t.parent_id]];
+            if !t.parent_id.is_none() {
+                let parent = &transforms[prepared.transform_slots[t.parent()]];
                 inherit_appearance(&mut state.appearance, &parent.appearance);
-                if t.kind == TransformKind::Warp {
+                if t.kind() == TransformKind::Warp {
                     for p in points.iter_mut() {
                         let q = parent.point(PsmVec2::new(p.x, p.y));
                         *p = Vec2::new(q.x, q.y);
@@ -1259,7 +1263,7 @@ fn evaluate_into(
                     for k in 0..s.indices.len() {
                         let kf_idx = s.indices[k];
                         let w = s.weights[k];
-                        let index = match os.keyform_index(kf_idx, Some(b.keyforms.len())) {
+                        let index = match os.keyform_index(kf_idx, Some(b.track.len())) {
                             Ok(index) => index,
                             Err(status) => return status,
                         };

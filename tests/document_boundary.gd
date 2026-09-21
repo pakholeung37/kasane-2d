@@ -162,10 +162,22 @@ func run():
     rotation.kind = 1
     rotation.points = []
     check(clone.write_transform(rotation).ok, "create nested Rotation")
+    var typed_warp = warp.duplicate(true)
+    typed_warp.erase("rotation")
+    typed_warp.erase("base_angle")
+    check(clone.write_transform(typed_warp, true).ok, "Warp requires no rotation-only fields")
+    var typed_rotation = rotation.duplicate(true)
+    for key in ["rows", "columns", "quad", "points"]:
+        typed_rotation.erase(key)
+    check(clone.write_transform(typed_rotation, true).ok, "Rotation requires no Warp-only fields")
+    var invalid_grid = typed_warp.duplicate(true)
+    invalid_grid.rows = 1.5
+    check(not clone.write_transform(invalid_grid, true).ok, "Fractional Warp dimensions are rejected")
+
     var properties = {"part_id":part_id,"deformer_id":rotation_id,"appearance":appearance,"draw_order":9,"blend_mode":2,"enabled":true,"double_sided":true,"inverted_mask":true,"masks":[]}
     check(clone.set_mesh_properties(MESH, properties).ok, "mesh drawing properties and formal parent")
     check(clone.create_parameter(param).ok, "formal binding parameter")
-    var form_a = {"keys":[-1],"positions":[],"rotation":pose,"appearance":appearance,"draw_order":0}
+    var form_a = {"keys":[-1],"rotation":pose,"appearance":appearance}
     var form_b = form_a.duplicate(true)
     form_b.keys = [1]
     form_b.rotation.angle = -23

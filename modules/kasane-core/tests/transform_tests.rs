@@ -1,8 +1,9 @@
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 
 use kasane_core::{
     evaluate_frame, Appearance, Canvas, Document, DrawableFrame, ImageAsset, Mesh, Part,
-    RotationPose, Transform, TransformKind, Vec2,
+    RotationPose, Transform, Vec2,
 };
 
 fn id(n: i32) -> String {
@@ -49,22 +50,23 @@ fn test_hierarchical_transforms_and_warp() {
         id: id(4),
         runtime_id: "RootRot".to_string(),
         name: "Root Rotation".to_string(),
-        part_id: id(3),
-        parent_id: String::new(),
-        kind: TransformKind::Rotation,
-        base_angle: 0.0,
-        rotation: RotationPose {
-            origin: Vec2::new(320.0, 240.0).into(),
-            angle: 0.0,
-            scale: 1.0,
-            reflect_x: false,
-            reflect_y: false,
-        },
+        part_id: kasane_core::PartId::optional(id(3)),
+        parent_id: kasane_core::TransformId::optional(String::new()),
         appearance: Appearance {
             opacity: 1.0,
             multiply: [1.0, 1.0, 1.0],
             screen: [0.0, 0.0, 0.0],
         },
+        data: TransformData::Rotation(RotationTransform {
+            base_angle: 0.0,
+            pose: RotationPose {
+                origin: Vec2::new(320.0, 240.0).into(),
+                angle: 0.0,
+                scale: 1.0,
+                reflect_x: false,
+                reflect_y: false,
+            },
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(root.clone()).status.is_ok());
@@ -74,28 +76,29 @@ fn test_hierarchical_transforms_and_warp() {
         id: id(5),
         runtime_id: "ChildWarp".to_string(),
         name: "Child Warp".to_string(),
-        part_id: id(3),
-        parent_id: id(4),
-        kind: TransformKind::Warp,
-        rows: 2,
-        columns: 2,
-        quad: true,
-        points: vec![
-            Vec2::new(-50.0, -50.0),
-            Vec2::new(0.0, -50.0),
-            Vec2::new(50.0, -50.0),
-            Vec2::new(-50.0, 0.0),
-            Vec2::new(0.0, 0.0),
-            Vec2::new(50.0, 0.0),
-            Vec2::new(-50.0, 50.0),
-            Vec2::new(0.0, 50.0),
-            Vec2::new(50.0, 50.0),
-        ],
+        part_id: kasane_core::PartId::optional(id(3)),
+        parent_id: kasane_core::TransformId::optional(id(4)),
         appearance: Appearance {
             opacity: 0.8,
             multiply: [0.9, 0.9, 0.9],
             screen: [0.1, 0.0, 0.0],
         },
+        data: TransformData::Warp(WarpTransform {
+            rows: 2,
+            columns: 2,
+            quad: true,
+            points: vec![
+                Vec2::new(-50.0, -50.0),
+                Vec2::new(0.0, -50.0),
+                Vec2::new(50.0, -50.0),
+                Vec2::new(-50.0, 0.0),
+                Vec2::new(0.0, 0.0),
+                Vec2::new(50.0, 0.0),
+                Vec2::new(-50.0, 50.0),
+                Vec2::new(0.0, 50.0),
+                Vec2::new(50.0, 50.0),
+            ],
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(child.clone()).status.is_ok());
@@ -141,7 +144,7 @@ fn test_hierarchical_transforms_and_warp() {
     assert!((d.opacity - 0.8).abs() < 1e-4);
 
     // Rotate root transform 90 degrees
-    root.rotation.angle = 90.0;
+    root.rotation_mut().unwrap().pose.angle = 90.0;
     assert!(doc.replace_transform(root).status.is_ok());
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
     let d2 = &frame.drawables[0];

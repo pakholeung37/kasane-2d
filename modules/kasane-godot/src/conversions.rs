@@ -2,8 +2,9 @@ use godot::builtin::{VarArray, VarDictionary};
 use godot::prelude::*;
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, Mesh, MeshBinding, MeshKeyform, Parameter, Part,
-    RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind, Vec2,
+    RotationPose, SceneBinding, Status, Transform, TransformKind, Vec2,
 };
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use kasane_project::store::ProjectResult;
 
 pub type Dictionary = VarDictionary;
@@ -547,52 +548,47 @@ pub fn transform_from_dict(d: &Dictionary) -> Result<Transform, Status> {
     if !kind_val.is_finite() || (kind_val != 0.0 && kind_val != 1.0) {
         return Err(fail());
     }
-    let kind = if kind_val == 0.0 {
-        TransformKind::Warp
-    } else {
-        TransformKind::Rotation
-    };
-    let base_angle = get_f32(d, "base_angle")?;
-    let rows_val = get_f32(d, "rows")?;
-    let cols_val = get_f32(d, "columns")?;
-    if !rows_val.is_finite() || !cols_val.is_finite() || rows_val < 0.0 || cols_val < 0.0 {
-        return Err(fail());
-    }
-    let rows = rows_val as usize;
-    let columns = cols_val as usize;
-    let quad = get_bool(d, "quad")?;
-    let enabled = get_bool(d, "enabled")?;
-    let rot_d = get_dict(d, "rotation")?;
-    let rotation = pose_from_dict(&rot_d)?;
-    let app_d = get_dict(d, "appearance")?;
-    let appearance = appearance_from_dict(&app_d)?;
-
-    let raw_pts = get_array(d, "points")?;
-    let mut points = Vec::with_capacity(raw_pts.len());
-    for i in 0..raw_pts.len() {
-        let pair_val = raw_pts.at(i);
-        let xy = extract_floats(&pair_val)?;
-        if xy.len() != 2 {
+    let data = if kind_val == 0.0 {
+        let rows = get_f32(d, "rows")?;
+        let columns = get_f32(d, "columns")?;
+        if !rows.is_finite()
+            || !columns.is_finite()
+            || rows.fract() != 0.0
+            || columns.fract() != 0.0
+            || !(1.0..=1024.0).contains(&rows)
+            || !(1.0..=1024.0).contains(&columns)
+        {
             return Err(fail());
         }
-        points.push(Vec2::new(xy[0], xy[1]));
-    }
-
+        let mut points = Vec::new();
+        for pair in get_array(d, "points")?.iter_shared() {
+            let xy = extract_floats(&pair)?;
+            if xy.len() != 2 {
+                return Err(fail());
+            }
+            points.push(Vec2::new(xy[0], xy[1]));
+        }
+        TransformData::Warp(WarpTransform {
+            rows: rows as u32,
+            columns: columns as u32,
+            quad: get_bool(d, "quad")?,
+            points,
+        })
+    } else {
+        TransformData::Rotation(RotationTransform {
+            base_angle: get_f32(d, "base_angle")?,
+            pose: pose_from_dict(&get_dict(d, "rotation")?)?,
+        })
+    };
     Ok(Transform {
         id,
         runtime_id,
         name,
-        part_id,
-        parent_id,
-        kind,
-        base_angle,
-        rotation,
-        rows: rows as u32,
-        columns: columns as u32,
-        quad,
-        enabled,
-        points,
-        appearance,
+        part_id: kasane_core::PartId::optional(part_id),
+        parent_id: kasane_core::TransformId::optional(parent_id),
+        data,
+        enabled: get_bool(d, "enabled")?,
+        appearance: appearance_from_dict(&get_dict(d, "appearance")?)?,
     })
 }
 
@@ -601,22 +597,22 @@ pub fn dict_from_transform(t: &Transform) -> Dictionary {
     d.set("id", t.id.as_str());
     d.set("runtime_id", t.runtime_id.as_str());
     d.set("name", t.name.as_str());
-    d.set("part_id", t.part_id.as_str());
-    d.set("parent_id", t.parent_id.as_str());
-    let kind_int = match t.kind {
+    d.set("part_id", t.part());
+    d.set("parent_id", t.parent());
+    let kind_int = match t.kind() {
         TransformKind::Warp => 0,
         TransformKind::Rotation => 1,
     };
     d.set("kind", kind_int);
-    d.set("base_angle", t.base_angle);
-    let rot_d = dict_from_pose(&t.rotation);
+    d.set("base_angle", t.rotation().map_or(0.0, |r| r.base_angle));
+    let rot_d = dict_from_pose(&t.rotation().map(|r| r.pose).unwrap_or_default());
     d.set("rotation", &rot_d);
-    d.set("rows", t.rows as i64);
-    d.set("columns", t.columns as i64);
-    d.set("quad", t.quad);
+    d.set("rows", t.warp().map_or(1, |w| w.rows) as i64);
+    d.set("columns", t.warp().map_or(1, |w| w.columns) as i64);
+    d.set("quad", t.warp().is_none_or(|w| w.quad));
     d.set("enabled", t.enabled);
     let mut pts = Array::new();
-    for p in &t.points {
+    for p in t.warp().into_iter().flat_map(|w| w.points.iter()) {
         let mut pt = Array::new();
         pt.push(p.x);
         pt.push(p.y);
@@ -628,47 +624,104 @@ pub fn dict_from_transform(t: &Transform) -> Dictionary {
     d
 }
 
-pub fn scene_binding_from_dict(d: &Dictionary) -> Result<SceneBinding, Status> {
+pub fn scene_binding_from_dict(
+    d: &Dictionary,
+    doc: &kasane_core::Document,
+) -> Result<SceneBinding, Status> {
+    use kasane_core::{PartKeyform, RotationKeyform, SceneTrack, WarpKeyform};
+    let id = get_str(d, "id")?;
     let target_id = get_str(d, "target_id")?;
-    let mut copy = d.clone();
-    copy.set("mesh_id", target_id.as_str());
-    let mesh_b = binding_from_dict(&copy)?;
-    let raw_forms = get_array(d, "keyforms")?;
-
-    let mut keyforms = Vec::with_capacity(mesh_b.keyforms.len());
-    for i in 0..mesh_b.keyforms.len() {
-        let m = &mesh_b.keyforms[i];
-        let f_dict = raw_forms.at(i).try_to::<Dictionary>().map_err(|_| fail())?;
-        let rot_dict = get_dict(&f_dict, "rotation")?;
-        let rotation = pose_from_dict(&rot_dict)?;
-        keyforms.push(SceneKeyform {
-            keys: m.keys.clone(),
-            positions: m.positions.clone(),
-            appearance: m.appearance,
-            draw_order: m.draw_order.unwrap_or(0.0),
-            rotation,
+    let mut track = match doc.get_transform(&target_id).map(|t| t.kind()) {
+        Some(TransformKind::Warp) => SceneTrack::Warp {
+            target_id: target_id.clone().into(),
+            keyforms: Vec::new(),
+        },
+        Some(TransformKind::Rotation) => SceneTrack::Rotation {
+            target_id: target_id.clone().into(),
+            keyforms: Vec::new(),
+        },
+        None if doc.get_part(&target_id).is_some() => SceneTrack::Part {
+            target_id: target_id.clone().into(),
+            keyforms: Vec::new(),
+        },
+        None => return Err(Status::error("MISSING_OBJECT", target_id)),
+    };
+    let mut axes = Vec::new();
+    for a in get_array(d, "axes")?.iter_shared() {
+        let a = a.try_to::<Dictionary>().map_err(|_| fail())?;
+        axes.push(BindingAxis {
+            parameter_id: get_str(&a, "parameter_id")?,
+            keys: extract_floats(&a.get("keys").ok_or_else(fail)?)?,
         });
     }
-
-    Ok(SceneBinding {
-        id: mesh_b.id,
-        target_id,
-        axes: mesh_b.axes,
-        keyforms,
-    })
+    for f in get_array(d, "keyforms")?.iter_shared() {
+        let f = f.try_to::<Dictionary>().map_err(|_| fail())?;
+        let keys = extract_floats(&f.get("keys").ok_or_else(fail)?)?;
+        match &mut track {
+            SceneTrack::Warp { keyforms, .. } => {
+                let value = f.get("positions").ok_or_else(fail)?;
+                let positions = if let Ok(packed) = value.try_to::<PackedVector2Array>() {
+                    packed_to_vectors(&packed)
+                } else {
+                    let raw = value.try_to::<Array>().map_err(|_| fail())?;
+                    raw.iter_shared()
+                        .map(|v| {
+                            let xy = extract_floats(&v)?;
+                            if xy.len() != 2 {
+                                return Err(fail());
+                            }
+                            Ok(Vec2::new(xy[0], xy[1]))
+                        })
+                        .collect::<Result<Vec<_>, Status>>()?
+                };
+                let appearance = if f.contains_key("appearance") {
+                    appearance_from_dict(&get_dict(&f, "appearance")?)?
+                } else {
+                    Appearance::default()
+                };
+                keyforms.push(WarpKeyform {
+                    keys,
+                    positions,
+                    appearance,
+                });
+            }
+            SceneTrack::Rotation { keyforms, .. } => {
+                let rotation = pose_from_dict(&get_dict(&f, "rotation")?)?;
+                let appearance = if f.contains_key("appearance") {
+                    appearance_from_dict(&get_dict(&f, "appearance")?)?
+                } else {
+                    Appearance::default()
+                };
+                keyforms.push(RotationKeyform {
+                    keys,
+                    rotation,
+                    appearance,
+                });
+            }
+            SceneTrack::Part { keyforms, .. } => keyforms.push(PartKeyform {
+                keys,
+                draw_order: if f.contains_key("draw_order") {
+                    get_f32(&f, "draw_order")?
+                } else {
+                    0.0
+                },
+            }),
+        }
+    }
+    Ok(SceneBinding { id, axes, track })
 }
 
 pub fn dict_from_scene_binding(b: &SceneBinding) -> Dictionary {
     let mesh = MeshBinding {
         id: b.id.clone(),
-        mesh_id: b.target_id.clone(),
+        mesh_id: b.target_id().to_owned(),
         axes: b.axes.clone(),
         keyforms: b
-            .keyforms
-            .iter()
+            .track
+            .samples()
             .map(|f| MeshKeyform {
-                keys: f.keys.clone(),
-                positions: f.positions.clone(),
+                keys: f.keys.to_vec(),
+                positions: f.positions.to_vec(),
                 appearance: f.appearance,
                 draw_order: Some(f.draw_order),
             })
@@ -676,12 +729,12 @@ pub fn dict_from_scene_binding(b: &SceneBinding) -> Dictionary {
     };
     let mut d = dict_from_binding(&mesh);
     d.remove("mesh_id");
-    d.set("target_id", b.target_id.as_str());
+    d.set("target_id", b.target_id());
     let raw_forms = d.get("keyforms").unwrap().to::<Array>();
     let mut new_forms = Array::new();
     for i in 0..raw_forms.len() {
         let mut f = raw_forms.at(i).to::<Dictionary>();
-        let rot_d = dict_from_pose(&b.keyforms[i].rotation);
+        let rot_d = dict_from_pose(&b.track.sample(i).rotation);
         f.set("rotation", &rot_d);
         new_forms.push(&f);
     }

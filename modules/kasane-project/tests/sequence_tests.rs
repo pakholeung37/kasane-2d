@@ -1,9 +1,10 @@
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::{HashMap, HashSet};
 
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
     BindingAxis, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform, Parameter, Part, RotationPose,
-    Transform, TransformKind, Vec2, VertexPositionUpdate,
+    Transform, Vec2, VertexPositionUpdate,
 };
 use kasane_core::Document;
 use kasane_moc3::encode_moc3;
@@ -129,16 +130,18 @@ fn build_initial_document() -> (Document, Vec<String>) {
             id: rot_id.clone(),
             runtime_id: "RotTransform".to_string(),
             name: "Rot Transform".to_string(),
-            part_id: root_part.clone(),
-            parent_id: String::new(),
-            kind: TransformKind::Rotation,
-            rotation: RotationPose {
-                origin: Vec2::new(640.0, 360.0).into(),
-                angle: 0.0,
-                scale: 1.0,
-                reflect_x: false,
-                reflect_y: false,
-            },
+            part_id: kasane_core::PartId::optional(root_part.clone()),
+            parent_id: kasane_core::TransformId::optional(String::new()),
+            data: TransformData::Rotation(RotationTransform {
+                base_angle: 0.0,
+                pose: RotationPose {
+                    origin: Vec2::new(640.0, 360.0).into(),
+                    angle: 0.0,
+                    scale: 1.0,
+                    reflect_x: false,
+                    reflect_y: false,
+                }
+            }),
             ..Default::default()
         })
         .status
@@ -149,18 +152,21 @@ fn build_initial_document() -> (Document, Vec<String>) {
         id: warp_id.clone(),
         runtime_id: "WarpTransform".to_string(),
         name: "Warp Transform".to_string(),
-        part_id: root_part.clone(),
-        parent_id: rot_id.clone(),
-        kind: TransformKind::Warp,
-        rows: 2,
-        columns: 2,
-        quad: true,
-        points: Vec::new(),
+        part_id: kasane_core::PartId::optional(root_part.clone()),
+        parent_id: kasane_core::TransformId::optional(rot_id.clone()),
+        data: TransformData::Warp(WarpTransform {
+            rows: 2,
+            columns: 2,
+            quad: true,
+            points: Vec::new(),
+        }),
         ..Default::default()
     };
     for r in 0..=2 {
         for c in 0..=2 {
-            warp.points
+            warp.warp_mut()
+                .unwrap()
+                .points
                 .push(Vec2::new(c as f32 * 50.0 - 50.0, r as f32 * 50.0 - 50.0));
         }
     }
@@ -273,30 +279,29 @@ fn verify_invariants(doc: &Document, label: &str) {
             .get_transform(t_id)
             .expect("transform in order must exist");
         assert!(
-            doc.get_part(&t.part_id).is_some(),
+            doc.get_part(t.part()).is_some(),
             "Transform {t_id} points to missing part {}",
-            t.part_id
+            t.part()
         );
-        if !t.parent_id.is_empty() {
+        if !t.parent_id.is_none() {
             assert!(
-                doc.get_transform(&t.parent_id).is_some(),
+                doc.get_transform(t.parent()).is_some(),
                 "Transform {t_id} points to missing transform parent {}",
-                t.parent_id
+                t.parent()
             );
         }
         let mut visited = HashSet::new();
         visited.insert(t_id.clone());
-        let mut curr = t.parent_id.clone();
+        let mut curr = t.parent();
         while !curr.is_empty() {
             assert!(
-                visited.insert(curr.clone()),
-                "Cycle detected in transform hierarchy starting from {t_id} at {label}"
+                visited.insert(curr.to_owned()),
+                "Cycle in transform hierarchy at {label}"
             );
             curr = doc
-                .get_transform(&curr)
+                .get_transform(curr)
                 .expect("transform ancestor must exist")
-                .parent_id
-                .clone();
+                .parent();
         }
     }
 
@@ -379,9 +384,9 @@ fn verify_invariants(doc: &Document, label: &str) {
             .get_scene_binding(sb_id)
             .expect("scene binding in order must exist");
         assert!(
-            doc.get_transform(&sb.target_id).is_some() || doc.get_part(&sb.target_id).is_some(),
+            doc.get_transform(sb.target_id()).is_some() || doc.get_part(sb.target_id()).is_some(),
             "Scene binding target {} missing",
-            sb.target_id
+            sb.target_id()
         );
         let mut total_keys = 1usize;
         for axis in &sb.axes {
@@ -397,7 +402,7 @@ fn verify_invariants(doc: &Document, label: &str) {
             }
         }
         assert_eq!(
-            sb.keyforms.len(),
+            sb.track.len(),
             total_keys,
             "Scene binding keyform count mismatch"
         );
@@ -519,17 +524,22 @@ fn test_random_operation_sequences_and_invariants() {
                         id: new_id,
                         runtime_id: format!("Rot_{id_counter}"),
                         name: format!("Rot {id_counter}"),
-                        part_id,
-                        parent_id,
-                        kind: TransformKind::Rotation,
-                        rotation: RotationPose {
-                            origin: Vec2::new(rng.next_f32(0.0, 600.0), rng.next_f32(0.0, 400.0))
+                        part_id: kasane_core::PartId::optional(part_id),
+                        parent_id: kasane_core::TransformId::optional(parent_id),
+                        data: TransformData::Rotation(RotationTransform {
+                            base_angle: 0.0,
+                            pose: RotationPose {
+                                origin: Vec2::new(
+                                    rng.next_f32(0.0, 600.0),
+                                    rng.next_f32(0.0, 400.0),
+                                )
                                 .into(),
-                            angle: rng.next_f32(-45.0, 45.0),
-                            scale: rng.next_f32(0.8, 1.2),
-                            reflect_x: false,
-                            reflect_y: false,
-                        },
+                                angle: rng.next_f32(-45.0, 45.0),
+                                scale: rng.next_f32(0.8, 1.2),
+                                reflect_x: false,
+                                reflect_y: false,
+                            },
+                        }),
                         ..Default::default()
                     });
                     edit_result = Some(res.status);
@@ -540,9 +550,9 @@ fn test_random_operation_sequences_and_invariants() {
                         let t_id = rng.choose(doc.transform_order()).cloned().unwrap();
                         let mut t = doc.get_transform(&t_id).unwrap().clone();
                         t.parent_id = if rng.next_bool() && doc.transform_order().len() > 1 {
-                            rng.choose(doc.transform_order()).cloned().unwrap()
+                            Some(rng.choose(doc.transform_order()).cloned().unwrap().into())
                         } else {
-                            String::new()
+                            None
                         };
                         let res = doc.replace_transform(t);
                         edit_result = Some(res.status);
@@ -741,7 +751,7 @@ fn test_random_operation_sequences_and_invariants() {
                         let t0 = doc.transform_order()[0].clone();
                         let _t1 = doc.transform_order()[1].clone();
                         let mut t = doc.get_transform(&t0).unwrap().clone();
-                        t.parent_id = t0.clone(); // self-cycle
+                        t.parent_id = Some(t0.clone().into()); // self-cycle
                         let res = doc.replace_transform(t);
                         assert!(
                             !res.status.is_ok(),
@@ -755,12 +765,27 @@ fn test_random_operation_sequences_and_invariants() {
                     if !doc.scene_binding_order().is_empty() {
                         let sb_id = rng.choose(doc.scene_binding_order()).cloned().unwrap();
                         let sb = doc.get_scene_binding(&sb_id).unwrap();
-                        let mut f = sb.keyforms[0].clone();
-                        f.appearance.opacity = 2.5; // Invalid!
+                        let f = match &sb.track {
+                            kasane_core::SceneTrack::Warp { keyforms, .. } => {
+                                let mut f = keyforms[0].clone();
+                                f.appearance.opacity = 2.5;
+                                kasane_core::SceneKeyform::Warp(f)
+                            }
+                            kasane_core::SceneTrack::Rotation { keyforms, .. } => {
+                                let mut f = keyforms[0].clone();
+                                f.appearance.opacity = 2.5;
+                                kasane_core::SceneKeyform::Rotation(f)
+                            }
+                            kasane_core::SceneTrack::Part { keyforms, .. } => {
+                                let mut f = keyforms[0].clone();
+                                f.draw_order = f32::NAN;
+                                kasane_core::SceneKeyform::Part(f)
+                            }
+                        };
                         let res = doc.set_scene_keyform(&sb_id, f);
                         assert!(
                             !res.status.is_ok(),
-                            "Invalid opacity 2.5 must be rejected at {label}"
+                            "Invalid keyform must be rejected at {label}"
                         );
                         edit_result = Some(res.status);
                     }

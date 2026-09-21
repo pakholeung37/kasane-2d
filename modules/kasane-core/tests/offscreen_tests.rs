@@ -1,10 +1,11 @@
+use kasane_core::{PartKeyform, SceneTrack};
 use std::collections::HashMap;
 
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
     BindingAxis, BlendShapeBinding, BlendShapeKeyTable, BlendShapeTargetKind, Canvas,
     DeltaKeyforms, DeltaOffscreenKeyform, ImageAsset, Mesh, Offscreen, OffscreenKeyform, Parameter,
-    ParameterKind, Part, SceneBinding, SceneKeyform, Vec2,
+    ParameterKind, Part, SceneBinding, Vec2,
 };
 use kasane_core::Document;
 
@@ -171,23 +172,25 @@ fn test_offscreen_evaluation_and_blendshapes() {
     // SceneBinding for Part id(3) with 2 keyforms driven by ParamFade
     let sb = SceneBinding {
         id: id(30),
-        target_id: id(3),
         axes: vec![BindingAxis {
             parameter_id: id(20),
             keys: vec![0.0, 1.0],
         }],
-        keyforms: vec![
-            SceneKeyform {
-                keys: vec![0.0],
-                draw_order: 0.0,
-                ..Default::default()
-            },
-            SceneKeyform {
-                keys: vec![1.0],
-                draw_order: 10.0,
-                ..Default::default()
-            },
-        ],
+        track: SceneTrack::Part {
+            target_id: (id(3)).into(),
+            keyforms: vec![
+                PartKeyform {
+                    keys: vec![0.0],
+                    draw_order: 0.0,
+                    ..Default::default()
+                },
+                PartKeyform {
+                    keys: vec![1.0],
+                    draw_order: 10.0,
+                    ..Default::default()
+                },
+            ],
+        },
     };
     assert!(doc.create_scene_binding(sb).status.is_ok());
 
@@ -526,21 +529,23 @@ fn part_binding_edits_preserve_offscreen_mapping_invariants() {
         .is_ok());
     let binding = SceneBinding {
         id: id(30),
-        target_id: id(3),
         axes: vec![BindingAxis {
             parameter_id: id(20),
             keys: vec![-1.0, 1.0],
         }],
-        keyforms: vec![
-            SceneKeyform {
-                keys: vec![-1.0],
-                ..Default::default()
-            },
-            SceneKeyform {
-                keys: vec![1.0],
-                ..Default::default()
-            },
-        ],
+        track: SceneTrack::Part {
+            target_id: (id(3)).into(),
+            keyforms: vec![
+                PartKeyform {
+                    keys: vec![-1.0],
+                    ..Default::default()
+                },
+                PartKeyform {
+                    keys: vec![1.0],
+                    ..Default::default()
+                },
+            ],
+        },
     };
     assert!(doc.create_scene_binding(binding.clone()).status.is_ok());
     assert!(doc
@@ -560,7 +565,7 @@ fn part_binding_edits_preserve_offscreen_mapping_invariants() {
     let revision = doc.revision();
     let mut shorter = binding.clone();
     shorter.axes[0].keys.pop();
-    shorter.keyforms.pop();
+    shorter.track.part_keyforms_mut().unwrap().pop();
     assert!(!doc.replace_scene_binding(shorter).status.is_ok());
     assert_eq!(doc.revision(), revision);
     assert_eq!(doc.get_scene_binding(&id(30)), Some(&binding));
@@ -580,21 +585,23 @@ fn joint_part_offscreen_edit_is_atomic_and_snapshot_safe() {
         .is_ok());
     let mut binding = SceneBinding {
         id: id(30),
-        target_id: id(3),
         axes: vec![BindingAxis {
             parameter_id: id(20),
             keys: vec![-1.0, 1.0],
         }],
-        keyforms: vec![
-            SceneKeyform {
-                keys: vec![-1.0],
-                ..Default::default()
-            },
-            SceneKeyform {
-                keys: vec![1.0],
-                ..Default::default()
-            },
-        ],
+        track: SceneTrack::Part {
+            target_id: (id(3)).into(),
+            keyforms: vec![
+                PartKeyform {
+                    keys: vec![-1.0],
+                    ..Default::default()
+                },
+                PartKeyform {
+                    keys: vec![1.0],
+                    ..Default::default()
+                },
+            ],
+        },
     };
     assert!(doc.create_scene_binding(binding.clone()).status.is_ok());
     let mut os = Offscreen {
@@ -617,9 +624,9 @@ fn joint_part_offscreen_edit_is_atomic_and_snapshot_safe() {
     assert!(doc.create_offscreen(os.clone()).status.is_ok());
     let before = doc.clone();
     binding.axes[0].keys.insert(1, 0.0);
-    binding.keyforms.insert(
+    binding.track.part_keyforms_mut().unwrap().insert(
         1,
-        SceneKeyform {
+        PartKeyform {
             keys: vec![0.0],
             ..Default::default()
         },

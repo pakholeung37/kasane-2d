@@ -132,7 +132,7 @@ pub fn resolved_groups(doc: &Document) -> Vec<DrawOrderGroup> {
             } else {
                 add(doc.get_part(id).unwrap().draw_order);
                 if let Some(binding) = doc.binding_for_scene(id) {
-                    for form in &binding.keyforms {
+                    for form in binding.track.samples() {
                         add(form.draw_order);
                     }
                 }

@@ -1,15 +1,16 @@
 use godot::prelude::*;
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 
 use kasane_core::evaluation::DrawableFrame;
 use kasane_core::preview::PreviewState;
-use std::cell::RefCell;
-use std::sync::Arc;
 use kasane_core::types::{
     BlendMode, Canvas, ChangeKind, EditResult, ImageAsset, Mesh, RotationPose, Status, Transform,
     TransformKind, Vec2, VertexPositionUpdate,
 };
 use kasane_project::store::DocumentSession;
+use std::cell::RefCell;
+use std::sync::Arc;
 
 use crate::conversions::{
     binding_from_dict, dict_from_binding, dict_from_mesh_properties, dict_from_parameter,
@@ -121,7 +122,9 @@ impl KasaneDocumentBridge {
             return out;
         }
 
-        self.preview.get_mut().retain_parameters(self.session.document());
+        self.preview
+            .get_mut()
+            .retain_parameters(self.session.document());
 
         if edit.changes.kind != ChangeKind::None {
             self.base_mut().emit_signal("changed", &[out.to_variant()]);
@@ -789,23 +792,20 @@ impl KasaneDocumentBridge {
             id: id.to_string(),
             runtime_id: format!("Rotation_{}", id.to_string().replace('-', "")),
             name: name.to_string(),
-            part_id: String::new(),
-            parent_id: String::new(),
-            kind: TransformKind::Rotation,
-            base_angle: 0.0,
-            rotation: RotationPose {
-                origin: Vec2::new(center.x, center.y).into(),
-                angle: angle as f32,
-                scale: 1.0,
-                reflect_x: false,
-                reflect_y: false,
-            },
-            rows: 0,
-            columns: 0,
-            quad: false,
+            part_id: kasane_core::PartId::optional(String::new()),
+            parent_id: kasane_core::TransformId::optional(String::new()),
             enabled: true,
-            points: Vec::new(),
             appearance: Default::default(),
+            data: TransformData::Rotation(RotationTransform {
+                base_angle: 0.0,
+                pose: RotationPose {
+                    origin: Vec2::new(center.x, center.y).into(),
+                    angle: angle as f32,
+                    scale: 1.0,
+                    reflect_x: false,
+                    reflect_y: false,
+                },
+            }),
         };
         let edit = self.session.document_mut().create_transform(t);
         self.apply(edit)
@@ -840,17 +840,16 @@ impl KasaneDocumentBridge {
             id: id.to_string(),
             runtime_id: format!("Warp_{}", id.to_string().replace('-', "")),
             name: name.to_string(),
-            part_id: String::new(),
-            parent_id: String::new(),
-            kind: TransformKind::Warp,
-            base_angle: 0.0,
-            rotation: Default::default(),
-            rows: rows as u32,
-            columns: columns as u32,
-            quad: false,
+            part_id: kasane_core::PartId::optional(String::new()),
+            parent_id: kasane_core::TransformId::optional(String::new()),
             enabled: true,
-            points,
             appearance: Default::default(),
+            data: TransformData::Warp(WarpTransform {
+                rows: rows as u32,
+                columns: columns as u32,
+                quad: false,
+                points,
+            }),
         };
         let edit = self.session.document_mut().create_transform(t);
         self.apply(edit)
@@ -864,12 +863,12 @@ impl KasaneDocumentBridge {
         let Some(old) = self.session.document().get_transform(&id.to_string()) else {
             return error_dict("MISSING_TRANSFORM", &id.to_string());
         };
-        if old.kind != TransformKind::Rotation {
+        if old.kind() != TransformKind::Rotation {
             return error_dict("WRONG_TRANSFORM_KIND", "Use a Rotation deformer.");
         }
         let mut t = old.clone();
-        t.rotation.origin = Vec2::new(center.x, center.y).into();
-        t.rotation.angle = angle as f32;
+        t.rotation_mut().unwrap().pose.origin = Vec2::new(center.x, center.y).into();
+        t.rotation_mut().unwrap().pose.angle = angle as f32;
         let edit = self.session.document_mut().replace_transform(t);
         self.apply(edit)
     }
@@ -882,11 +881,11 @@ impl KasaneDocumentBridge {
         let Some(old) = self.session.document().get_transform(&id.to_string()) else {
             return error_dict("MISSING_TRANSFORM", &id.to_string());
         };
-        if old.kind != TransformKind::Warp {
+        if old.kind() != TransformKind::Warp {
             return error_dict("WRONG_TRANSFORM_KIND", "Use a Warp deformer.");
         }
         let mut t = old.clone();
-        t.points = packed_to_vectors(&points);
+        t.warp_mut().unwrap().points = packed_to_vectors(&points);
         let edit = self.session.document_mut().replace_transform(t);
         self.apply(edit)
     }
@@ -900,7 +899,7 @@ impl KasaneDocumentBridge {
         let parent_str = parent.to_string();
         if let Some(old) = self.session.document().get_transform(&id_str) {
             let mut t = old.clone();
-            t.parent_id = parent_str;
+            t.parent_id = kasane_core::TransformId::optional(parent_str);
             let edit = self.session.document_mut().replace_transform(t);
             return self.apply(edit);
         }
@@ -928,7 +927,7 @@ impl KasaneDocumentBridge {
         }
         if let Some(old) = self.session.document().get_transform(&id_str) {
             let mut t = old.clone();
-            t.part_id = parent_str;
+            t.part_id = kasane_core::PartId::optional(parent_str);
             let edit = self.session.document_mut().replace_transform(t);
             return self.apply(edit);
         }
@@ -952,32 +951,38 @@ impl KasaneDocumentBridge {
         let mut out = status_to_dict(&Status::ok());
         out.set("id", &id);
         out.set("name", t.name.as_str());
-        let kind_str = match t.kind {
+        let kind_str = match t.kind() {
             TransformKind::Rotation => "rotation",
             TransformKind::Warp => "warp",
         };
         out.set("kind", kind_str);
-        out.set("deform_parent", t.parent_id.as_str());
-        out.set("organization_parent", t.part_id.as_str());
+        out.set("deform_parent", t.parent());
+        out.set("organization_parent", t.part());
         out.set("revision", self.session.document().revision() as i64);
-        if t.kind == TransformKind::Rotation {
+        if t.kind() == TransformKind::Rotation {
             out.set(
                 "center",
-                Vector2::new(t.rotation.origin.x as f32, t.rotation.origin.y as f32),
+                Vector2::new(
+                    t.rotation().unwrap().pose.origin.x as f32,
+                    t.rotation().unwrap().pose.origin.y as f32,
+                ),
             );
-            out.set("angle_degrees", t.rotation.angle as f64);
+            out.set("angle_degrees", t.rotation().unwrap().pose.angle as f64);
         } else {
             out.set(
                 "origin",
                 Vector2::new(
-                    t.points.first().map(|p| p.x).unwrap_or(0.0),
-                    t.points.first().map(|p| p.y).unwrap_or(0.0),
+                    t.warp().unwrap().points.first().map(|p| p.x).unwrap_or(0.0),
+                    t.warp().unwrap().points.first().map(|p| p.y).unwrap_or(0.0),
                 ),
             );
             out.set("size", Vector2::ZERO);
-            out.set("columns", t.columns as i64);
-            out.set("rows", t.rows as i64);
-            out.set("control_points", &vectors_to_packed(&t.points));
+            out.set("columns", t.warp().unwrap().columns as i64);
+            out.set("rows", t.warp().unwrap().rows as i64);
+            out.set(
+                "control_points",
+                &vectors_to_packed(&t.warp().unwrap().points),
+            );
         }
         out
     }
@@ -1220,11 +1225,10 @@ impl KasaneDocumentBridge {
     }
 
     fn commit_preview(&mut self, next: HashMap<String, f32>) -> Result<(), Status> {
-        let changed = self.preview.get_mut().replace(
-            self.session.document(),
-            self.generation,
-            next,
-        )?;
+        let changed =
+            self.preview
+                .get_mut()
+                .replace(self.session.document(), self.generation, next)?;
         if changed {
             self.base_mut().emit_signal("preview_changed", &[]);
         }
@@ -1279,7 +1283,10 @@ impl KasaneDocumentBridge {
         out.set("revision", self.session.document().revision() as i64);
         out.set("evaluated_revision", frame.source_revision as i64);
         out.set("preview_revision", self.preview.borrow().revision() as i64);
-        out.set("evaluation_count", self.preview.borrow().evaluation_count() as i64);
+        out.set(
+            "evaluation_count",
+            self.preview.borrow().evaluation_count() as i64,
+        );
         out
     }
 
@@ -1335,7 +1342,7 @@ impl KasaneDocumentBridge {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        let binding = match scene_binding_from_dict(&binding) {
+        let binding = match scene_binding_from_dict(&binding, self.session.document()) {
             Ok(value) => value,
             Err(status) => return status_to_dict(&status),
         };
@@ -1362,7 +1369,7 @@ impl KasaneDocumentBridge {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        let b = match scene_binding_from_dict(&data) {
+        let b = match scene_binding_from_dict(&data, self.session.document()) {
             Ok(b) => b,
             Err(s) => return status_to_dict(&s),
         };

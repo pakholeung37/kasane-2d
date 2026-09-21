@@ -1,3 +1,5 @@
+use kasane_core::{PartKeyform, SceneTrack};
+use kasane_core::{TransformData, WarpTransform};
 mod common;
 use common::purism::*;
 
@@ -221,21 +223,22 @@ fn create_m1_fixture_doc() -> Document {
         id: id(4),
         runtime_id: "WarpRoot".to_string(),
         name: "WarpRoot".to_string(),
-        kind: TransformKind::Warp,
-        rows: 2,
-        columns: 2,
-        quad: true,
-        points: vec![
-            Vec2::new(120.0, 40.0),
-            Vec2::new(320.0, 40.0),
-            Vec2::new(520.0, 40.0),
-            Vec2::new(120.0, 240.0),
-            Vec2::new(320.0, 240.0),
-            Vec2::new(520.0, 240.0),
-            Vec2::new(120.0, 440.0),
-            Vec2::new(320.0, 440.0),
-            Vec2::new(520.0, 440.0),
-        ],
+        data: TransformData::Warp(WarpTransform {
+            rows: 2,
+            columns: 2,
+            quad: true,
+            points: vec![
+                Vec2::new(120.0, 40.0),
+                Vec2::new(320.0, 40.0),
+                Vec2::new(520.0, 40.0),
+                Vec2::new(120.0, 240.0),
+                Vec2::new(320.0, 240.0),
+                Vec2::new(520.0, 240.0),
+                Vec2::new(120.0, 440.0),
+                Vec2::new(320.0, 440.0),
+                Vec2::new(520.0, 440.0),
+            ],
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(warp).status.is_ok());
@@ -523,7 +526,7 @@ fn test_import_external_v50() {
     let rot = doc.get_transform(rot_id).unwrap();
     assert_eq!(rot.runtime_id, "RotChild");
     let warp_id = &doc.sorted_transforms()[0];
-    assert_eq!(rot.parent_id, *warp_id);
+    assert_eq!(rot.parent(), warp_id);
 
     // Verify explicit v50 multiply and screen colors are preserved
     let mesh = doc.get_mesh(&doc.mesh_order()[0]).unwrap();
@@ -573,7 +576,7 @@ fn test_post_import_editing() {
 
     let warp_id = doc.sorted_transforms()[0].clone();
     let mut warp = doc.get_transform(&warp_id).unwrap().clone();
-    warp.points[0].x += 30.0;
+    warp.warp_mut().unwrap().points[0].x += 30.0;
     assert!(doc.replace_transform(warp).status.is_ok());
     let warp_edited = exported_drawable(&doc);
     assert_ne!(
@@ -811,7 +814,7 @@ fn assert_runtime_matches(doc: &Document, bytes: &[u8], samples: &[Vec<f32>]) {
                 original.get_drawable(&d.runtime_id).unwrap(),
                 exported.get_drawable(&d.runtime_id).unwrap(),
             ] {
-                assert_eq!(d.indices, actual.indices);
+                assert_eq!(d.indices.as_ref(), actual.indices.as_slice());
                 assert_eq!(d.uvs.len(), actual.uvs.len());
                 for (a, b) in d.uvs.iter().zip(&actual.uvs) {
                     near(a.x, b.x, 1.0);
@@ -891,11 +894,11 @@ fn rotation_edit_rebinding_and_deletion_change_export() {
     let rot_id = doc
         .sorted_transforms()
         .into_iter()
-        .find(|id| doc.get_transform(id).unwrap().kind == TransformKind::Rotation)
+        .find(|id| doc.get_transform(id).unwrap().kind() == TransformKind::Rotation)
         .unwrap();
     let mut rot = doc.get_transform(&rot_id).unwrap().clone();
-    rot.rotation.angle = 23.0;
-    rot.rotation.scale = 0.7;
+    rot.rotation_mut().unwrap().pose.angle = 23.0;
+    rot.rotation_mut().unwrap().pose.scale = 0.7;
     assert!(doc.replace_transform(rot).status.is_ok());
     let changed = encode_moc3(&doc).unwrap();
     let mut before = PurismModelInstance::new(&bytes);
@@ -972,13 +975,13 @@ fn test_import_mao_full() {
     let warps_count = doc
         .transform_order()
         .iter()
-        .filter(|t| doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Warp)
+        .filter(|t| doc.get_transform(t).unwrap().kind() == kasane_core::types::TransformKind::Warp)
         .count();
     let rotations_count = doc
         .transform_order()
         .iter()
         .filter(|t| {
-            doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Rotation
+            doc.get_transform(t).unwrap().kind() == kasane_core::types::TransformKind::Rotation
         })
         .count();
     assert_eq!(warps_count, 116, "Warps count");
@@ -2276,7 +2279,7 @@ fn decoder_rejects_blendshape_references_without_core_guard() {
 
 #[test]
 fn joint_offscreen_edit_survives_project_and_moc3_roundtrip() {
-    use kasane_core::{Offscreen, OffscreenKeyform, Part, SceneBinding, SceneKeyform};
+    use kasane_core::{Offscreen, OffscreenKeyform, Part, SceneBinding};
     let mut doc = create_m1_fixture_doc();
     let mut asset = doc.get_asset(&id(2)).unwrap().clone();
     asset.sha256 = "0".repeat(64);
@@ -2300,21 +2303,23 @@ fn joint_offscreen_edit_survives_project_and_moc3_roundtrip() {
         .is_ok());
     let mut binding = SceneBinding {
         id: id(912),
-        target_id: id(910),
         axes: vec![BindingAxis {
             parameter_id: id(911),
             keys: vec![-1.0, 1.0],
         }],
-        keyforms: vec![
-            SceneKeyform {
-                keys: vec![-1.0],
-                ..Default::default()
-            },
-            SceneKeyform {
-                keys: vec![1.0],
-                ..Default::default()
-            },
-        ],
+        track: SceneTrack::Part {
+            target_id: (id(910)).into(),
+            keyforms: vec![
+                PartKeyform {
+                    keys: vec![-1.0],
+                    ..Default::default()
+                },
+                PartKeyform {
+                    keys: vec![1.0],
+                    ..Default::default()
+                },
+            ],
+        },
     };
     assert!(doc.create_scene_binding(binding.clone()).status.is_ok());
     let mut os = Offscreen {
@@ -2331,9 +2336,9 @@ fn joint_offscreen_edit_survives_project_and_moc3_roundtrip() {
     };
     assert!(doc.create_offscreen(os.clone()).status.is_ok());
     binding.axes[0].keys.insert(1, 0.0);
-    binding.keyforms.insert(
+    binding.track.part_keyforms_mut().unwrap().insert(
         1,
-        SceneKeyform {
+        PartKeyform {
             keys: vec![0.0],
             ..Default::default()
         },

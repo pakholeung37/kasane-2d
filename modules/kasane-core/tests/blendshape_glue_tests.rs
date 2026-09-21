@@ -4,6 +4,7 @@ use kasane_core::types::{
     Parameter, ParameterKind, Vec2,
 };
 use kasane_core::Document;
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 
 const DOC: &str = "11111111-1111-4111-8111-111111111111";
 const ASSET: &str = "22222222-2222-4222-8222-222222222222";
@@ -497,17 +498,19 @@ fn parameter_edits_validate_blend_dependents_atomically() {
 
 #[test]
 fn warp_grid_edits_validate_blend_dependents_atomically() {
-    use kasane_core::types::{DeltaWarpKeyform, Transform, TransformKind};
+    use kasane_core::types::{DeltaWarpKeyform, Transform};
     let mut doc = create_base_document();
     let warp_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     assert!(doc
         .create_transform(Transform {
             id: warp_id.into(),
             runtime_id: "Warp".into(),
-            kind: TransformKind::Warp,
-            rows: 1,
-            columns: 1,
-            points: vec![Vec2::default(); 4],
+            data: TransformData::Warp(WarpTransform {
+                rows: 1,
+                columns: 1,
+                quad: true,
+                points: vec![Vec2::default(); 4]
+            }),
             ..Default::default()
         })
         .status
@@ -540,12 +543,12 @@ fn warp_grid_edits_validate_blend_dependents_atomically() {
         .is_ok());
     let before = doc.clone();
     let mut warp = doc.get_transform(warp_id).unwrap().clone();
-    warp.rows = 2;
-    warp.points = vec![Vec2::default(); 6];
+    warp.warp_mut().unwrap().rows = 2;
+    warp.warp_mut().unwrap().points = vec![Vec2::default(); 6];
     assert!(!doc.replace_transform(warp).status.is_ok());
     assert!(doc.same_content(&before));
     let mut warp = doc.get_transform(warp_id).unwrap().clone();
-    warp.kind = TransformKind::Rotation;
+    warp.data = TransformData::Rotation(RotationTransform::default());
     assert!(!doc.replace_transform(warp).status.is_ok());
     assert!(doc.same_content(&before));
 }

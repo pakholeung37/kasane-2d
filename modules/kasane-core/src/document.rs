@@ -699,45 +699,58 @@ impl Document {
         if !valid_uuid(&t.id) || t.runtime_id.is_empty() {
             return Status::error("INVALID_ID", &t.id);
         }
+        if t.parent_id
+            .as_ref()
+            .is_some_and(|id| !valid_uuid(id.as_str()))
+            || t.part_id
+                .as_ref()
+                .is_some_and(|id| !valid_uuid(id.as_str()))
+        {
+            return Status::error("INVALID_ID", &t.id);
+        }
         for (id, other) in &self.transforms {
             if id != &t.id && other.runtime_id == t.runtime_id {
                 return Status::error("DUPLICATE_RUNTIME_ID", &t.id);
             }
         }
-        if !t.part_id.is_empty() && !self.parts.contains_key(&t.part_id) {
+        if !t.part_id.is_none() && !self.parts.contains_key(t.part()) {
             return Status::error("MISSING_PART", format!("{}.part_id", t.id));
         }
         let mut seen = HashSet::new();
         seen.insert(t.id.clone());
-        let mut parent_id = t.parent_id.clone();
+        let mut parent_id = t.parent().to_owned();
         while !parent_id.is_empty() {
             if !seen.insert(parent_id.clone()) {
                 return Status::error("RELATION_CYCLE", format!("{}.parent_id", t.id));
             }
             match self.get_transform(&parent_id) {
-                Some(parent) => parent_id = parent.parent_id.clone(),
+                Some(parent) => parent_id = parent.parent().to_owned(),
                 None => return Status::error("MISSING_TRANSFORM", parent_id),
             }
         }
-        if !t.base_angle.is_finite() {
-            return Status::error("NON_FINITE", format!("{}.base_angle", t.id));
-        }
-        let s = pose_valid(&t.rotation, &t.id);
-        if !s.is_ok() {
-            return s;
-        }
-        if t.kind == TransformKind::Warp {
-            if t.rows == 0
-                || t.columns == 0
-                || t.rows > 1024
-                || t.columns > 1024
-                || t.points.len() != ((t.rows + 1) * (t.columns + 1)) as usize
-            {
-                return Status::error("INVALID_WARP_GRID", &t.id);
+        match &t.data {
+            crate::TransformData::Rotation(r) => {
+                if !r.base_angle.is_finite() {
+                    return Status::error("NON_FINITE", format!("{}.base_angle", t.id));
+                }
+                let status = pose_valid(&r.pose, &t.id);
+                if !status.is_ok() {
+                    return status;
+                }
             }
-            let s = validate_positions(&t.points);
-            if !s.is_ok() {
-                return s;
+            crate::TransformData::Warp(w) => {
+                if w.rows == 0
+                    || w.columns == 0
+                    || w.rows > 1024
+                    || w.columns > 1024
+                    || w.points.len() != ((w.rows + 1) * (w.columns + 1)) as usize
+                {
+                    return Status::error("INVALID_WARP_GRID", &t.id);
+                }
+                let status = validate_positions(&w.points);
+                if !status.is_ok() {
+                    return status;
+                }
             }
         }
         validate_appearance(&t.appearance, &t.id)
@@ -776,7 +789,8 @@ impl Document {
         };
         if (self.binding_for_scene(&t.id).is_some()
             || !self.blend_bindings_for_target(&t.id).is_empty())
-            && (old.kind != t.kind || old.rows != t.rows || old.columns != t.columns)
+            && (old.kind() != t.kind()
+                || old.warp().map(|w| (w.rows, w.columns)) != t.warp().map(|w| (w.rows, w.columns)))
         {
             return self.failed(Status::error(
                 "KEYFORMS_REQUIRED",
@@ -807,7 +821,7 @@ impl Document {
                 return;
             }
             if let Some(t) = transforms.get(id) {
-                visit(&t.parent_id, transforms, seen, result);
+                visit(t.parent(), transforms, seen, result);
                 result.push(id.to_string());
             }
         }
@@ -1670,7 +1684,7 @@ impl Document {
             for id in &self.scene_binding_order {
                 lookup
                     .scene_bindings
-                    .insert(self.scene_bindings[id].target_id.clone(), id.clone());
+                    .insert(self.scene_bindings[id].target_id().to_owned(), id.clone());
             }
             for id in &self.blend_binding_order {
                 if let Some(binding) = self.blend_bindings.get(id) {
@@ -1927,14 +1941,14 @@ impl Document {
         if !valid_uuid(&b.id) {
             return Status::error("INVALID_ID", &b.id);
         }
-        let t = self.get_transform(&b.target_id);
-        let p = self.get_part(&b.target_id);
+        let t = self.get_transform(b.target_id());
+        let p = self.get_part(b.target_id());
         if t.is_none() && p.is_none() {
-            return Status::error("MISSING_OBJECT", &b.target_id);
+            return Status::error("MISSING_OBJECT", b.target_id());
         }
-        if let Some(old) = self.binding_for_scene(&b.target_id) {
+        if let Some(old) = self.binding_for_scene(b.target_id()) {
             if old.id != b.id {
-                return Status::error("BINDING_CONFLICT", &b.target_id);
+                return Status::error("BINDING_CONFLICT", b.target_id());
             }
         }
         if b.axes.is_empty() || b.axes.len() > 16 {
@@ -1967,39 +1981,62 @@ impl Document {
                 }
             }
         }
-        if total != b.keyforms.len() {
+        if total != b.track.len() {
             return Status::error("INCOMPLETE_KEYFORMS", &b.id);
         }
-        let mut ordered = vec![SceneKeyform::default(); total];
-        let mut occupied = vec![false; total];
-        for f in b.keyforms.drain(..) {
-            let expected_pos_len = if let Some(tr) = t {
-                if tr.kind == TransformKind::Warp {
-                    tr.points.len()
-                } else {
-                    0
+        let matches_target = match &b.track {
+            crate::SceneTrack::Warp { .. } => t.is_some_and(|t| t.kind() == TransformKind::Warp),
+            crate::SceneTrack::Rotation { .. } => {
+                t.is_some_and(|t| t.kind() == TransformKind::Rotation)
+            }
+            crate::SceneTrack::Part { .. } => p.is_some(),
+        };
+        if !matches_target {
+            return Status::error("INVALID_BINDING_TARGET", &b.id);
+        }
+        match &b.track {
+            crate::SceneTrack::Warp { keyforms, .. } => {
+                let point_count = t.unwrap().warp().unwrap().points.len();
+                for f in keyforms {
+                    if f.positions.len() != point_count {
+                        return Status::error("INVALID_LENGTH", &b.id);
+                    }
+                    let status = validate_positions(&f.positions);
+                    if !status.is_ok() {
+                        return status;
+                    }
+                    let status = validate_appearance(&f.appearance, &b.id);
+                    if !status.is_ok() {
+                        return status;
+                    }
                 }
-            } else {
-                0
-            };
-            if f.keys.len() != b.axes.len() || f.positions.len() != expected_pos_len {
+            }
+            crate::SceneTrack::Rotation { keyforms, .. } => {
+                for f in keyforms {
+                    let status = pose_valid(&f.rotation, &b.id);
+                    if !status.is_ok() {
+                        return status;
+                    }
+                    let status = validate_appearance(&f.appearance, &b.id);
+                    if !status.is_ok() {
+                        return status;
+                    }
+                }
+            }
+            crate::SceneTrack::Part { keyforms, .. } => {
+                for f in keyforms {
+                    let status = validate_draw_order(f.draw_order, &b.id);
+                    if !status.is_ok() {
+                        return status;
+                    }
+                }
+            }
+        }
+        let mut ordered = vec![0; total];
+        let mut occupied = vec![false; total];
+        for (source_slot, f) in b.track.samples().enumerate() {
+            if f.keys.len() != b.axes.len() {
                 return Status::error("INVALID_LENGTH", &b.id);
-            }
-            let s = validate_positions(&f.positions);
-            if !s.is_ok() {
-                return s;
-            }
-            let s = pose_valid(&f.rotation, &b.id);
-            if !s.is_ok() {
-                return s;
-            }
-            let s = validate_appearance(&f.appearance, &b.id);
-            if !s.is_ok() {
-                return s;
-            }
-            let s = validate_draw_order(f.draw_order, &b.id);
-            if !s.is_ok() {
-                return s;
             }
             let mut index = 0usize;
             let mut stride = 1usize;
@@ -2015,9 +2052,9 @@ impl Document {
                 return Status::error("DUPLICATE_KEYFORM", &b.id);
             }
             occupied[index] = true;
-            ordered[index] = f;
+            ordered[index] = source_slot;
         }
-        if let Some(os) = self.offscreen_for_part(&b.target_id) {
+        if let Some(os) = self.offscreen_for_part(b.target_id()) {
             if !os.part_keyform_indices.is_empty() && os.part_keyform_indices.len() != total {
                 return Status::error(
                     "INVALID_LENGTH",
@@ -2029,15 +2066,15 @@ impl Document {
             }
         }
         if let Some(previous) = self.get_scene_binding(&b.id) {
-            if previous.target_id != b.target_id {
-                if let Some(os) = self.offscreen_for_part(&previous.target_id) {
+            if previous.target_id() != b.target_id() {
+                if let Some(os) = self.offscreen_for_part(previous.target_id()) {
                     if !os.part_keyform_indices.is_empty() {
                         return Status::error("OBJECT_REFERENCED", &os.id);
                     }
                 }
             }
         }
-        b.keyforms = ordered;
+        b.track.reorder(&ordered);
         Status::ok()
     }
 
@@ -2053,7 +2090,7 @@ impl Document {
             return self.failed(s);
         }
         let id = b.id.clone();
-        let target = b.target_id.clone();
+        let target = b.target_id().to_owned();
         self.scene_bindings.insert(id.clone(), b);
         self.scene_binding_order.push(id.clone());
         let meshes = self.mesh_order.clone();
@@ -2065,7 +2102,7 @@ impl Document {
             return self.failed(Status::error("TRANSACTION_ACTIVE", &b.id));
         }
         let previous = match self.scene_bindings.get(&b.id) {
-            Some(old) => old.target_id.clone(),
+            Some(old) => old.target_id().to_owned(),
             None => return self.failed(Status::error("MISSING_BINDING", &b.id)),
         };
         let s = self.canonicalize_scene_binding(&mut b);
@@ -2073,7 +2110,7 @@ impl Document {
             return self.failed(s);
         }
         let id = b.id.clone();
-        let target = b.target_id.clone();
+        let target = b.target_id().to_owned();
         self.scene_bindings.insert(id.clone(), b);
         let meshes = self.mesh_order.clone();
         self.changed(ChangeKind::Structure, meshes, vec![id, target, previous])
@@ -2096,9 +2133,9 @@ impl Document {
         let Some(old_offscreen) = self.get_offscreen(&offscreen.id) else {
             return self.failed(Status::error("MISSING_OBJECT", &offscreen.id));
         };
-        if binding.target_id != old_binding.target_id
+        if binding.target_id() != old_binding.target_id()
             || offscreen.part_id != old_offscreen.part_id
-            || binding.target_id != offscreen.part_id
+            || binding.target_id() != offscreen.part_id
         {
             return self.failed(Status::error(
                 "INVALID_BINDING",
@@ -2107,7 +2144,7 @@ impl Document {
         }
         let objects = vec![
             binding.id.clone(),
-            binding.target_id.clone(),
+            binding.target_id().to_owned(),
             offscreen.id.clone(),
         ];
         let mut candidate = self.clone();
@@ -2132,10 +2169,9 @@ impl Document {
             Some(old) => old.clone(),
             None => return self.failed(Status::error("MISSING_BINDING", id)),
         };
-        let it = b.keyforms.iter_mut().find(|v| v.keys == f.keys);
-        match it {
-            Some(entry) => *entry = f,
-            None => return self.failed(Status::error("INVALID_KEY_COMBINATION", id)),
+        let status = b.track.replace(f);
+        if !status.is_ok() {
+            return self.failed(status);
         }
         self.replace_scene_binding(b)
     }
@@ -2454,7 +2490,7 @@ impl Document {
             }
             (BlendShapeTargetKind::Warp, DeltaKeyforms::Warp(forms)) => {
                 let warp = match self.get_transform(&b.target_id) {
-                    Some(w) if w.kind == TransformKind::Warp => w,
+                    Some(w) if w.kind() == TransformKind::Warp => w,
                     _ => {
                         return Status::error(
                             "MISSING_OBJECT",
@@ -2463,14 +2499,14 @@ impl Document {
                     }
                 };
                 for f in forms {
-                    if f.points.len() != warp.points.len() {
+                    if f.points.len() != warp.warp().unwrap().points.len() {
                         return Status::error(
                             "INVALID_LENGTH",
                             format!(
                                 "{}: delta points len {} != warp points len {}",
                                 b.id,
                                 f.points.len(),
-                                warp.points.len()
+                                warp.warp().unwrap().points.len()
                             ),
                         );
                     }
@@ -2505,7 +2541,7 @@ impl Document {
             }
             (BlendShapeTargetKind::Rotation, DeltaKeyforms::Rotation(forms)) => {
                 match self.get_transform(&b.target_id) {
-                    Some(r) if r.kind == TransformKind::Rotation => r,
+                    Some(r) if r.kind() == TransformKind::Rotation => r,
                     _ => {
                         return Status::error(
                             "MISSING_OBJECT",
@@ -2923,7 +2959,7 @@ impl Document {
         }
         let klen = self
             .binding_for_scene(&os.part_id)
-            .map_or(1, |binding| binding.keyforms.len());
+            .map_or(1, |binding| binding.track.len());
         if !os.part_keyform_indices.is_empty() && os.part_keyform_indices.len() != klen {
             return Status::error(
                 "INVALID_LENGTH",
@@ -3020,7 +3056,7 @@ impl Document {
             }
         }
         for (key, t) in &self.transforms {
-            if t.parent_id == id || t.part_id == id {
+            if t.parent() == id || t.part() == id {
                 refs.push(key.clone());
             }
         }
@@ -3035,7 +3071,7 @@ impl Document {
             }
         }
         for (key, b) in &self.scene_bindings {
-            let mut refers = b.target_id == id;
+            let mut refers = b.target_id() == id;
             for a in &b.axes {
                 refers |= a.parameter_id == id;
             }
@@ -3084,7 +3120,7 @@ impl Document {
                 || (!os.part_keyform_indices.is_empty()
                     && self
                         .get_scene_binding(id)
-                        .is_some_and(|b| b.target_id == os.part_id))
+                        .is_some_and(|b| b.target_id() == os.part_id))
             {
                 refs.push(key.clone());
             }

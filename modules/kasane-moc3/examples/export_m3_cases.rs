@@ -1,3 +1,4 @@
+use kasane_core::{TransformData, WarpTransform};
 use std::collections::HashMap;
 use std::env;
 use std::fs;
@@ -5,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use kasane_core::types::{
     Appearance, BindingAxis, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform, Parameter,
-    Transform, TransformKind, Vec2,
+    Transform, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::{encode_moc3, import_from_bare_moc3, import_from_model3_file};
@@ -54,20 +55,22 @@ fn create_m1_fixture_doc() -> Document {
         id: id(4),
         name: "HeadWarp".to_string(),
         runtime_id: "WarpHead".to_string(),
-        kind: TransformKind::Warp,
-        rows: 2,
-        columns: 2,
-        points: vec![
-            Vec2::new(120.0, 40.0),
-            Vec2::new(320.0, 40.0),
-            Vec2::new(520.0, 40.0),
-            Vec2::new(120.0, 240.0),
-            Vec2::new(320.0, 240.0),
-            Vec2::new(520.0, 240.0),
-            Vec2::new(120.0, 440.0),
-            Vec2::new(320.0, 440.0),
-            Vec2::new(520.0, 440.0),
-        ],
+        data: TransformData::Warp(WarpTransform {
+            rows: 2,
+            columns: 2,
+            quad: true,
+            points: vec![
+                Vec2::new(120.0, 40.0),
+                Vec2::new(320.0, 40.0),
+                Vec2::new(520.0, 40.0),
+                Vec2::new(120.0, 240.0),
+                Vec2::new(320.0, 240.0),
+                Vec2::new(520.0, 240.0),
+                Vec2::new(120.0, 440.0),
+                Vec2::new(320.0, 440.0),
+                Vec2::new(520.0, 440.0),
+            ],
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(warp).status.is_ok());
@@ -258,7 +261,7 @@ fn document_samples(doc: &Document, samples: &[Vec<f32>]) -> serde_json::Value {
             "blend_mode": match d.blend_mode { BlendMode::Normal => 0, BlendMode::Additive => 1, BlendMode::Multiplicative => 2 },
             "positions": d.positions.iter().map(|p| [p.x,p.y]).collect::<Vec<_>>(),
             "uvs": d.uvs.iter().map(|p| [p.x,p.y]).collect::<Vec<_>>(),
-            "indices": d.indices, "mask_indices": d.masks.iter().map(|id| mesh_slots[id.as_str()]).collect::<Vec<_>>(),
+            "indices": d.indices.as_ref(), "mask_indices": d.masks.iter().map(|id| mesh_slots[id.as_str()]).collect::<Vec<_>>(),
             "multiply_color": d.multiply_color, "screen_color": d.screen_color,
         })).collect::<Vec<_>>()
     }).collect();

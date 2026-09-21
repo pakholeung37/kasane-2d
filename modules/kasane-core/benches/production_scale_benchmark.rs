@@ -1,11 +1,11 @@
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 use std::hint::black_box;
 use std::time::Instant;
 
 use kasane_core::{
     BindingAxis, Canvas, Document, DrawableFrame, FrameEvaluator, ImageAsset, Mesh, MeshBinding,
-    MeshKeyform, Parameter, Part, RotationPose, Transform, TransformKind, Vec2, VertexId,
-    VertexPositionUpdate,
+    MeshKeyform, Parameter, Part, RotationPose, Transform, Vec2, VertexId, VertexPositionUpdate,
 };
 
 fn make_id(kind: u32, n: u32) -> String {
@@ -86,16 +86,18 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
             id: rot_l1.clone(),
             runtime_id: "Rot_L1".to_string(),
             name: "L1 Root Rotation".to_string(),
-            part_id: root_part.clone(),
-            parent_id: String::new(),
-            kind: TransformKind::Rotation,
-            rotation: RotationPose {
-                origin: Vec2::new(1920.0, 1080.0).into(),
-                angle: 0.0,
-                scale: 1.0,
-                reflect_x: false,
-                reflect_y: false,
-            },
+            part_id: kasane_core::PartId::optional(root_part.clone()),
+            parent_id: kasane_core::TransformId::optional(String::new()),
+            data: TransformData::Rotation(RotationTransform {
+                base_angle: 0.0,
+                pose: RotationPose {
+                    origin: Vec2::new(1920.0, 1080.0).into(),
+                    angle: 0.0,
+                    scale: 1.0,
+                    reflect_x: false,
+                    reflect_y: false,
+                }
+            }),
             ..Default::default()
         })
         .status
@@ -106,18 +108,19 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
         id: warp_l2.clone(),
         runtime_id: "Warp_L2".to_string(),
         name: "L2 Parent Warp".to_string(),
-        part_id: root_part.clone(),
-        parent_id: rot_l1.clone(),
-        kind: TransformKind::Warp,
-        rows: 3,
-        columns: 3,
-        quad: true,
-        points: Vec::new(),
+        part_id: kasane_core::PartId::optional(root_part.clone()),
+        parent_id: kasane_core::TransformId::optional(rot_l1.clone()),
+        data: TransformData::Warp(WarpTransform {
+            rows: 3,
+            columns: 3,
+            quad: true,
+            points: Vec::new(),
+        }),
         ..Default::default()
     };
     for r in 0..=3 {
         for c in 0..=3 {
-            tfm_warp_l2.points.push(Vec2::new(
+            tfm_warp_l2.warp_mut().unwrap().points.push(Vec2::new(
                 c as f32 * 100.0 - 150.0,
                 r as f32 * 100.0 - 150.0,
             ));
@@ -131,16 +134,18 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
             id: rot_l3.clone(),
             runtime_id: "Rot_L3".to_string(),
             name: "L3 Mid Rotation".to_string(),
-            part_id: root_part.clone(),
-            parent_id: warp_l2.clone(),
-            kind: TransformKind::Rotation,
-            rotation: RotationPose {
-                origin: Vec2::new(1920.0, 1080.0).into(),
-                angle: 0.0,
-                scale: 1.0,
-                reflect_x: false,
-                reflect_y: false,
-            },
+            part_id: kasane_core::PartId::optional(root_part.clone()),
+            parent_id: kasane_core::TransformId::optional(warp_l2.clone()),
+            data: TransformData::Rotation(RotationTransform {
+                base_angle: 0.0,
+                pose: RotationPose {
+                    origin: Vec2::new(1920.0, 1080.0).into(),
+                    angle: 0.0,
+                    scale: 1.0,
+                    reflect_x: false,
+                    reflect_y: false,
+                }
+            }),
             ..Default::default()
         })
         .status
@@ -151,18 +156,21 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
         id: warp_l4.clone(),
         runtime_id: "Warp_L4".to_string(),
         name: "L4 Mid Warp".to_string(),
-        part_id: root_part.clone(),
-        parent_id: rot_l3.clone(),
-        kind: TransformKind::Warp,
-        rows: 3,
-        columns: 3,
-        quad: true,
-        points: Vec::new(),
+        part_id: kasane_core::PartId::optional(root_part.clone()),
+        parent_id: kasane_core::TransformId::optional(rot_l3.clone()),
+        data: TransformData::Warp(WarpTransform {
+            rows: 3,
+            columns: 3,
+            quad: true,
+            points: Vec::new(),
+        }),
         ..Default::default()
     };
     for r in 0..=3 {
         for c in 0..=3 {
             tfm_warp_l4
+                .warp_mut()
+                .unwrap()
                 .points
                 .push(Vec2::new(c as f32 * 80.0 - 120.0, r as f32 * 80.0 - 120.0));
         }
@@ -174,18 +182,21 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
         id: warp_l5.clone(),
         runtime_id: "Warp_L5".to_string(),
         name: "L5 Child Warp".to_string(),
-        part_id: root_part.clone(),
-        parent_id: warp_l4.clone(),
-        kind: TransformKind::Warp,
-        rows: 3,
-        columns: 3,
-        quad: true,
-        points: Vec::new(),
+        part_id: kasane_core::PartId::optional(root_part.clone()),
+        parent_id: kasane_core::TransformId::optional(warp_l4.clone()),
+        data: TransformData::Warp(WarpTransform {
+            rows: 3,
+            columns: 3,
+            quad: true,
+            points: Vec::new(),
+        }),
         ..Default::default()
     };
     for r in 0..=3 {
         for c in 0..=3 {
             tfm_warp_l5
+                .warp_mut()
+                .unwrap()
                 .points
                 .push(Vec2::new(c as f32 * 60.0 - 90.0, r as f32 * 60.0 - 90.0));
         }

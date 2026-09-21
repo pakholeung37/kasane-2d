@@ -183,16 +183,10 @@ pub struct Transform {
     pub id: String,
     pub runtime_id: String,
     pub name: String,
-    pub part_id: String,
-    pub parent_id: String,
-    pub kind: TransformKind,
-    pub base_angle: f32,
-    pub rotation: RotationPose,
-    pub rows: u32,
-    pub columns: u32,
-    pub quad: bool,
+    pub part_id: Option<PartId>,
+    pub parent_id: Option<TransformId>,
+    pub data: TransformData,
     pub enabled: bool,
-    pub points: Vec<Vec2>,
     pub appearance: Appearance,
 }
 
@@ -202,17 +196,73 @@ impl Default for Transform {
             id: String::new(),
             runtime_id: String::new(),
             name: String::new(),
-            part_id: String::new(),
-            parent_id: String::new(),
-            kind: TransformKind::Rotation,
-            base_angle: 0.0,
-            rotation: RotationPose::default(),
-            rows: 1,
-            columns: 1,
-            quad: true,
+            part_id: None,
+            parent_id: None,
+            data: TransformData::default(),
             enabled: true,
-            points: Vec::new(),
             appearance: Appearance::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum TransformData {
+    Warp(WarpTransform),
+    Rotation(RotationTransform),
+}
+impl Default for TransformData {
+    fn default() -> Self {
+        Self::Rotation(RotationTransform::default())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WarpTransform {
+    pub rows: u32,
+    pub columns: u32,
+    pub quad: bool,
+    pub points: Vec<Vec2>,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct RotationTransform {
+    pub base_angle: f32,
+    pub pose: RotationPose,
+}
+impl Transform {
+    /// Borrow a lookup key; an absent parent uses the root coordinate space.
+    pub fn parent(&self) -> &str {
+        self.parent_id.as_ref().map_or("", TransformId::as_str)
+    }
+    pub fn part(&self) -> &str {
+        self.part_id.as_ref().map_or("", PartId::as_str)
+    }
+    pub fn kind(&self) -> TransformKind {
+        match self.data {
+            TransformData::Warp(_) => TransformKind::Warp,
+            TransformData::Rotation(_) => TransformKind::Rotation,
+        }
+    }
+    pub fn warp(&self) -> Option<&WarpTransform> {
+        match &self.data {
+            TransformData::Warp(w) => Some(w),
+            _ => None,
+        }
+    }
+    pub fn warp_mut(&mut self) -> Option<&mut WarpTransform> {
+        match &mut self.data {
+            TransformData::Warp(w) => Some(w),
+            _ => None,
+        }
+    }
+    pub fn rotation(&self) -> Option<&RotationTransform> {
+        match &self.data {
+            TransformData::Rotation(r) => Some(r),
+            _ => None,
+        }
+    }
+    pub fn rotation_mut(&mut self) -> Option<&mut RotationTransform> {
+        match &mut self.data {
+            TransformData::Rotation(r) => Some(r),
+            _ => None,
         }
     }
 }
@@ -240,25 +290,38 @@ impl Default for Part {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SceneKeyform {
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct WarpKeyform {
     pub keys: Vec<f32>,
     pub positions: Vec<Vec2>,
+    pub appearance: Appearance,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct RotationKeyform {
+    pub keys: Vec<f32>,
+    pub rotation: RotationPose,
+    pub appearance: Appearance,
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct PartKeyform {
+    pub keys: Vec<f32>,
+    pub draw_order: f32,
+}
+/// A single typed replacement; a track only accepts its matching variant.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SceneKeyform {
+    Warp(WarpKeyform),
+    Rotation(RotationKeyform),
+    Part(PartKeyform),
+}
+/// Borrowed projection for interpolation and external formats. Neutral values
+/// are synthesized, never stored in the document as irrelevant source fields.
+pub struct SceneSample<'a> {
+    pub keys: &'a [f32],
+    pub positions: &'a [Vec2],
     pub rotation: RotationPose,
     pub appearance: Appearance,
     pub draw_order: f32,
-}
-
-impl Default for SceneKeyform {
-    fn default() -> Self {
-        Self {
-            keys: Vec::new(),
-            positions: Vec::new(),
-            rotation: RotationPose::default(),
-            appearance: Appearance::default(),
-            draw_order: 0.0,
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -593,12 +656,158 @@ pub struct MeshBinding {
     pub keyforms: Vec<MeshKeyform>,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+macro_rules! scene_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[serde(transparent)]
+        pub struct $name(String);
+        impl $name {
+            pub fn as_str(&self) -> &str {
+                &self.0
+            }
+            pub fn optional(id: impl Into<String>) -> Option<Self> {
+                let id = id.into();
+                if id.is_empty() {
+                    None
+                } else {
+                    Some(Self(id))
+                }
+            }
+        }
+        impl From<String> for $name {
+            fn from(id: String) -> Self {
+                Self(id)
+            }
+        }
+        impl From<&str> for $name {
+            fn from(id: &str) -> Self {
+                Self(id.into())
+            }
+        }
+    };
+}
+scene_id!(TransformId);
+scene_id!(PartId);
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SceneTrack {
+    Warp {
+        target_id: TransformId,
+        keyforms: Vec<WarpKeyform>,
+    },
+    Rotation {
+        target_id: TransformId,
+        keyforms: Vec<RotationKeyform>,
+    },
+    Part {
+        target_id: PartId,
+        keyforms: Vec<PartKeyform>,
+    },
+}
+impl SceneTrack {
+    pub fn target_id(&self) -> &str {
+        match self {
+            Self::Warp { target_id, .. } | Self::Rotation { target_id, .. } => target_id.as_str(),
+            Self::Part { target_id, .. } => target_id.as_str(),
+        }
+    }
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Warp { keyforms, .. } => keyforms.len(),
+            Self::Rotation { keyforms, .. } => keyforms.len(),
+            Self::Part { keyforms, .. } => keyforms.len(),
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+    pub fn sample(&self, index: usize) -> SceneSample<'_> {
+        match self {
+            Self::Warp { keyforms, .. } => {
+                let f = &keyforms[index];
+                SceneSample {
+                    keys: &f.keys,
+                    positions: &f.positions,
+                    rotation: RotationPose::default(),
+                    appearance: f.appearance,
+                    draw_order: 0.0,
+                }
+            }
+            Self::Rotation { keyforms, .. } => {
+                let f = &keyforms[index];
+                SceneSample {
+                    keys: &f.keys,
+                    positions: &[],
+                    rotation: f.rotation,
+                    appearance: f.appearance,
+                    draw_order: 0.0,
+                }
+            }
+            Self::Part { keyforms, .. } => {
+                let f = &keyforms[index];
+                SceneSample {
+                    keys: &f.keys,
+                    positions: &[],
+                    rotation: RotationPose::default(),
+                    appearance: Appearance::default(),
+                    draw_order: f.draw_order,
+                }
+            }
+        }
+    }
+    pub(crate) fn reorder(&mut self, order: &[usize]) {
+        fn apply<T>(values: &mut Vec<T>, order: &[usize]) {
+            let mut old: Vec<_> = values.drain(..).map(Some).collect();
+            values.extend(order.iter().map(|&i| old[i].take().unwrap()));
+        }
+        match self {
+            Self::Warp { keyforms, .. } => apply(keyforms, order),
+            Self::Rotation { keyforms, .. } => apply(keyforms, order),
+            Self::Part { keyforms, .. } => apply(keyforms, order),
+        }
+    }
+    pub(crate) fn replace(&mut self, form: SceneKeyform) -> Status {
+        fn update<T>(forms: &mut [T], form: T, keys: impl Fn(&T) -> &[f32]) -> Status {
+            if let Some(slot) = forms.iter_mut().find(|v| keys(v) == keys(&form)) {
+                *slot = form;
+                Status::ok()
+            } else {
+                Status::error("INVALID_KEY_COMBINATION", "No matching keyform")
+            }
+        }
+        match (self, form) {
+            (Self::Warp { keyforms, .. }, SceneKeyform::Warp(f)) => {
+                update(keyforms, f, |f| &f.keys)
+            }
+            (Self::Rotation { keyforms, .. }, SceneKeyform::Rotation(f)) => {
+                update(keyforms, f, |f| &f.keys)
+            }
+            (Self::Part { keyforms, .. }, SceneKeyform::Part(f)) => {
+                update(keyforms, f, |f| &f.keys)
+            }
+            _ => Status::error("INVALID_KEYFORM_TYPE", "Keyform must match its track"),
+        }
+    }
+    pub fn part_keyforms_mut(&mut self) -> Option<&mut Vec<PartKeyform>> {
+        match self {
+            Self::Part { keyforms, .. } => Some(keyforms),
+            _ => None,
+        }
+    }
+    pub fn samples(&self) -> impl ExactSizeIterator<Item = SceneSample<'_>> {
+        (0..self.len()).map(|i| self.sample(i))
+    }
+}
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SceneBinding {
     pub id: String,
-    pub target_id: String,
     pub axes: Vec<BindingAxis>,
-    pub keyforms: Vec<SceneKeyform>,
+    pub track: SceneTrack,
+}
+impl SceneBinding {
+    pub fn target_id(&self) -> &str {
+        self.track.target_id()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

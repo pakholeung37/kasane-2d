@@ -1,4 +1,6 @@
 use crate::schema::section;
+use kasane_core::{PartKeyform, RotationKeyform, SceneTrack, WarpKeyform};
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
@@ -7,8 +9,8 @@ use kasane_core::types::{
     BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms,
     DeltaMeshKeyform, DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform,
     DeltaWarpKeyform, Glue, GlueVertexPair, Mesh, MeshBinding, MeshKeyform, Offscreen,
-    OffscreenKeyform, Parameter, ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform,
-    Status, Transform, TransformKind, Vec2, VertexId,
+    OffscreenKeyform, Parameter, ParameterKind, Part, RotationPose, SceneBinding, Status,
+    Transform, Vec2, VertexId,
 };
 use kasane_core::Document;
 
@@ -602,19 +604,18 @@ pub fn decode_moc3(
                 } else {
                     base_draw_order
                 };
-                keyforms.push(SceneKeyform {
+                keyforms.push(PartKeyform {
                     keys: combo_keys(&axes, k),
-                    positions: Vec::new(),
-                    rotation: RotationPose::default(),
-                    appearance: Appearance::default(),
                     draw_order: d_order,
                 });
             }
             part_scene_bindings.push(SceneBinding {
                 id: stable_id(&doc_id, "part_binding", p, &id),
-                target_id: id,
                 axes,
-                keyforms,
+                track: SceneTrack::Part {
+                    target_id: id.into(),
+                    keyforms,
+                },
             });
         }
     }
@@ -748,16 +749,14 @@ pub fn decode_moc3(
                 let mut appearance = get_colors(section::WARP_SRC_KEY_COLOR_OFF, local_idx, k)?;
                 appearance.opacity = opacity;
 
-                keyforms.push(SceneKeyform {
+                keyforms.push(WarpKeyform {
                     keys: if is_bound {
                         combo_keys(&axes, k)
                     } else {
                         Vec::new()
                     },
                     positions: points,
-                    rotation: RotationPose::default(),
                     appearance,
-                    draw_order: 0.0,
                 });
             }
 
@@ -775,17 +774,16 @@ pub fn decode_moc3(
                     } else {
                         runtime_id
                     },
-                    part_id,
-                    parent_id,
-                    kind: TransformKind::Warp,
-                    base_angle: 0.0,
-                    rotation: RotationPose::default(),
-                    rows,
-                    columns: cols,
-                    quad,
+                    part_id: kasane_core::PartId::optional(part_id),
+                    parent_id: kasane_core::TransformId::optional(parent_id),
                     enabled,
-                    points: base.positions.clone(),
                     appearance: base.appearance,
+                    data: TransformData::Warp(WarpTransform {
+                        rows,
+                        columns: cols,
+                        quad,
+                        points: base.positions.clone()
+                    })
                 })
                 .status
             );
@@ -794,9 +792,11 @@ pub fn decode_moc3(
             if is_bound {
                 deformer_scene_bindings.push(SceneBinding {
                     id: stable_id(&doc_id, "deformer_binding", d, &id),
-                    target_id: id,
                     axes,
-                    keyforms,
+                    track: SceneTrack::Warp {
+                        target_id: id.into(),
+                        keyforms,
+                    },
                 });
             }
         } else {
@@ -881,13 +881,12 @@ pub fn decode_moc3(
                 let mut appearance = get_colors(section::ROTATION_SRC_KEY_COLOR_OFF, local_idx, k)?;
                 appearance.opacity = opacity;
 
-                keyforms.push(SceneKeyform {
+                keyforms.push(RotationKeyform {
                     keys: if is_bound {
                         combo_keys(&axes, k)
                     } else {
                         Vec::new()
                     },
-                    positions: Vec::new(),
                     rotation: RotationPose {
                         origin,
                         angle,
@@ -896,7 +895,6 @@ pub fn decode_moc3(
                         reflect_y: ref_y,
                     },
                     appearance,
-                    draw_order: 0.0,
                 });
             }
 
@@ -914,17 +912,14 @@ pub fn decode_moc3(
                     } else {
                         runtime_id
                     },
-                    part_id,
-                    parent_id,
-                    kind: TransformKind::Rotation,
-                    base_angle,
-                    rotation: base.rotation,
-                    rows: 1,
-                    columns: 1,
-                    quad: true,
+                    part_id: kasane_core::PartId::optional(part_id),
+                    parent_id: kasane_core::TransformId::optional(parent_id),
                     enabled,
-                    points: Vec::new(),
                     appearance: base.appearance,
+                    data: TransformData::Rotation(RotationTransform {
+                        base_angle,
+                        pose: base.rotation
+                    })
                 })
                 .status
             );
@@ -933,9 +928,11 @@ pub fn decode_moc3(
             if is_bound {
                 deformer_scene_bindings.push(SceneBinding {
                     id: stable_id(&doc_id, "deformer_binding", d, &id),
-                    target_id: id,
                     axes,
-                    keyforms,
+                    track: SceneTrack::Rotation {
+                        target_id: id.into(),
+                        keyforms,
+                    },
                 });
             }
         }
@@ -2006,8 +2003,10 @@ pub fn decode_moc3(
                 }
                 BlendShapeTargetKind::Warp => {
                     let warp = doc.get_transform(&target_id).unwrap();
-                    let pt_count = ((warp.rows + 1) * (warp.columns + 1)) as usize;
-                    let is_root = warp.parent_id.is_empty();
+                    let pt_count = ((warp.warp().unwrap().rows + 1)
+                        * (warp.warp().unwrap().columns + 1))
+                        as usize;
+                    let is_root = warp.parent_id.is_none();
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;
@@ -2052,7 +2051,7 @@ pub fn decode_moc3(
                 }
                 BlendShapeTargetKind::Rotation => {
                     let rot = doc.get_transform(&target_id).unwrap();
-                    let is_root = rot.parent_id.is_empty();
+                    let is_root = rot.parent_id.is_none();
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;

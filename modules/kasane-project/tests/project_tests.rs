@@ -1,3 +1,5 @@
+use kasane_core::{RotationKeyform, SceneTrack, WarpKeyform};
+use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -165,15 +167,17 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
         id: sid(2),
         runtime_id: "RootRotation".to_string(),
         name: "Root Rotation".to_string(),
-        part_id: sid(1),
-        kind: TransformKind::Rotation,
-        rotation: RotationPose {
-            origin: Vec2::new(320.0, 240.0).into(),
-            angle: 0.0,
-            scale: 1.0,
-            reflect_x: false,
-            reflect_y: false,
-        },
+        part_id: kasane_core::PartId::optional(sid(1)),
+        data: TransformData::Rotation(RotationTransform {
+            base_angle: 0.0,
+            pose: RotationPose {
+                origin: Vec2::new(320.0, 240.0).into(),
+                angle: 0.0,
+                scale: 1.0,
+                reflect_x: false,
+                reflect_y: false,
+            },
+        }),
         ..Default::default()
     };
     assert!(doc.create_transform(rot).status.is_ok());
@@ -474,7 +478,7 @@ fn published_format_preserves_cpp_transform_tags_and_omits_legacy_fields() {
             TransformKind::Rotation
         };
         assert_eq!(
-            doc.get_transform(t["id"].as_str().unwrap()).unwrap().kind,
+            doc.get_transform(t["id"].as_str().unwrap()).unwrap().kind(),
             expected
         );
     }
@@ -497,22 +501,37 @@ fn published_format_preserves_cpp_transform_tags_and_omits_legacy_fields() {
 
 fn scene_binding(doc: &mut Document) {
     let transform = doc.get_transform(&sid(2)).unwrap();
+    let track = match &transform.data {
+        TransformData::Warp(w) => SceneTrack::Warp {
+            target_id: sid(2).into(),
+            keyforms: [-1., 1.]
+                .into_iter()
+                .map(|key| WarpKeyform {
+                    keys: vec![key],
+                    positions: w.points.clone(),
+                    appearance: transform.appearance,
+                })
+                .collect(),
+        },
+        TransformData::Rotation(r) => SceneTrack::Rotation {
+            target_id: sid(2).into(),
+            keyforms: [-1., 1.]
+                .into_iter()
+                .map(|key| RotationKeyform {
+                    keys: vec![key],
+                    rotation: r.pose,
+                    appearance: transform.appearance,
+                })
+                .collect(),
+        },
+    };
     let binding = kasane_core::SceneBinding {
         id: sid(99),
-        target_id: sid(2),
         axes: vec![BindingAxis {
             parameter_id: id(6),
-            keys: vec![-1.0, 1.0],
+            keys: vec![-1., 1.],
         }],
-        keyforms: [-1.0, 1.0]
-            .into_iter()
-            .map(|key| kasane_core::SceneKeyform {
-                keys: vec![key],
-                rotation: transform.rotation,
-                positions: transform.points.clone(),
-                ..Default::default()
-            })
-            .collect(),
+        track,
     };
     assert!(doc.create_scene_binding(binding).status.is_ok());
 }
@@ -524,15 +543,17 @@ fn bound_transform_type_and_grid_changes_are_atomic_failures() {
     doc.mark_saved();
     let before = doc.clone();
     let mut transform = doc.get_transform(&sid(2)).unwrap().clone();
-    transform.kind = TransformKind::Warp;
-    transform.rows = 1;
-    transform.columns = 1;
-    transform.points = vec![
-        Vec2::new(0.0, 0.0),
-        Vec2::new(1.0, 0.0),
-        Vec2::new(0.0, 1.0),
-        Vec2::new(1.0, 1.0),
-    ];
+    transform.data = TransformData::Warp(WarpTransform {
+        rows: 1,
+        columns: 1,
+        quad: true,
+        points: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(1.0, 1.0),
+        ],
+    });
     assert_eq!(
         doc.replace_transform(transform.clone()).status.code,
         "KEYFORMS_REQUIRED"
@@ -545,8 +566,10 @@ fn bound_transform_type_and_grid_changes_are_atomic_failures() {
     assert!(doc.replace_transform(transform.clone()).status.is_ok());
     scene_binding(&mut doc);
     let before = doc.clone();
-    transform.rows = 2;
+    transform.warp_mut().unwrap().rows = 2;
     transform
+        .warp_mut()
+        .unwrap()
         .points
         .extend([Vec2::new(0.0, 2.0), Vec2::new(1.0, 2.0)]);
     assert_eq!(

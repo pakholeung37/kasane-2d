@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use kasane_core::evaluation::{evaluate_frame, to_parent_positions, DrawableFrame};
 use kasane_core::types::{
     Appearance, BlendMode, BlendShapeBinding, BlendShapeTargetKind, DeltaKeyforms, ParameterKind,
-    SceneKeyform, Status, TransformKind, Vec2, VertexId,
+    Status, TransformKind, Vec2, VertexId,
 };
 use kasane_core::Document;
 
@@ -381,7 +381,7 @@ pub fn encode_moc3_with_version(
         for os_id in doc.offscreen_order() {
             let os = doc.get_offscreen(os_id).unwrap();
             let binding = doc.binding_for_scene(&os.part_id);
-            let count = binding.map_or(1, |b| b.keyforms.len());
+            let count = binding.map_or(1, |b| b.track.len());
             let stored = binding.map_or(1, |b| count.max(1usize << b.axes.len()));
             os_key_bases.insert(
                 os.id.as_str(),
@@ -389,7 +389,7 @@ pub fn encode_moc3_with_version(
             );
             for slot in 0..stored {
                 let key = os
-                    .keyform_index(slot.min(count - 1), binding.map(|b| b.keyforms.len()))?
+                    .keyform_index(slot.min(count - 1), binding.map(|b| b.track.len()))?
                     .map(|index| &os.keyforms[index]);
                 l.scalar("offscreen_key_src.opacity", key.map_or(1.0, |k| k.opacity))?;
                 // Ordinary colors are absolute values, unlike blendshape deltas.
@@ -578,7 +578,7 @@ pub fn encode_moc3_with_version(
         let part = doc.get_part(id).unwrap();
         let b = doc.binding_for_scene(id);
         let count = if let Some(b) = b {
-            checked(b.keyforms.len(), id)?
+            checked(b.track.len(), id)?
         } else {
             1
         };
@@ -621,7 +621,7 @@ pub fn encode_moc3_with_version(
 
         for k in 0..stored {
             let draw_order = if let Some(b) = b {
-                b.keyforms[k.min(count - 1) as usize].draw_order
+                b.track.sample(k.min(count - 1) as usize).draw_order
             } else {
                 part.draw_order
             };
@@ -645,10 +645,10 @@ pub fn encode_moc3_with_version(
     for id in &transforms {
         let t = doc.get_transform(id).unwrap();
         let b = doc.binding_for_scene(id);
-        let warp = t.kind == TransformKind::Warp;
+        let warp = t.kind() == TransformKind::Warp;
         let prefix = if warp { "warp" } else { "rotation" };
         let count = if let Some(b) = b {
-            checked(b.keyforms.len(), id)?
+            checked(b.track.len(), id)?
         } else {
             1
         };
@@ -671,11 +671,11 @@ pub fn encode_moc3_with_version(
         l.integer("deformer_src.enable", if t.enabled { 1 } else { 0 })?;
         l.integer(
             "deformer_src.parent_part_idx",
-            index_of(&part_indices, &t.part_id),
+            index_of(&part_indices, t.part()),
         )?;
         l.integer(
             "deformer_src.parent_deformer_idx",
-            index_of(&transform_indices, &t.parent_id),
+            index_of(&transform_indices, t.parent()),
         )?;
         l.integer("deformer_src.type", if warp { 0 } else { 1 })?;
 
@@ -706,22 +706,28 @@ pub fn encode_moc3_with_version(
         l.integer(&format!("{prefix}_src.key_color_off"), color_off)?;
 
         if warp {
-            l.integer("warp_src.vertex_count", checked(t.points.len(), id)?)?;
-            l.integer("warp_src.row", t.rows as i32)?;
-            l.integer("warp_src.col", t.columns as i32)?;
-            l.integer("warp_src.quad_transform", if t.quad { 1 } else { 0 })?;
+            l.integer(
+                "warp_src.vertex_count",
+                checked(t.warp().unwrap().points.len(), id)?,
+            )?;
+            l.integer("warp_src.row", t.warp().unwrap().rows as i32)?;
+            l.integer("warp_src.col", t.warp().unwrap().columns as i32)?;
+            l.integer(
+                "warp_src.quad_transform",
+                if t.warp().unwrap().quad { 1 } else { 0 },
+            )?;
         } else {
-            l.scalar("rotation_src.base_angle", t.base_angle)?;
+            l.scalar("rotation_src.base_angle", t.rotation().unwrap().base_angle)?;
         }
 
         for k in 0..stored {
             let f = if let Some(b) = b {
-                b.keyforms[k.min(count - 1) as usize].clone()
+                b.track.sample(k.min(count - 1) as usize)
             } else {
-                SceneKeyform {
-                    keys: Vec::new(),
-                    positions: t.points.clone(),
-                    rotation: t.rotation,
+                kasane_core::SceneSample {
+                    keys: &[],
+                    positions: t.warp().map_or(&[], |w| w.points.as_slice()),
+                    rotation: t.rotation().map(|r| r.pose).unwrap_or_default(),
                     appearance: t.appearance,
                     draw_order: 0.0,
                 }
@@ -731,13 +737,10 @@ pub fn encode_moc3_with_version(
             write_colors(&mut l, &format!("{prefix}_key_src"), &f.appearance)?;
 
             if warp {
-                write_positions(&mut l, doc, "warp_key_src", &t.parent_id, &f.positions)?;
+                write_positions(&mut l, doc, "warp_key_src", t.parent(), f.positions)?;
             } else {
-                let origin = kasane_core::evaluation::to_parent_origin(
-                    doc,
-                    &t.parent_id,
-                    f.rotation.origin,
-                )?;
+                let origin =
+                    kasane_core::evaluation::to_parent_origin(doc, t.parent(), f.rotation.origin)?;
                 l.scalar("rotation_key_src.origin_x", origin.x)?;
                 l.scalar("rotation_key_src.origin_y", origin.y)?;
                 l.scalar("rotation_key_src.angle", f.rotation.angle)?;
@@ -1133,14 +1136,15 @@ pub fn encode_moc3_with_version(
                     &constraint_index_map,
                 )?;
                 l.counts[26] += 1;
-                let pt_count = ((warp.rows + 1) * (warp.columns + 1)) as usize;
+                let pt_count =
+                    ((warp.warp().unwrap().rows + 1) * (warp.warp().unwrap().columns + 1)) as usize;
                 for f in forms {
                     l.scalar("warp_key_src.opacity", f.opacity.unwrap_or(0.0))?;
                     write_delta_positions(
                         &mut l,
                         doc,
                         "warp_key_src",
-                        &warp.parent_id,
+                        warp.parent(),
                         &f.points,
                         pt_count,
                     )?;
@@ -1259,7 +1263,7 @@ pub fn encode_moc3_with_version(
                     l.scalar("rotation_key_src.opacity", f.opacity.unwrap_or(0.0))?;
                     l.scalar("rotation_key_src.angle", f.angle.unwrap_or(0.0))?;
                     let origin = if let Some(o) = f.origin {
-                        if rot.parent_id.is_empty() {
+                        if rot.parent_id.is_none() {
                             let ppu = doc.canvas().pixels_per_unit;
                             Vec2::new(o.x / ppu, -o.y / ppu)
                         } else {
