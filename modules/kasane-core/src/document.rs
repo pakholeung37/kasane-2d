@@ -2182,6 +2182,19 @@ impl Document {
                     }
                 }
             }
+            (BlendShapeTargetKind::Glue, DeltaKeyforms::Glue(forms)) => {
+                if !self.glues.contains_key(&b.target_id) {
+                    return Status::error(
+                        "MISSING_OBJECT",
+                        format!("{}: expected Glue", b.target_id),
+                    );
+                }
+                for f in forms {
+                    if !f.intensity.is_finite() {
+                        return Status::error("INVALID_INTENSITY", &b.id);
+                    }
+                }
+            }
             _ => {
                 return Status::error(
                     "MISMATCHED_TARGET_KIND",

@@ -4,7 +4,7 @@ use std::fmt;
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint,
-    BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaKeyforms, DeltaMeshKeyform,
+    BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform,
     DeltaPartKeyform, DeltaRotationKeyform, DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset,
     Mesh, MeshBinding, MeshKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform,
     Status, Transform, TransformKind, Vec2,
@@ -342,12 +342,18 @@ struct DeltaPartKeyformWire {
 }
 
 #[derive(Serialize, Deserialize)]
+struct DeltaGlueKeyformWire {
+    intensity: f32,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(tag = "type", content = "items", rename_all = "snake_case")]
 enum DeltaKeyformsWire {
     Mesh(Vec<DeltaMeshKeyformWire>),
     Warp(Vec<DeltaWarpKeyformWire>),
     Rotation(Vec<DeltaRotationKeyformWire>),
     Part(Vec<DeltaPartKeyformWire>),
+    Glue(Vec<DeltaGlueKeyformWire>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -621,6 +627,14 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
                     .iter()
                     .map(|f| DeltaPartKeyformWire {
                         draw_order: f.draw_order,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyforms::Glue(forms) => DeltaKeyformsWire::Glue(
+                forms
+                    .iter()
+                    .map(|f| DeltaGlueKeyformWire {
+                        intensity: f.intensity,
                     })
                     .collect(),
             ),
@@ -1052,6 +1066,35 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         }
     }
 
+    for g in doc.glues {
+        if g.binding_id.is_some() {
+            return Err(Status::error("INVALID_GLUE_BINDING", "Legacy MeshBinding references cannot represent Glue intensity"));
+        }
+        let pairs = g
+            .pairs
+            .into_iter()
+            .map(|p| GlueVertexPair {
+                vertex_a: p.vertex_a,
+                vertex_b: p.vertex_b,
+                weight_a: p.weight_a,
+                weight_b: p.weight_b,
+            })
+            .collect();
+        let res = candidate.create_glue(Glue {
+            id: g.id,
+            runtime_id: g.runtime_id,
+            name: g.name,
+            mesh_a_id: g.mesh_a_id,
+            mesh_b_id: g.mesh_b_id,
+            pairs,
+            intensity: g.intensity,
+            binding: g.binding,
+        });
+        if !res.status.is_ok() {
+            return Err(res.status);
+        }
+    }
+
     for b in doc.blend_bindings {
         let keyforms = match b.keyforms {
             DeltaKeyformsWire::Mesh(forms) => DeltaKeyforms::Mesh(
@@ -1106,6 +1149,14 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
                     })
                     .collect(),
             ),
+            DeltaKeyformsWire::Glue(forms) => DeltaKeyforms::Glue(
+                forms
+                    .into_iter()
+                    .map(|f| DeltaGlueKeyform {
+                        intensity: f.intensity,
+                    })
+                    .collect(),
+            ),
         };
         let res = candidate.create_blend_binding(BlendShapeBinding {
             id: b.id,
@@ -1114,35 +1165,6 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             key_table_id: b.key_table_id,
             constraint_ids: b.constraint_ids,
             keyforms,
-        });
-        if !res.status.is_ok() {
-            return Err(res.status);
-        }
-    }
-
-    for g in doc.glues {
-        if g.binding_id.is_some() {
-            return Err(Status::error("INVALID_GLUE_BINDING", "Legacy MeshBinding references cannot represent Glue intensity"));
-        }
-        let pairs = g
-            .pairs
-            .into_iter()
-            .map(|p| GlueVertexPair {
-                vertex_a: p.vertex_a,
-                vertex_b: p.vertex_b,
-                weight_a: p.weight_a,
-                weight_b: p.weight_b,
-            })
-            .collect();
-        let res = candidate.create_glue(Glue {
-            id: g.id,
-            runtime_id: g.runtime_id,
-            name: g.name,
-            mesh_a_id: g.mesh_a_id,
-            mesh_b_id: g.mesh_b_id,
-            pairs,
-            intensity: g.intensity,
-            binding: g.binding,
         });
         if !res.status.is_ok() {
             return Err(res.status);

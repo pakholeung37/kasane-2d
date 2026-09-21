@@ -4,8 +4,10 @@ use std::path::Path;
 
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
-    Appearance, BindingAxis, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform, Parameter, Part,
-    RotationPose, Transform, TransformKind, Vec2,
+    Appearance, BindingAxis, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
+    BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, Glue, GlueVertexPair, ImageAsset,
+    Mesh, MeshBinding, MeshKeyform, Parameter, ParameterKind, Part, RotationPose, Transform,
+    TransformKind, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::encode_moc3;
@@ -1510,4 +1512,129 @@ fn test_project_failure_preserves_document() {
 
     // Document state remains completely unaltered
     assert!(doc.same_content(&snap));
+}
+
+#[test]
+fn test_project_v4_blendshape_glue_roundtrip() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let mut doc = fixture_doc(sha1, sha2);
+
+    // Create a second mesh
+    let mesh2 = Mesh {
+        id: id(20),
+        runtime_id: "Mesh2".to_string(),
+        name: "Mesh 2".to_string(),
+        texture_asset_id: id(2),
+        vertex_ids: vec![10, 20, 30],
+        base_positions: vec![
+            Vec2::new(10.0, 10.0),
+            Vec2::new(20.0, 10.0),
+            Vec2::new(10.0, 20.0),
+        ],
+        uvs: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+        ],
+        triangles: vec![[10, 20, 30]],
+        ..Default::default()
+    };
+    assert!(doc.create_mesh(mesh2).status.is_ok());
+
+    let glue = Glue {
+        id: id(21),
+        runtime_id: "Glue0".to_string(),
+        name: "Glue 0".to_string(),
+        mesh_a_id: id(4),
+        mesh_b_id: id(20),
+        pairs: vec![GlueVertexPair {
+            vertex_a: 1,
+            vertex_b: 10,
+            weight_a: 0.5,
+            weight_b: 0.5,
+        }],
+        intensity: 0.3,
+        binding: None,
+    };
+    assert!(doc.create_glue(glue).status.is_ok());
+
+    let param_bs = Parameter {
+        id: id(22),
+        runtime_id: "ParamBS".to_string(),
+        name: "Param BS".to_string(),
+        minimum: 0.0,
+        maximum: 1.0,
+        default_value: 0.0,
+        decimal_places: 2,
+        kind: ParameterKind::BlendShape,
+        repeat: false,
+    };
+    assert!(doc.create_parameter(param_bs).status.is_ok());
+
+    let bkt = BlendShapeKeyTable {
+        id: id(23),
+        parameter_id: id(22),
+        keys: vec![0.0, 1.0],
+        base_key_idx: 0,
+    };
+    assert!(doc.create_blend_key_table(bkt).status.is_ok());
+
+    let constraint = BlendShapeConstraint {
+        id: id(24),
+        parameter_id: id(6),
+        keys: vec![0.0, 1.0],
+        weights: vec![1.0, 0.5],
+    };
+    assert!(doc.create_blend_constraint(constraint).status.is_ok());
+
+    let binding = BlendShapeBinding {
+        id: id(25),
+        target_id: id(21),
+        target_kind: BlendShapeTargetKind::Glue,
+        key_table_id: id(23),
+        constraint_ids: vec![id(24)],
+        keyforms: DeltaKeyforms::Glue(vec![
+            DeltaGlueKeyform { intensity: 0.0 },
+            DeltaGlueKeyform { intensity: 0.5 },
+        ]),
+    };
+    assert!(doc.create_blend_binding(binding).status.is_ok());
+
+    // Encode to project JSON
+    let encoded = encode_project(&doc).expect("encode_project failed");
+    assert!(encoded.contains("\"glue\""));
+    assert!(encoded.contains("\"intensity\": 0.5"));
+
+    // Decode and verify
+    let decoded = decode_project(&encoded).expect("decode_project failed");
+    let re_glue = decoded.get_glue(&id(21)).unwrap();
+    assert_eq!(re_glue.intensity, 0.3);
+
+    let re_binding = decoded.get_blend_binding(&id(25)).unwrap();
+    assert_eq!(re_binding.target_kind, BlendShapeTargetKind::Glue);
+    assert_eq!(re_binding.target_id, id(21));
+    match &re_binding.keyforms {
+        DeltaKeyforms::Glue(forms) => {
+            assert_eq!(forms.len(), 2);
+            assert_eq!(forms[0].intensity, 0.0);
+            assert_eq!(forms[1].intensity, 0.5);
+        }
+        _ => panic!("Expected DeltaKeyforms::Glue"),
+    }
+
+    // Compare evaluation
+    let mut preview = HashMap::new();
+    preview.insert(id(6), 0.5);
+    preview.insert(id(22), 0.8);
+
+    let mut frame_orig = DrawableFrame::default();
+    let mut frame_re = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &preview, &mut frame_orig).is_ok());
+    assert!(evaluate_frame(&decoded, &preview, &mut frame_re).is_ok());
+
+    assert_eq!(frame_orig.drawables.len(), frame_re.drawables.len());
+    for (d1, d2) in frame_orig.drawables.iter().zip(&frame_re.drawables) {
+        assert_eq!(d1.positions, d2.positions);
+    }
 }

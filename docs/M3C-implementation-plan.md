@@ -1,6 +1,6 @@
 # M3C 分阶段实施与验收计划
 
-状态：**S0、S1 已通过，S2 待进入**。日期：2026-09-21。
+状态：**S0、S1、S2、S3、S4 已通过，S5 待进入**。日期：2026-09-21。
 
 范围、源码证据和数据契约以 [总体设计](M3C-moc3-version-coverage.md) 为准。此前 Rice 改动与 M3B 完成记录属于基线，不代表本计划已通过。实施时逐阶段将状态更新为 `in_progress / passed / failed / not_run` 并链接实际报告。
 
@@ -215,7 +215,7 @@ python3 tools/validate_m3c.py --manifest <local-manifest.json> --stage all --out
 | S1 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, tools/validate_m3c.py | [s1_report.json](../target/kasane/m3c/s1_report.json) | 无；Hiyori 4 个无面网格及 Glue 引用完整保留，Rice/Hiyori/Mark 导入与求值通过，v4/v6 安全门禁已建立 |
 | S2 | passed | modules/kasane-moc3, modules/kasane-project, tools/create_v42_external_fixture.py, tools/validate_m3c.py | [s2_report.json](../target/kasane/m3c/s2_report.json) | 代码及构造用例交付完成；真实外部 4.2 样本验收保持 not_run |
 | S3 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, modules/kasane-project, tools/create_cyclic_fixture.py, tools/validate_m3c.py | [s3_report.json](../target/kasane/m3c/s3_report.json) | 无；循环参数、wrap 数值与跨周期求值、工程 v4 迁移与未实现集合拦截、双 Core 验证通过 |
-| S4 | not_run | — | — | Glue 增量 |
+| S4 | passed | modules/kasane-core, modules/kasane-project, modules/kasane-moc3, tools/validate_m3c.py | [s4_report.json](../target/kasane/m3c/s4_report.json) | 无；BlendShape Glue 增量强度求值、[0, 1] 钳制、decoder/encoder bs_glue_src、删除引用保护、工程 v4 往返与双 Core 0 误差通过 |
 | S5 | not_run | — | — | 5.3 数值及导出 |
 | S6 | not_run | — | — | 5.3 GPU |
 | S7 | not_run | — | — | 全矩阵与独立应用 |

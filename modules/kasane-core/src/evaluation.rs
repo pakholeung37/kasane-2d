@@ -870,12 +870,27 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
 
         for gid in glue_order {
             if let Some(glue) = doc.get_glue(gid) {
-                let intensity = if let Some(binding) = &glue.binding {
+                let mut intensity = if let Some(binding) = &glue.binding {
                     let selection = select(doc, &values, &binding.axes);
                     selection.indices.iter().zip(&selection.weights)
                         .map(|(&i, &w)| binding.keyforms[i].intensity * w).sum()
                 } else { glue.intensity };
-                if intensity == 0.0 {
+
+                let bs_list = doc.blend_bindings_for_target(gid);
+                if !bs_list.is_empty() {
+                    for bs in bs_list {
+                        if let DeltaKeyforms::Glue(ref forms) = bs.keyforms {
+                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                                if kf_idx < forms.len() {
+                                    intensity += forms[kf_idx].intensity * eff_w;
+                                }
+                            }
+                        }
+                    }
+                    intensity = intensity.clamp(0.0, 1.0);
+                }
+
+                if intensity <= 0.0 {
                     continue;
                 }
                 let slot_a = match mesh_slots.get(glue.mesh_a_id.as_str()) {

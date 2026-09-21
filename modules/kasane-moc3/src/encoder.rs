@@ -850,11 +850,11 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         "constraint_vals",
     )? as u32;
 
-    // BlendShape Targets & Bindings
     let mut warp_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut mesh_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut part_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut rot_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut glue_targets: HashMap<&str, Vec<&str>> = HashMap::new();
 
     for bid in doc.blend_binding_order() {
         let b = doc.get_blend_binding(bid).unwrap();
@@ -871,6 +871,9 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             BlendShapeTargetKind::Rotation => {
                 rot_targets.entry(b.target_id.as_str()).or_default().push(bid);
             }
+            BlendShapeTargetKind::Glue => {
+                glue_targets.entry(b.target_id.as_str()).or_default().push(bid);
+            }
         }
     }
 
@@ -885,6 +888,9 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
 
     let mut sorted_rot_targets: Vec<&str> = rot_targets.keys().copied().collect();
     sorted_rot_targets.sort_by_key(|id| rotation_local_indices.get(id).copied().unwrap_or(usize::MAX));
+
+    let mut sorted_glue_targets: Vec<&str> = glue_targets.keys().copied().collect();
+    sorted_glue_targets.sort_by_key(|id| index_of(doc.glue_order(), id));
 
     // 1. Warp BlendShapes
     for target_id in sorted_warp_targets {
@@ -1016,6 +1022,33 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             }
         }
     }
+
+    // 5. Glue BlendShapes
+    for target_id in sorted_glue_targets {
+        let target_idx = index_of(doc.glue_order(), target_id);
+        let binding_ids = &glue_targets[target_id];
+        let bs_b_off = l.counts[26] as i32;
+        let bs_b_len = checked(binding_ids.len(), "bs_glue_b_len")?;
+        l.integer("bs_glue_src.target_idx", target_idx)?;
+        l.integer("bs_glue_src.bs_binding_off", bs_b_off)?;
+        l.integer("bs_glue_src.bs_binding_len", bs_b_len)?;
+        l.counts[34] += 1;
+
+        for &bid in binding_ids {
+            let b = doc.get_blend_binding(bid).unwrap();
+            if let DeltaKeyforms::Glue(ref forms) = b.keyforms {
+                let key_bs_off = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue_bs_off")?;
+                let key_bs_len = forms.len() as i32;
+                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                l.counts[26] += 1;
+                for f in forms {
+                    l.scalar("glue_key_src.intensity", f.intensity)?;
+                }
+            }
+        }
+    }
+
+    l.counts[22] = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue keyforms")? as u32;
 
     l.counts[29] = checked(
         l.field("blend_constraint_idx_src.constraint_idx")?.len() / 4,

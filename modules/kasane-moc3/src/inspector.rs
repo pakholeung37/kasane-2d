@@ -396,19 +396,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         });
     }
 
-    // 1. BlendShape Glue (Mao has 0; out of scope for S1-S3)
-    if counts.bs_glues > 0 {
-        unsupported_features.push(UnsupportedFeature {
-            category: "blend_shape_glue".into(),
-            count: counts.bs_glues as usize,
-            detail: format!(
-                "Model contains {} BlendShape Glues (BlendShape Glue is out of scope for this milestone)",
-                counts.bs_glues
-            ),
-        });
-    }
-
-    // 2. Offscreen (offscreens, offscreen_keyforms, bs_offscreens)
+    // 1. Offscreen (offscreens, offscreen_keyforms, bs_offscreens)
     let offscreen_total = i64::from(counts.offscreens) + i64::from(counts.offscreen_keyforms) + i64::from(counts.bs_offscreens);
     if offscreen_total > 0 {
         unsupported_features.push(UnsupportedFeature {

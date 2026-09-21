@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
-    Appearance, BindingAxis, BlendMode, Canvas, DeltaKeyforms, ImageAsset, Mesh, MeshBinding,
-    MeshKeyform, Parameter, ParameterKind, Transform, TransformKind, Vec2,
+    Appearance, BindingAxis, BlendMode, BlendShapeTargetKind, Canvas, DeltaKeyforms, ImageAsset,
+    Mesh, MeshBinding, MeshKeyform, Parameter, ParameterKind, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::{
@@ -967,6 +967,7 @@ fn test_import_mao_full() {
     let mut warp_bb = 0;
     let mut rot_bb = 0;
     let mut mesh_bb = 0;
+    let mut glue_bb = 0;
     for b_id in doc.blend_binding_order() {
         let b = doc.get_blend_binding(b_id).unwrap();
         match b.keyforms {
@@ -974,9 +975,10 @@ fn test_import_mao_full() {
             kasane_core::types::DeltaKeyforms::Warp(_) => warp_bb += 1,
             kasane_core::types::DeltaKeyforms::Rotation(_) => rot_bb += 1,
             kasane_core::types::DeltaKeyforms::Mesh(_) => mesh_bb += 1,
+            kasane_core::types::DeltaKeyforms::Glue(_) => glue_bb += 1,
         }
     }
-    println!("BlendBindings distribution: Part={}, Warp={}, Rotation={}, Mesh={}", part_bb, warp_bb, rot_bb, mesh_bb);
+    println!("BlendBindings distribution: Part={}, Warp={}, Rotation={}, Mesh={}, Glue={}", part_bb, warp_bb, rot_bb, mesh_bb, glue_bb);
 
     // Evaluation against PurismModelInstance
     let mut runtime = PurismModelInstance::new(&bytes);
@@ -1882,5 +1884,48 @@ fn test_cyclic_parameter_moc3_roundtrip_and_evaluation() {
         assert_eq!(frame_orig.parameters[0].value, frame_re.parameters[0].value);
         assert_eq!(frame_orig.drawables[0].positions, frame_re.drawables[0].positions);
     }
+}
+
+#[test]
+fn test_blendshape_glue_moc3_roundtrip_and_evaluation() {
+    let root = workspace_root();
+    let moc3_path = root.join("tests/fixtures/external_v50_bs_glue/model.moc3");
+    let bytes = fs::read(&moc3_path).expect("Read v50 bs glue moc3");
+
+    let inspection = inspect_moc3(&bytes).expect("Inspect v50 bs glue");
+    assert_eq!(inspection.version, Moc3Version::Version50);
+    assert_eq!(inspection.counts.bs_glues, 1);
+    assert_eq!(inspection.counts.glues, 1);
+
+    let res = import_from_bare_moc3(&bytes, &HashMap::new()).expect("Import v50 bs glue");
+    let doc = &res.document;
+
+    assert_eq!(doc.glue_order().len(), 1);
+    let glue_id = &doc.glue_order()[0];
+    let glue = doc.get_glue(glue_id).unwrap();
+    assert_eq!(glue.intensity, 0.2);
+
+    assert_eq!(doc.blend_binding_order().len(), 1);
+    let bb_id = &doc.blend_binding_order()[0];
+    let bb = doc.get_blend_binding(bb_id).unwrap();
+    assert_eq!(bb.target_kind, BlendShapeTargetKind::Glue);
+    assert_eq!(bb.target_id, *glue_id);
+    match &bb.keyforms {
+        DeltaKeyforms::Glue(forms) => {
+            assert_eq!(forms.len(), 2);
+            assert_eq!(forms[0].intensity, 0.0);
+            assert_eq!(forms[1].intensity, 0.6);
+        }
+        _ => panic!("Expected DeltaKeyforms::Glue"),
+    }
+
+    let samples = vec![
+        vec![0.0, 0.0],
+        vec![0.0, 0.5],
+        vec![0.5, 0.5],
+        vec![1.0, 1.0],
+        vec![-1.0, 1.0],
+    ];
+    assert_runtime_matches(doc, &bytes, &samples);
 }
 

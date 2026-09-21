@@ -351,6 +351,7 @@ pub enum BlendShapeTargetKind {
     Warp,
     Rotation,
     Part,
+    Glue,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -401,6 +402,11 @@ pub struct DeltaPartKeyform {
     pub draw_order: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DeltaGlueKeyform {
+    pub intensity: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "items", rename_all = "snake_case")]
 pub enum DeltaKeyforms {
@@ -408,6 +414,7 @@ pub enum DeltaKeyforms {
     Warp(Vec<DeltaWarpKeyform>),
     Rotation(Vec<DeltaRotationKeyform>),
     Part(Vec<DeltaPartKeyform>),
+    Glue(Vec<DeltaGlueKeyform>),
 }
 
 impl DeltaKeyforms {
@@ -417,6 +424,7 @@ impl DeltaKeyforms {
             DeltaKeyforms::Warp(v) => v.len(),
             DeltaKeyforms::Rotation(v) => v.len(),
             DeltaKeyforms::Part(v) => v.len(),
+            DeltaKeyforms::Glue(v) => v.len(),
         }
     }
 
