@@ -5,7 +5,7 @@ use crate::geometry::{validate_positions, validate_render_mesh};
 use crate::types::{
     Appearance, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind,
     Canvas, ChangeKind, ChangeSet, DeltaKeyforms, EditResult, Glue, ImageAsset, Mesh,
-    MeshBinding, MeshKeyform, Parameter, ParameterKind, Part, RotationPose, SceneBinding,
+    MeshBinding, MeshKeyform, Offscreen, Parameter, ParameterKind, Part, RotationPose, SceneBinding,
     SceneKeyform, Status, Transform, TransformKind, Vec2, VertexId, VertexPositionUpdate,
 };
 
@@ -108,6 +108,9 @@ pub struct Document {
     glues: HashMap<String, Glue>,
     glue_order: Vec<String>,
 
+    offscreens: HashMap<String, Offscreen>,
+    offscreen_order: Vec<String>,
+
     saved_content: Option<Box<DocumentContent>>,
 }
 
@@ -138,6 +141,8 @@ struct DocumentContent {
     blend_binding_order: Vec<String>,
     glues: HashMap<String, Glue>,
     glue_order: Vec<String>,
+    offscreens: HashMap<String, Offscreen>,
+    offscreen_order: Vec<String>,
 }
 
 impl Document {
@@ -220,6 +225,8 @@ impl Document {
             blend_binding_order: self.blend_binding_order.clone(),
             glues: self.glues.clone(),
             glue_order: self.glue_order.clone(),
+            offscreens: self.offscreens.clone(),
+            offscreen_order: self.offscreen_order.clone(),
         }
     }
 
@@ -269,6 +276,7 @@ impl Document {
             || self.blend_constraints.contains_key(id)
             || self.blend_bindings.contains_key(id)
             || self.glues.contains_key(id)
+            || self.offscreens.contains_key(id)
     }
 
     fn failed(&self, status: Status) -> EditResult {
@@ -2195,6 +2203,33 @@ impl Document {
                     }
                 }
             }
+            (BlendShapeTargetKind::Offscreen, DeltaKeyforms::Offscreen(forms)) => {
+                if !self.offscreens.contains_key(&b.target_id) {
+                    return Status::error(
+                        "MISSING_OBJECT",
+                        format!("{}: expected Offscreen", b.target_id),
+                    );
+                }
+                for f in forms {
+                    if !f.opacity.is_finite() {
+                        return Status::error("INVALID_OPACITY", &b.id);
+                    }
+                    if let Some(mult) = f.multiply {
+                        for &c in &mult {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                    if let Some(scr) = f.screen {
+                        for &c in &scr {
+                            if !c.is_finite() {
+                                return Status::error("INVALID_COLOR", &b.id);
+                            }
+                        }
+                    }
+                }
+            }
             _ => {
                 return Status::error(
                     "MISMATCHED_TARGET_KIND",
@@ -2410,6 +2445,152 @@ impl Document {
         self.changed(ChangeKind::Structure, affected, vec![id, mesh_a, mesh_b])
     }
 
+    // --- Offscreens ---
+    pub fn offscreen_order(&self) -> &[String] {
+        &self.offscreen_order
+    }
+
+    pub fn offscreen_count(&self) -> usize {
+        self.offscreens.len()
+    }
+
+    pub fn get_offscreen(&self, id: &str) -> Option<&Offscreen> {
+        self.offscreens.get(id)
+    }
+
+    pub fn offscreen_for_part(&self, part_id: &str) -> Option<&Offscreen> {
+        self.offscreens.values().find(|os| os.part_id == part_id)
+    }
+
+    pub fn validate_offscreen(&self, os: &Offscreen) -> Status {
+        if !valid_uuid(&os.id) {
+            return Status::error("INVALID_ID", format!("{}: invalid UUID", os.id));
+        }
+        if os.part_id.is_empty() || !self.parts.contains_key(&os.part_id) {
+            return Status::error(
+                "MISSING_PART",
+                format!("{}: owner part {} not found", os.id, os.part_id),
+            );
+        }
+        for (other_id, other) in &self.offscreens {
+            if other_id != &os.id && other.part_id == os.part_id {
+                return Status::error(
+                    "DUPLICATE_OWNER",
+                    format!(
+                        "{}: part {} already owned by offscreen {}",
+                        os.id, os.part_id, other_id
+                    ),
+                );
+            }
+        }
+        for mask_id in &os.masks {
+            if !self.meshes.contains_key(mask_id) {
+                return Status::error(
+                    "MISSING_MESH",
+                    format!("{}: mask mesh {} not found", os.id, mask_id),
+                );
+            }
+        }
+        for kf in &os.keyforms {
+            if !kf.opacity.is_finite() {
+                return Status::error("INVALID_OPACITY", format!("{}: non-finite opacity", os.id));
+            }
+            if let Some(m) = kf.multiply {
+                for c in m {
+                    if !c.is_finite() {
+                        return Status::error("INVALID_COLOR", format!("{}: non-finite color", os.id));
+                    }
+                }
+            }
+            if let Some(s) = kf.screen {
+                for c in s {
+                    if !c.is_finite() {
+                        return Status::error("INVALID_COLOR", format!("{}: non-finite color", os.id));
+                    }
+                }
+            }
+        }
+        if let Some(binding) = self.binding_for_scene(&os.part_id) {
+            let klen = binding.keyforms.len();
+            if !os.part_keyform_indices.is_empty() && os.part_keyform_indices.len() != klen {
+                return Status::error(
+                    "INVALID_LENGTH",
+                    format!(
+                        "{}: part_keyform_indices len ({}) != part keyforms len ({})",
+                        os.id,
+                        os.part_keyform_indices.len(),
+                        klen
+                    ),
+                );
+            }
+            for &idx in &os.part_keyform_indices {
+                if idx >= 0 && (idx as usize) >= os.keyforms.len() {
+                    return Status::error(
+                        "INDEX_OUT_OF_BOUNDS",
+                        format!(
+                            "{}: keyform index {} exceeds offscreen keyforms len {}",
+                            os.id,
+                            idx,
+                            os.keyforms.len()
+                        ),
+                    );
+                }
+            }
+        }
+        Status::ok()
+    }
+
+    pub fn create_offscreen(&mut self, offscreen: Offscreen) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &offscreen.id));
+        }
+        if self.contains_id(&offscreen.id) {
+            return self.failed(Status::error("DUPLICATE_ID", &offscreen.id));
+        }
+        for (other_id, other) in &self.offscreens {
+            if other.runtime_id == offscreen.runtime_id {
+                return self.failed(Status::error(
+                    "DUPLICATE_RUNTIME_ID",
+                    format!("{}.runtime_id duplicates {}", offscreen.id, other_id),
+                ));
+            }
+        }
+        let s = self.validate_offscreen(&offscreen);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = offscreen.id.clone();
+        let part_id = offscreen.part_id.clone();
+        self.offscreens.insert(id.clone(), offscreen);
+        self.offscreen_order.push(id.clone());
+        self.changed(ChangeKind::Structure, Vec::new(), vec![id, part_id])
+    }
+
+    pub fn replace_offscreen(&mut self, offscreen: Offscreen) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &offscreen.id));
+        }
+        if !self.offscreens.contains_key(&offscreen.id) {
+            return self.failed(Status::error("MISSING_OBJECT", &offscreen.id));
+        }
+        for (other_id, other) in &self.offscreens {
+            if other_id != &offscreen.id && other.runtime_id == offscreen.runtime_id {
+                return self.failed(Status::error(
+                    "DUPLICATE_RUNTIME_ID",
+                    format!("{}.runtime_id duplicates {}", offscreen.id, other_id),
+                ));
+            }
+        }
+        let s = self.validate_offscreen(&offscreen);
+        if !s.is_ok() {
+            return self.failed(s);
+        }
+        let id = offscreen.id.clone();
+        let part_id = offscreen.part_id.clone();
+        self.offscreens.insert(id.clone(), offscreen);
+        self.changed(ChangeKind::Structure, Vec::new(), vec![id, part_id])
+    }
+
     pub fn references_to(&self, id: &str) -> Vec<String> {
         let mut refs = Vec::new();
         for m in &self.mesh_order {
@@ -2478,6 +2659,11 @@ impl Document {
         }
         for (key, g) in &self.glues {
             if g.mesh_a_id == id || g.mesh_b_id == id || g.binding.as_ref().is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == id)) {
+                refs.push(key.clone());
+            }
+        }
+        for (key, os) in &self.offscreens {
+            if os.part_id == id || os.masks.iter().any(|mask| mask == id) {
                 refs.push(key.clone());
             }
         }
@@ -2555,6 +2741,8 @@ impl Document {
         self.blend_binding_order.retain(|k| k != id);
         self.glues.remove(id);
         self.glue_order.retain(|k| k != id);
+        self.offscreens.remove(id);
+        self.offscreen_order.retain(|k| k != id);
 
         meshes.sort();
         meshes.dedup();

@@ -3,9 +3,10 @@ use std::collections::HashMap;
 
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
-    BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform, DeltaPartKeyform,
-    DeltaRotationKeyform, DeltaWarpKeyform, Glue, GlueVertexPair, Mesh, MeshBinding, MeshKeyform,
-    Parameter, ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
+    BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform,
+    DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform, DeltaWarpKeyform, Glue,
+    GlueVertexPair, Mesh, MeshBinding, MeshKeyform, Offscreen, OffscreenKeyform, Parameter,
+    ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
     TransformKind, Vec2, VertexId,
 };
 use kasane_core::Document;
@@ -35,6 +36,7 @@ pub struct ImportIdMapping {
     pub blend_constraint_by_index: Vec<String>, // index -> internal_id
     pub blend_binding_by_index: Vec<String>,    // index -> internal_id
     pub glue_by_index: Vec<String>,             // index -> internal_id
+    pub offscreen_by_index: Vec<String>,        // index -> internal_id
 }
 
 #[derive(Debug, Clone)]
@@ -132,6 +134,18 @@ fn read_f32(bytes: &[u8], offset: usize) -> Result<f32, Status> {
         ));
     }
     Ok(f32::from_le_bytes(
+        bytes[offset..offset + 4].try_into().unwrap(),
+    ))
+}
+
+fn read_u32(bytes: &[u8], offset: usize) -> Result<u32, Status> {
+    if offset + 4 > bytes.len() {
+        return Err(Status::error(
+            "BUFFER_TRUNCATED",
+            format!("Unexpected EOF reading u32 at offset {offset}"),
+        ));
+    }
+    Ok(u32::from_le_bytes(
         bytes[offset..offset + 4].try_into().unwrap(),
     ))
 }
@@ -234,6 +248,7 @@ pub fn decode_moc3(
         blend_constraint_by_index: Vec::with_capacity(counts.bs_constraints as usize),
         blend_binding_by_index: Vec::with_capacity(counts.blend_bindings as usize),
         glue_by_index: Vec::with_capacity(counts.glues as usize),
+        offscreen_by_index: Vec::with_capacity(counts.offscreens as usize),
     };
 
     // Pre-calculate stable internal IDs
@@ -808,6 +823,16 @@ pub fn decode_moc3(
             2 => BlendMode::Multiplicative,
             _ => BlendMode::Normal,
         };
+        let raw_blend_mode = if ver >= 6 && offsets.len() > 153 && offsets[153] > 0 {
+            let raw_bm = read_u32(bytes, offsets[153] as usize + m * 4)?;
+            if raw_bm != 0 {
+                Some(raw_bm)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
 
         // Read UVs
         let mut uvs = Vec::with_capacity(vc);
@@ -945,6 +970,7 @@ pub fn decode_moc3(
                 double_sided,
                 inverted_mask,
                 masks: Vec::new(),
+                raw_blend_mode,
             })
             .status
         );
@@ -1167,6 +1193,102 @@ pub fn decode_moc3(
         }
     }
 
+    if ver >= 6 && counts.offscreens > 0 {
+        for i in 0..counts.offscreens as usize {
+            let owner_part_idx = read_i32(bytes, offsets[155] as usize + i * 4)? as usize;
+            if owner_part_idx >= mapping.part_by_index.len() {
+                return Err(Status::error(
+                    "INVALID_OFFSCREEN",
+                    format!("Offscreen {i}: invalid owner part index {owner_part_idx}"),
+                ));
+            }
+            let part_id = mapping.part_by_index[owner_part_idx].clone();
+            let part_runtime_id = mapping
+                .parts
+                .iter()
+                .find(|(_, id)| *id == &part_id)
+                .map(|(r, _)| r.clone())
+                .unwrap_or_else(|| format!("Part{owner_part_idx}"));
+            let part_name = doc
+                .get_part(&part_id)
+                .map(|p| p.name.clone())
+                .unwrap_or_else(|| format!("Part{owner_part_idx}"));
+
+            let flags = bytes[offsets[156] as usize + i];
+            let blend_mode = read_u32(bytes, offsets[157] as usize + i * 4)?;
+            let mask_off = read_i32(bytes, offsets[158] as usize + i * 4)? as usize;
+            let mask_len = read_i32(bytes, offsets[159] as usize + i * 4)? as usize;
+            let mut masks = Vec::with_capacity(mask_len);
+            for m in 0..mask_len {
+                let mesh_idx = read_i32(bytes, offsets[80] as usize + (mask_off + m) * 4)? as usize;
+                if mesh_idx >= mapping.mesh_by_index.len() {
+                    return Err(Status::error(
+                        "INVALID_OFFSCREEN_MASK",
+                        format!("Offscreen {i}: invalid mask mesh index {mesh_idx}"),
+                    ));
+                }
+                masks.push(mapping.mesh_by_index[mesh_idx].clone());
+            }
+
+            let part_keyform_off = read_i32(bytes, offsets[5] as usize + owner_part_idx * 4)? as usize;
+            let part_key_len = read_i32(bytes, offsets[6] as usize + owner_part_idx * 4)? as usize;
+            let mut keyforms = Vec::new();
+            let mut part_keyform_indices = Vec::with_capacity(part_key_len);
+
+            for k in 0..part_key_len {
+                let global_kf_idx = read_i32(bytes, offsets[160] as usize + (part_keyform_off + k) * 4)?;
+                if global_kf_idx < 0 {
+                    part_keyform_indices.push(-1);
+                } else {
+                    let g = global_kf_idx as usize;
+                    let opacity = read_f32(bytes, offsets[161] as usize + g * 4)?;
+                    let mul_idx = read_i32(bytes, offsets[162] as usize + g * 4)?;
+                    let multiply = if mul_idx >= 0 && offsets.len() > 110 && offsets[108] > 0 {
+                        Some([
+                            read_f32(bytes, offsets[108] as usize + mul_idx as usize * 4)?,
+                            read_f32(bytes, offsets[109] as usize + mul_idx as usize * 4)?,
+                            read_f32(bytes, offsets[110] as usize + mul_idx as usize * 4)?,
+                        ])
+                    } else {
+                        None
+                    };
+                    let scr_idx = read_i32(bytes, offsets[163] as usize + g * 4)?;
+                    let screen = if scr_idx >= 0 && offsets.len() > 113 && offsets[111] > 0 {
+                        Some([
+                            read_f32(bytes, offsets[111] as usize + scr_idx as usize * 4)?,
+                            read_f32(bytes, offsets[112] as usize + scr_idx as usize * 4)?,
+                            read_f32(bytes, offsets[113] as usize + scr_idx as usize * 4)?,
+                        ])
+                    } else {
+                        None
+                    };
+                    part_keyform_indices.push(keyforms.len() as i32);
+                    keyforms.push(OffscreenKeyform {
+                        opacity,
+                        multiply,
+                        screen,
+                    });
+                }
+            }
+
+            let runtime_id = format!("Offscreen_{part_runtime_id}");
+            let name = format!("{part_name} (Offscreen)");
+            let os_id = stable_id(&doc_id, "offscreen", i, &runtime_id);
+            mapping.offscreen_by_index.push(os_id.clone());
+            check_status!(doc.create_offscreen(Offscreen {
+                id: os_id,
+                runtime_id,
+                name,
+                part_id,
+                blend_mode,
+                flags,
+                masks,
+                part_keyform_indices,
+                keyforms,
+            }).status);
+        }
+    }
+
     if counts.blend_bindings > 0 {
         let mut binding_targets: HashMap<usize, (String, BlendShapeTargetKind)> = HashMap::new();
         // The current Document represents one ordered BlendShape group per target.
@@ -1216,6 +1338,16 @@ pub fn decode_moc3(
                 let b_off = read_i32(bytes, offsets[150] as usize + i * 4)? as usize;
                 let b_len = read_i32(bytes, offsets[151] as usize + i * 4)? as usize;
                 register_group(&target_id, BlendShapeTargetKind::Glue, b_off, b_len)?;
+            }
+
+            if ver >= 6 {
+                for i in 0..counts.bs_offscreens as usize {
+                    let target_os = read_i32(bytes, offsets[164] as usize + i * 4)? as usize;
+                    let target_id = mapping.offscreen_by_index[target_os].clone();
+                    let b_off = read_i32(bytes, offsets[165] as usize + i * 4)? as usize;
+                    let b_len = read_i32(bytes, offsets[166] as usize + i * 4)? as usize;
+                    register_group(&target_id, BlendShapeTargetKind::Offscreen, b_off, b_len)?;
+                }
             }
         }
 
@@ -1385,6 +1517,20 @@ pub fn decode_moc3(
                         forms.push(DeltaGlueKeyform { intensity });
                     }
                     DeltaKeyforms::Glue(forms)
+                }
+                BlendShapeTargetKind::Offscreen => {
+                    let mut forms = Vec::with_capacity(key_bs_len);
+                    for k in 0..key_bs_len {
+                        let ki = key_bs_off + k;
+                        let op = read_f32(bytes, offsets[161] as usize + ki * 4)?;
+                        let (mul, scr) = get_bs_colors(162, 163, ki)?;
+                        forms.push(DeltaOffscreenKeyform {
+                            opacity: op,
+                            multiply: mul,
+                            screen: scr,
+                        });
+                    }
+                    DeltaKeyforms::Offscreen(forms)
                 }
             };
 

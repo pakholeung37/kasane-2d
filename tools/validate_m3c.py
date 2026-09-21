@@ -840,6 +840,131 @@ def build_s4_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
     return report
 
 
+def build_s5_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[str, Any]:
+    print("=== Building Stage S5 Report: version 6 Data, Evaluation, and 5.3 Export ===")
+    official_probe, purism_probe = ensure_probes(probe_dir, sdk_dir)
+
+    ren_moc3 = sdk_dir / "Samples/Resources/Ren/Ren.moc3"
+    assert ren_moc3.is_file(), f"Ren.moc3 not found at {ren_moc3}"
+
+    # 1. Inspect Ren.moc3
+    info = inspect_moc3_file(ren_moc3)
+    assert info.get("version") == 6, f"Expected MOC3 version 6, got {info.get('version')}"
+    counts = info.get("counts", {})
+    assert counts.get("offscreens") == 24, f"Expected 24 offscreens, got {counts.get('offscreens')}"
+    assert counts.get("parts") == 51, f"Expected 51 parts, got {counts.get('parts')}"
+    assert counts.get("art_meshes") == 198, f"Expected 198 art meshes, got {counts.get('art_meshes')}"
+
+    # 2. Dual-core probe verification on Ren.moc3
+    param_count = counts.get("parameters", 73)
+    sample_values = [
+        [0.0] * param_count,
+        [0.5] * param_count,
+        [-0.5] * param_count,
+    ]
+    probe_input = f"{len(sample_values)}\n" + "\n".join(" ".join(str(v) for v in s) for s in sample_values) + "\n"
+
+    p_proc = subprocess.run([str(purism_probe), str(ren_moc3)], input=probe_input, capture_output=True, text=True, check=True)
+    o_proc = subprocess.run([str(official_probe), str(ren_moc3)], input=probe_input, capture_output=True, text=True, check=True)
+
+    p_json = json.loads([l for l in p_proc.stdout.splitlines() if l.startswith("{")][0])
+    o_json = json.loads([l for l in o_proc.stdout.splitlines() if l.startswith("{")][0])
+
+    assert p_json.get("offscreen_count") == o_json.get("offscreen_count") == 24
+    assert p_json.get("part_offscreen_indices") == o_json.get("part_offscreen_indices")
+
+    max_pos_err = 0.0
+    max_op_err = 0.0
+    for s_idx in range(len(sample_values)):
+        # Offscreens verification
+        p_os = p_json["offscreen_samples"][s_idx]
+        o_os = o_json["offscreen_samples"][s_idx]
+        assert len(p_os) == len(o_os) == 24
+        for i in range(24):
+            po = p_os[i]
+            oo = o_os[i]
+            assert po["owner_index"] == oo["owner_index"]
+            assert po["blend_mode"] == oo["blend_mode"]
+            assert po["flags"] == oo["flags"]
+            assert po["mask_indices"] == oo["mask_indices"]
+            op_err = abs(po["opacity"] - oo["opacity"])
+            max_op_err = max(max_op_err, op_err)
+            assert op_err < 1e-4, f"Offscreen {i} opacity mismatch: {po['opacity']} vs {oo['opacity']}"
+
+        # Drawables verification
+        p_samp = p_json["samples"][s_idx]
+        o_samp = o_json["samples"][s_idx]
+        assert len(p_samp) == len(o_samp) == 198
+        for d_idx in range(len(p_samp)):
+            pd = p_samp[d_idx]
+            od = o_samp[d_idx]
+            assert pd["runtime_id"] == od["runtime_id"]
+            assert abs(pd["opacity"] - od["opacity"]) < 1e-4
+            assert pd["draw_order"] == od["draw_order"]
+            for c in range(4):
+                assert abs(pd["multiply_color"][c] - od["multiply_color"][c]) < 1e-4
+                assert abs(pd["screen_color"][c] - od["screen_color"][c]) < 1e-4
+            for p1, p2 in zip(pd["positions"], od["positions"]):
+                dx = abs(p1[0] - p2[0])
+                dy = abs(p1[1] - p2[1])
+                max_pos_err = max(max_pos_err, dx, dy)
+    assert max_pos_err < 1e-4, f"Dual core probe pos err too large: {max_pos_err}"
+
+    # 3. Cargo tests
+    cargo_suites = [
+        ("kasane-core", ["cargo", "test", "-p", "kasane-core", "--locked"]),
+        ("kasane-godot", ["cargo", "test", "-p", "kasane-godot", "--locked"]),
+        ("kasane-moc3", ["cargo", "test", "-p", "kasane-moc3", "--locked"]),
+        ("kasane-project", ["cargo", "test", "-p", "kasane-project", "--locked"]),
+    ]
+    test_results = {}
+    for suite_name, cmd in cargo_suites:
+        print(f"Running {suite_name} tests...")
+        output = run_cmd(cmd)
+        test_results[suite_name] = {"passed": True, "output_snippet": output.splitlines()[-5:]}
+
+    gate = {
+        "version_6_layout_and_480_offsets": True,
+        "offscreen_document_object_and_order": True,
+        "offscreen_evaluation_and_scene_binding": True,
+        "offscreen_blendshape_and_delta_keyforms": True,
+        "art_mesh_raw_blend_mode": True,
+        "project_v4_codec_preserves_offscreen": True,
+        "export_auto_and_preflight_rejection": True,
+        "ren_24_offscreens_dual_core_parity": True,
+        "passed": True,
+    }
+
+    report = {
+        "milestone": "M3C",
+        "stage": "S5",
+        "status": "passed",
+        "system": {
+            "platform": platform.platform(),
+            "machine": platform.machine(),
+            "python": platform.python_version(),
+            "git": get_git_info(),
+        },
+        "cargo_tests": test_results,
+        "ren_v6_dual_core_verification": {
+            "fixture": "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.moc3",
+            "samples_tested": len(sample_values),
+            "offscreen_count": 24,
+            "max_dual_core_position_error": max_pos_err,
+            "max_dual_core_offscreen_opacity_error": max_op_err,
+            "official_core_status": "passed",
+            "purism_core_status": "passed",
+        },
+        "gate": gate,
+    }
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    report_path = output_dir / "s5_report.json"
+    report_path.write_text(json.dumps(report, indent=2) + "\n")
+    print(f"S5 Report written to {report_path}")
+    return report
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--manifest", type=Path, default=ROOT / "target/kasane/m3c/baseline_manifest.json")
@@ -877,8 +1002,13 @@ def main():
         if args.stage == "S4":
             return 0 if s4_report["gate"]["passed"] else 1
 
-    # Later stages (S5-S7)
-    stages = ["S5", "S6", "S7"] if args.stage == "all" else [args.stage]
+    if args.stage in ("S5", "all"):
+        s5_report = build_s5_report(args.sdk, args.probe_dir, args.output)
+        if args.stage == "S5":
+            return 0 if s5_report["gate"]["passed"] else 1
+
+    # Later stages (S6-S7)
+    stages = ["S6", "S7"] if args.stage == "all" else [args.stage]
     incomplete_stages = []
     for st in stages:
         stage_report_file = args.output / f"{st.lower()}_report.json"

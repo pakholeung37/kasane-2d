@@ -13,8 +13,8 @@ use kasane_core::types::{
 };
 use kasane_core::Document;
 use kasane_moc3::{
-    encode_moc3, import_from_bare_moc3, import_from_model3_file, import_from_model3_json,
-    inspect_moc3, Moc3Version,
+    encode_moc3, encode_moc3_with_version, import_from_bare_moc3, import_from_model3_file,
+    import_from_model3_json, inspect_moc3, Moc3ExportVersion, Moc3Version,
 };
 
 fn near(actual: f32, expected: f32, ppu: f32) {
@@ -104,6 +104,14 @@ impl PurismModelInstance {
         unsafe {
             csmUpdateModel(self.model);
         }
+    }
+
+    fn part_count(&self) -> usize {
+        unsafe { csmGetPartCount(self.model) as usize }
+    }
+
+    fn drawable_count(&self) -> usize {
+        unsafe { csmGetDrawableCount(self.model) as usize }
     }
 
     fn get_drawable(&self, runtime_id: &str) -> Option<PurismDrawableData> {
@@ -976,6 +984,7 @@ fn test_import_mao_full() {
             kasane_core::types::DeltaKeyforms::Rotation(_) => rot_bb += 1,
             kasane_core::types::DeltaKeyforms::Mesh(_) => mesh_bb += 1,
             kasane_core::types::DeltaKeyforms::Glue(_) => glue_bb += 1,
+            kasane_core::types::DeltaKeyforms::Offscreen(_) => {}
         }
     }
     println!("BlendBindings distribution: Part={}, Warp={}, Rotation={}, Mesh={}, Glue={}", part_bb, warp_bb, rot_bb, mesh_bb, glue_bb);
@@ -1572,6 +1581,7 @@ fn test_zero_triangle_mesh_editing_and_lifecycle() {
         double_sided: false,
         inverted_mask: false,
         masks: vec![],
+        raw_blend_mode: None,
     };
     assert!(doc.create_mesh(base_mesh.clone()).status.is_ok());
 
@@ -1662,10 +1672,13 @@ fn test_s1_layout_safety_and_version_gating() {
         let safe_ren = kasane_moc3::inspect_moc3_safety(&ren_bytes).expect("safety should pass on Ren");
         assert_eq!(safe_ren.version, Moc3Version::Version53);
         assert_eq!(safe_ren.counts.offscreens, 24);
-        assert!(safe_ren.unsupported_features.iter().any(|u| u.category == "version_6_moc53"));
-        assert!(safe_ren.unsupported_features.iter().any(|u| u.category == "offscreen"));
-        let err_ren = kasane_moc3::inspect_moc3(&ren_bytes).unwrap_err();
-        assert_eq!(err_ren.code, "UNSUPPORTED_FEATURE");
+        assert!(safe_ren.unsupported_features.is_empty(), "Ren unsupported_features must be empty in S5: {:?}", safe_ren.unsupported_features);
+        let ins_ren = kasane_moc3::inspect_moc3(&ren_bytes).expect("Ren inspection should succeed in S5");
+        assert_eq!(ins_ren.version, Moc3Version::Version53);
+        let decoded = kasane_moc3::decode_moc3(&ren_bytes, &ins_ren, &[]).expect("decode Ren in S5");
+        assert_eq!(decoded.document.offscreen_count(), 24);
+        assert_eq!(decoded.document.part_order().len(), 51);
+        assert_eq!(decoded.document.mesh_order().len(), 198);
     }
 
     // 3. Truncated 480-offset table for version 6
@@ -1928,4 +1941,48 @@ fn test_blendshape_glue_moc3_roundtrip_and_evaluation() {
     ];
     assert_runtime_matches(doc, &bytes, &samples);
 }
+
+#[test]
+fn test_v6_export_and_preflight() {
+    let root = workspace_root();
+    let ren_path = root.join("third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.moc3");
+    if !ren_path.exists() {
+        return;
+    }
+    let ren_bytes = fs::read(&ren_path).expect("read Ren");
+    let ins_ren = kasane_moc3::inspect_moc3(&ren_bytes).expect("Ren inspection");
+    let decoded = kasane_moc3::decode_moc3(&ren_bytes, &ins_ren, &[]).expect("decode Ren");
+    let doc = &decoded.document;
+
+    // 1. Re-export Ren with Auto -> should succeed and export v6
+    let exported = kasane_moc3::encode_moc3(doc).expect("encode Ren auto");
+    assert_eq!(exported.bytes[4], 6); // Version 6
+    let safe_re = kasane_moc3::inspect_moc3_safety(&exported.bytes).expect("safety on re-exported Ren");
+    assert_eq!(safe_re.version, Moc3Version::Version53);
+    assert_eq!(safe_re.counts.offscreens, 24);
+    assert_eq!(safe_re.counts.parts, 51);
+    assert_eq!(safe_re.counts.art_meshes, 198);
+
+    // 2. Export with Moc3ExportVersion::V50 -> should be rejected with INCOMPATIBLE_EXPORT_VERSION
+    let err_v50 = encode_moc3_with_version(doc, Moc3ExportVersion::V50)
+        .expect_err("V50 export must fail on document with offscreens");
+    assert_eq!(err_v50.code, "INCOMPATIBLE_EXPORT_VERSION");
+
+    // 3. Export with Moc3ExportVersion::V53 -> should succeed
+    let exp_v53 = encode_moc3_with_version(doc, Moc3ExportVersion::V53)
+        .expect("V53 export must succeed");
+    assert_eq!(exp_v53.bytes[4], 6);
+
+    // 4. Verify re-exported bytes can be loaded in PurismModelInstance
+    let purism = PurismModelInstance::new(&exported.bytes);
+    assert_eq!(purism.part_count(), 51);
+    assert_eq!(purism.drawable_count(), 198);
+
+    // 5. Test auto on a document without 5.3 features exports v5
+    let v5_source = fs::read(root.join("tests/fixtures/external_v50/model.moc3")).unwrap();
+    let v5_doc = import_from_bare_moc3(&v5_source, &HashMap::new()).unwrap().document;
+    let v5_exported = kasane_moc3::encode_moc3(&v5_doc).expect("encode v5 doc auto");
+    assert_eq!(v5_exported.bytes[4], 5); // Version 5
+}
+
 

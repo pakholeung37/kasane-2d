@@ -274,6 +274,8 @@ pub struct Mesh {
     pub double_sided: bool,
     pub inverted_mask: bool,
     pub masks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_blend_mode: Option<u32>,
 }
 
 impl Default for Mesh {
@@ -296,6 +298,7 @@ impl Default for Mesh {
             double_sided: true,
             inverted_mask: false,
             masks: Vec::new(),
+            raw_blend_mode: None,
         }
     }
 }
@@ -352,6 +355,7 @@ pub enum BlendShapeTargetKind {
     Rotation,
     Part,
     Glue,
+    Offscreen,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -407,6 +411,15 @@ pub struct DeltaGlueKeyform {
     pub intensity: f32,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct DeltaOffscreenKeyform {
+    pub opacity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<[f32; 3]>,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "items", rename_all = "snake_case")]
 pub enum DeltaKeyforms {
@@ -415,6 +428,7 @@ pub enum DeltaKeyforms {
     Rotation(Vec<DeltaRotationKeyform>),
     Part(Vec<DeltaPartKeyform>),
     Glue(Vec<DeltaGlueKeyform>),
+    Offscreen(Vec<DeltaOffscreenKeyform>),
 }
 
 impl DeltaKeyforms {
@@ -425,6 +439,7 @@ impl DeltaKeyforms {
             DeltaKeyforms::Rotation(v) => v.len(),
             DeltaKeyforms::Part(v) => v.len(),
             DeltaKeyforms::Glue(v) => v.len(),
+            DeltaKeyforms::Offscreen(v) => v.len(),
         }
     }
 
@@ -481,6 +496,44 @@ pub struct GlueKeyform {
 pub struct BindingAxis {
     pub parameter_id: String,
     pub keys: Vec<f32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+pub struct OffscreenKeyform {
+    pub opacity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub screen: Option<[f32; 3]>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Offscreen {
+    pub id: String,
+    pub runtime_id: String,
+    pub name: String,
+    pub part_id: String,
+    pub blend_mode: u32,
+    pub flags: u8,
+    pub masks: Vec<String>,
+    pub part_keyform_indices: Vec<i32>,
+    pub keyforms: Vec<OffscreenKeyform>,
+}
+
+impl Default for Offscreen {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            runtime_id: String::new(),
+            name: String::new(),
+            part_id: String::new(),
+            blend_mode: 0,
+            flags: 4,
+            masks: Vec::new(),
+            part_keyform_indices: Vec::new(),
+            keyforms: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

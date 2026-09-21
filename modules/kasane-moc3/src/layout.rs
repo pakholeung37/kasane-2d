@@ -14,13 +14,19 @@ pub fn checked(n: usize, field: &str) -> Result<i32, Status> {
 }
 
 pub struct Layout {
+    pub version: u8,
     pub counts: [u32; 64],
     pub data: Vec<Vec<u8>>,
 }
 
 impl Layout {
     pub fn new() -> Self {
+        Self::with_version(5)
+    }
+
+    pub fn with_version(version: u8) -> Self {
         Self {
+            version,
             counts: [0; 64],
             data: vec![Vec::new(); SCHEMA.len()],
         }
@@ -63,17 +69,26 @@ impl Layout {
             self.data[0].extend_from_slice(&n.to_le_bytes());
         }
 
-        // Reserve loader scratch after the 64-byte header and 160 offsets.
+        // Reserve loader scratch after the 64-byte header and 160 offsets (v5) or 480 offsets (v6).
         // Both Core implementations revive pointers in this area in-place.
         // This is zeroed wire padding, never a serialized native structure.
-        let mut out = vec![0u8; 1984];
+        let header_reserve = if self.version >= 6 { 5824 } else { 1984 };
+        let mut out = vec![0u8; header_reserve];
         out[0] = b'M';
         out[1] = b'O';
         out[2] = b'C';
         out[3] = b'3';
-        out[4] = 5;
+        out[4] = self.version;
 
-        for (i, s) in SCHEMA.iter().enumerate() {
+        let section_count = match self.version {
+            1 => 101,
+            2 | 3 => 102,
+            4 => 137,
+            5 => 152,
+            _ => 167,
+        };
+
+        for (i, s) in SCHEMA[..section_count].iter().enumerate() {
             let count = if s.count_index < 0 {
                 1
             } else {

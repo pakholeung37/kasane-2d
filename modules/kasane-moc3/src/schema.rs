@@ -769,4 +769,79 @@ pub const SCHEMA: &[SectionSchema] = &[
         width: 4,
         count_index: 34,
     },
+    SectionSchema {
+        name: "part_src.offscreen_idx",
+        width: 4,
+        count_index: 0,
+    },
+    SectionSchema {
+        name: "art_mesh_src.blend_mode",
+        width: 4,
+        count_index: 4,
+    },
+    SectionSchema {
+        name: "offscreen_src.drawable_mask_runtime",
+        width: 8,
+        count_index: 35,
+    },
+    SectionSchema {
+        name: "offscreen_src.owner_idx",
+        width: 4,
+        count_index: 35,
+    },
+    SectionSchema {
+        name: "offscreen_src.drawable_flag",
+        width: 1,
+        count_index: 35,
+    },
+    SectionSchema {
+        name: "offscreen_src.blend_mode",
+        width: 4,
+        count_index: 35,
+    },
+    SectionSchema {
+        name: "offscreen_src.mask_off",
+        width: 4,
+        count_index: 35,
+    },
+    SectionSchema {
+        name: "offscreen_src.mask_len",
+        width: 4,
+        count_index: 35,
+    },
+    SectionSchema {
+        name: "part_key_src.key_idx",
+        width: 4,
+        count_index: 6,
+    },
+    SectionSchema {
+        name: "offscreen_key_src.opacity",
+        width: 4,
+        count_index: 36,
+    },
+    SectionSchema {
+        name: "offscreen_key_src.key_mul_color_off",
+        width: 4,
+        count_index: 36,
+    },
+    SectionSchema {
+        name: "offscreen_key_src.key_scr_color_off",
+        width: 4,
+        count_index: 36,
+    },
+    SectionSchema {
+        name: "bs_offscreen_src.target_idx",
+        width: 4,
+        count_index: 37,
+    },
+    SectionSchema {
+        name: "bs_offscreen_src.bs_binding_off",
+        width: 4,
+        count_index: 37,
+    },
+    SectionSchema {
+        name: "bs_offscreen_src.bs_binding_len",
+        width: 4,
+        count_index: 37,
+    },
 ];

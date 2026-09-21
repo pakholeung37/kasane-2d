@@ -145,32 +145,8 @@ fn read_f32(buf: &[u8], offset: usize) -> Result<f32, Status> {
 
 use crate::schema::{SectionSchema, SCHEMA};
 
-const V53_SECTIONS: &[SectionSchema] = &[
-    SectionSchema { name: "part_src.offscreen_idx", width: 4, count_index: 0 },
-    SectionSchema { name: "art_mesh_src.blend_mode", width: 4, count_index: 4 },
-    SectionSchema { name: "offscreen_src.drawable_mask_runtime", width: 8, count_index: 35 },
-    SectionSchema { name: "offscreen_src.owner_idx", width: 4, count_index: 35 },
-    SectionSchema { name: "offscreen_src.drawable_flag", width: 1, count_index: 35 },
-    SectionSchema { name: "offscreen_src.blend_mode", width: 4, count_index: 35 },
-    SectionSchema { name: "offscreen_src.mask_off", width: 4, count_index: 35 },
-    SectionSchema { name: "offscreen_src.mask_len", width: 4, count_index: 35 },
-    SectionSchema { name: "part_key_src.key_idx", width: 4, count_index: 6 },
-    SectionSchema { name: "offscreen_key_src.opacity", width: 4, count_index: 36 },
-    SectionSchema { name: "offscreen_key_src.key_mul_color_off", width: 4, count_index: 36 },
-    SectionSchema { name: "offscreen_key_src.key_scr_color_off", width: 4, count_index: 36 },
-    SectionSchema { name: "bs_offscreen_src.target_idx", width: 4, count_index: 37 },
-    SectionSchema { name: "bs_offscreen_src.bs_binding_off", width: 4, count_index: 37 },
-    SectionSchema { name: "bs_offscreen_src.bs_binding_len", width: 4, count_index: 37 },
-];
-
 fn get_section_schema(i: usize) -> Option<&'static SectionSchema> {
-    if i < SCHEMA.len() {
-        Some(&SCHEMA[i])
-    } else if i - SCHEMA.len() < V53_SECTIONS.len() {
-        Some(&V53_SECTIONS[i - SCHEMA.len()])
-    } else {
-        None
-    }
+    SCHEMA.get(i)
 }
 
 fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
@@ -386,28 +362,6 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
 
     // Collect all unsupported features in a single pass without failing on the first one
     let mut unsupported_features = Vec::new();
-
-    // S2: Version 4 is supported; version 6 remains gated until S5
-    if version_raw == 6 {
-        unsupported_features.push(UnsupportedFeature {
-            category: "version_6_moc53".into(),
-            count: 1,
-            detail: "MOC3 version 6 (Cubism 5.3) import is not yet enabled (scheduled for S5)".into(),
-        });
-    }
-
-    // 1. Offscreen (offscreens, offscreen_keyforms, bs_offscreens)
-    let offscreen_total = i64::from(counts.offscreens) + i64::from(counts.offscreen_keyforms) + i64::from(counts.bs_offscreens);
-    if offscreen_total > 0 {
-        unsupported_features.push(UnsupportedFeature {
-            category: "offscreen".into(),
-            count: offscreen_total as usize,
-            detail: format!(
-                "Model contains Offscreen features (offscreens={}, offscreen_keyforms={}, bs_offscreens={}; Offscreen is out of scope for this milestone)",
-                counts.offscreens, counts.offscreen_keyforms, counts.bs_offscreens
-            ),
-        });
-    }
 
 
     if version_raw >= 4 && section_offsets.len() > 114 {

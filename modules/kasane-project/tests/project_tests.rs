@@ -6,8 +6,8 @@ use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
     Appearance, BindingAxis, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
     BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, Glue, GlueVertexPair, ImageAsset,
-    Mesh, MeshBinding, MeshKeyform, Parameter, ParameterKind, Part, RotationPose, Transform,
-    TransformKind, Vec2,
+    Mesh, MeshBinding, MeshKeyform, Offscreen, OffscreenKeyform, Parameter, ParameterKind, Part,
+    RotationPose, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::encode_moc3;
@@ -1466,14 +1466,66 @@ fn test_project_v4_rejects_unimplemented_collections() {
     let doc = fixture_doc(sha1, sha2);
     let encoded_v4 = encode_project(&doc).unwrap();
 
-    // Inject non-empty offscreens collection (unsupported in v4, scheduled for S5)
+    // Inject non-empty deformers collection (unsupported prototype relationships)
     let bad_project = encoded_v4.replace(
         "\"document\": {",
-        "\"document\": {\n    \"offscreens\": [{\"id\": \"off1\"}],",
+        "\"document\": {\n    \"deformers\": [{\"id\": \"def1\"}],",
     );
-    let err = decode_project(&bad_project).expect_err("Non-empty offscreens must be rejected");
-    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-    assert!(err.message.contains("Offscreen"));
+    let err = decode_project(&bad_project).expect_err("Non-empty deformers must be rejected");
+    assert_eq!(err.code, "LEGACY_PROJECT");
+    assert!(err.message.contains("Prototype relationships"));
+}
+
+#[test]
+fn test_project_v4_preserves_offscreen() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let mut doc = fixture_doc(sha1, sha2);
+
+    let mesh_id = doc.mesh_order()[0].clone();
+    let mut mesh = doc.get_mesh(&mesh_id).unwrap().clone();
+    mesh.raw_blend_mode = Some(262);
+    assert!(doc.replace_mesh(mesh).status.is_ok());
+
+    let os = Offscreen {
+        id: id(10),
+        runtime_id: "Offscreen0".to_string(),
+        name: "Offscreen 0".to_string(),
+        part_id: sid(1),
+        blend_mode: 262,
+        flags: 4,
+        masks: vec![mesh_id.clone()],
+        part_keyform_indices: vec![0],
+        keyforms: vec![OffscreenKeyform {
+            opacity: 0.8,
+            multiply: Some([1.0, 0.5, 0.5]),
+            screen: Some([0.1, 0.1, 0.1]),
+        }],
+    };
+    assert!(doc.create_offscreen(os.clone()).status.is_ok());
+
+    let encoded = encode_project(&doc).expect("encode_project failed");
+    assert!(encoded.contains("\"offscreens\":"));
+    assert!(encoded.contains("\"Offscreen0\""));
+    assert!(encoded.contains("\"raw_blend_mode\": 262"));
+
+    let decoded = decode_project(&encoded).expect("decode_project failed");
+    assert_eq!(decoded.offscreen_count(), 1);
+    let decoded_os = decoded.get_offscreen(&id(10)).expect("offscreen must exist");
+    assert_eq!(decoded_os.runtime_id, "Offscreen0");
+    assert_eq!(decoded_os.name, "Offscreen 0");
+    assert_eq!(decoded_os.part_id, sid(1));
+    assert_eq!(decoded_os.blend_mode, 262);
+    assert_eq!(decoded_os.flags, 4);
+    assert_eq!(decoded_os.masks, vec![mesh_id.clone()]);
+    assert_eq!(decoded_os.part_keyform_indices, vec![0]);
+    assert_eq!(decoded_os.keyforms.len(), 1);
+    assert_eq!(decoded_os.keyforms[0].opacity, 0.8);
+    assert_eq!(decoded_os.keyforms[0].multiply, Some([1.0, 0.5, 0.5]));
+    assert_eq!(decoded_os.keyforms[0].screen, Some([0.1, 0.1, 0.1]));
+
+    let decoded_mesh = decoded.get_mesh(&mesh_id).expect("mesh must exist");
+    assert_eq!(decoded_mesh.raw_blend_mode, Some(262));
 }
 
 #[test]

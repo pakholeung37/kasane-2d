@@ -159,13 +159,59 @@ fn write_delta_positions(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Moc3ExportVersion {
+    #[default]
+    Auto,
+    V50,
+    V53,
+}
+
 pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
+    encode_moc3_with_version(doc, Moc3ExportVersion::Auto)
+}
+
+pub fn encode_moc3_with_version(
+    doc: &Document,
+    target_version: Moc3ExportVersion,
+) -> Result<Moc3Artifact, Status> {
     if doc.transaction_active() {
         return Err(Status::error(
             "TRANSACTION_ACTIVE",
             "Commit or cancel edits before export",
         ));
     }
+
+    let has_v53_features = doc.offscreen_count() > 0
+        || doc
+            .mesh_order()
+            .iter()
+            .any(|id| doc.get_mesh(id).and_then(|m| m.raw_blend_mode).is_some())
+        || doc.blend_binding_order().iter().any(|id| {
+            doc.get_blend_binding(id)
+                .map(|b| b.target_kind == BlendShapeTargetKind::Offscreen)
+                .unwrap_or(false)
+        });
+
+    let export_version = match target_version {
+        Moc3ExportVersion::V50 => {
+            if has_v53_features {
+                return Err(Status::error(
+                    "INCOMPATIBLE_EXPORT_VERSION",
+                    "Cannot export to MOC3 5.0: document contains Cubism 5.3 features (offscreens or extended blend modes)",
+                ));
+            }
+            5
+        }
+        Moc3ExportVersion::V53 => 6,
+        Moc3ExportVersion::Auto => {
+            if has_v53_features {
+                6
+            } else {
+                5
+            }
+        }
+    };
 
     let mut frame = DrawableFrame::default();
     let s = evaluate_frame(doc, &HashMap::new(), &mut frame);
@@ -249,6 +295,16 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         }
     }
 
+    for id in doc.offscreen_order() {
+        let os = doc.get_offscreen(id).unwrap();
+        if !is_representable(&os.runtime_id) {
+            return Err(Status::error(
+                "UNREPRESENTABLE_ID",
+                format!("{}.runtime_id: requires 1..63 printable ASCII bytes", id),
+            ));
+        }
+    }
+
     struct BindingView<'a> {
         id: &'a str,
         axes: &'a [kasane_core::types::BindingAxis],
@@ -274,7 +330,7 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         }
     }
 
-    let mut l = Layout::new();
+    let mut l = Layout::with_version(export_version);
     let n = checked(drawables.len(), "art_meshes")?;
     l.counts[4] = n as u32;
     l.counts[19] = n as u32;
@@ -282,6 +338,24 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
     l.counts[5] = checked(doc.parameter_order().len(), "parameters")? as u32;
     l.counts[0] = checked(parts.len(), "parts")? as u32;
     l.counts[1] = checked(transforms.len(), "deformers")? as u32;
+
+    if export_version >= 6 {
+        l.counts[35] = doc.offscreen_count() as u32;
+    }
+
+    let mut os_kf_map: HashMap<(&str, usize), i32> = HashMap::new();
+    if export_version >= 6 {
+        for os_id in doc.offscreen_order() {
+            let os = doc.get_offscreen(os_id).unwrap();
+            for (idx, kf) in os.keyforms.iter().enumerate() {
+                let global = l.counts[36] as i32;
+                l.scalar("offscreen_key_src.opacity", kf.opacity)?;
+                write_bs_colors(&mut l, "offscreen_key_src", kf.multiply, kf.screen)?;
+                l.counts[36] += 1;
+                os_kf_map.insert((os.id.as_str(), idx), global);
+            }
+        }
+    }
 
     let c = doc.canvas();
     {
@@ -484,6 +558,15 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             index_of(&parts, &part.parent_id),
         )?;
 
+        if export_version >= 6 {
+            let os_idx = if let Some(os) = doc.offscreen_for_part(&part.id) {
+                doc.offscreen_order().iter().position(|id| id == &os.id).map(|i| i as i32).unwrap_or(-1)
+            } else {
+                -1
+            };
+            l.integer("part_src.offscreen_idx", os_idx)?;
+        }
+
         for k in 0..stored {
             let draw_order = if let Some(b) = b {
                 b.keyforms[k.min(count - 1) as usize].draw_order
@@ -491,6 +574,24 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
                 part.draw_order
             };
             l.scalar("part_key_src.draw_order", draw_order)?;
+
+            if export_version >= 6 {
+                let key_idx = if let Some(os) = doc.offscreen_for_part(&part.id) {
+                    if (k as usize) < os.part_keyform_indices.len() {
+                        let os_kf_idx = os.part_keyform_indices[k as usize];
+                        if os_kf_idx >= 0 && (os_kf_idx as usize) < os.keyforms.len() {
+                            *os_kf_map.get(&(os.id.as_str(), os_kf_idx as usize)).unwrap_or(&-1)
+                        } else {
+                            -1
+                        }
+                    } else {
+                        -1
+                    }
+                } else {
+                    -1
+                };
+                l.integer("part_key_src.key_idx", key_idx)?;
+            }
         }
         l.counts[6] += stored as u32;
     }
@@ -726,6 +827,11 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             l.integer("mask_src.art_mesh_idx", index_of(doc.mesh_order(), mask))?;
         }
 
+        if export_version >= 6 {
+            let raw_bm = mesh.raw_blend_mode.unwrap_or(0);
+            l.integer("art_mesh_src.blend_mode", raw_bm as i32)?;
+        }
+
         for k in 0..stored_count {
             let positions = if let Some(b) = binding {
                 &b.keyforms[k.min(key_count - 1) as usize].positions
@@ -850,11 +956,28 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         "constraint_vals",
     )? as u32;
 
+    if export_version >= 6 {
+        for os_id in doc.offscreen_order() {
+            let os = doc.get_offscreen(os_id).unwrap();
+            let owner_idx = parts.iter().position(|p| p == &os.part_id).unwrap() as i32;
+            l.integer("offscreen_src.owner_idx", owner_idx)?;
+            l.field("offscreen_src.drawable_flag")?.push(os.flags);
+            l.integer("offscreen_src.blend_mode", os.blend_mode as i32)?;
+            let mask_off = checked(l.field("mask_src.art_mesh_idx")?.len() / 4, &os.id)?;
+            l.integer("offscreen_src.mask_off", mask_off)?;
+            l.integer("offscreen_src.mask_len", checked(os.masks.len(), &os.id)?)?;
+            for mask in &os.masks {
+                l.integer("mask_src.art_mesh_idx", index_of(doc.mesh_order(), mask))?;
+            }
+        }
+    }
+
     let mut warp_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut mesh_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut part_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut rot_targets: HashMap<&str, Vec<&str>> = HashMap::new();
     let mut glue_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut offscreen_targets: HashMap<&str, Vec<&str>> = HashMap::new();
 
     for bid in doc.blend_binding_order() {
         let b = doc.get_blend_binding(bid).unwrap();
@@ -873,6 +996,9 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             }
             BlendShapeTargetKind::Glue => {
                 glue_targets.entry(b.target_id.as_str()).or_default().push(bid);
+            }
+            BlendShapeTargetKind::Offscreen => {
+                offscreen_targets.entry(b.target_id.as_str()).or_default().push(bid);
             }
         }
     }
@@ -1043,6 +1169,38 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
                 l.counts[26] += 1;
                 for f in forms {
                     l.scalar("glue_key_src.intensity", f.intensity)?;
+                }
+            }
+        }
+    }
+
+    // 6. Offscreen BlendShapes
+    if export_version >= 6 {
+        let mut sorted_offscreen_targets: Vec<&str> = offscreen_targets.keys().copied().collect();
+        sorted_offscreen_targets.sort_by_key(|id| index_of(doc.offscreen_order(), id));
+
+        for target_id in sorted_offscreen_targets {
+            let target_idx = index_of(doc.offscreen_order(), target_id);
+            let binding_ids = &offscreen_targets[target_id];
+            let bs_b_off = l.counts[26] as i32;
+            let bs_b_len = checked(binding_ids.len(), "bs_offscreen_b_len")?;
+            l.integer("bs_offscreen_src.target_idx", target_idx)?;
+            l.integer("bs_offscreen_src.bs_binding_off", bs_b_off)?;
+            l.integer("bs_offscreen_src.bs_binding_len", bs_b_len)?;
+            l.counts[37] += 1;
+
+            for &bid in binding_ids {
+                let b = doc.get_blend_binding(bid).unwrap();
+                if let DeltaKeyforms::Offscreen(ref forms) = b.keyforms {
+                    let key_bs_off = l.counts[36] as i32;
+                    let key_bs_len = forms.len() as i32;
+                    write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                    l.counts[26] += 1;
+                    for f in forms {
+                        l.scalar("offscreen_key_src.opacity", f.opacity)?;
+                        write_bs_colors(&mut l, "offscreen_key_src", f.multiply, f.screen)?;
+                        l.counts[36] += 1;
+                    }
                 }
             }
         }

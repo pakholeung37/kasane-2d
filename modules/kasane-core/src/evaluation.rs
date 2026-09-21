@@ -67,11 +67,26 @@ pub struct EvaluatedParameter {
 }
 
 #[derive(Debug, Clone, PartialEq, Default)]
+pub struct OffscreenFrame {
+    pub id: String,
+    pub runtime_id: String,
+    pub owner_part_id: String,
+    pub opacity: f32,
+    pub enabled: bool,
+    pub blend_mode: u32,
+    pub flags: u8,
+    pub masks: Vec<String>,
+    pub multiply_color: [f32; 4],
+    pub screen_color: [f32; 4],
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct DrawableFrame {
     pub source_revision: u64,
     pub canvas: Canvas,
     pub parameters: Vec<EvaluatedParameter>,
     pub drawables: Vec<Drawable>,
+    pub offscreens: Vec<OffscreenFrame>,
 }
 
 pub fn to_parent_positions(
@@ -416,6 +431,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         canvas: doc.canvas(),
         parameters: Vec::with_capacity(doc.parameter_order().len()),
         drawables: Vec::with_capacity(doc.mesh_order().len()),
+        offscreens: Vec::with_capacity(doc.offscreen_order().len()),
     };
 
     let mut values = HashMap::new();
@@ -997,6 +1013,111 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
     }
     for d in &mut frame.drawables {
         d.render_order = orders[d.id.as_str()];
+    }
+
+    for os_id in doc.offscreen_order() {
+        if let Some(os) = doc.get_offscreen(os_id) {
+            let part_id = &os.part_id;
+            let owner_enabled = enabled_parts.get(part_id).copied().unwrap_or(false);
+            let mut opacity = 0.0f32;
+            let mut mul_color = [1.0f32, 1.0, 1.0, 1.0];
+            let mut scr_color = [0.0f32, 0.0, 0.0, 1.0];
+
+            if owner_enabled {
+                if let Some(b) = doc.binding_for_scene(part_id) {
+                    let s = select(doc, &values, &b.axes);
+                    let mut interp_opa = 0.0f32;
+                    let mut interp_mul = [0.0f32; 3];
+                    let mut interp_scr = [0.0f32; 3];
+                    let mut has_color = false;
+                    for k in 0..s.indices.len() {
+                        let kf_idx = s.indices[k];
+                        let w = s.weights[k];
+                        let os_kf_idx = if kf_idx < os.part_keyform_indices.len() {
+                            os.part_keyform_indices[kf_idx]
+                        } else {
+                            -1
+                        };
+                        if os_kf_idx >= 0 && (os_kf_idx as usize) < os.keyforms.len() {
+                            let kf = &os.keyforms[os_kf_idx as usize];
+                            interp_opa += kf.opacity * w;
+                            if let Some(m) = kf.multiply {
+                                interp_mul[0] += m[0] * w;
+                                interp_mul[1] += m[1] * w;
+                                interp_mul[2] += m[2] * w;
+                                has_color = true;
+                            } else {
+                                interp_mul[0] += 1.0 * w;
+                                interp_mul[1] += 1.0 * w;
+                                interp_mul[2] += 1.0 * w;
+                            }
+                            if let Some(scr) = kf.screen {
+                                interp_scr[0] += scr[0] * w;
+                                interp_scr[1] += scr[1] * w;
+                                interp_scr[2] += scr[2] * w;
+                                has_color = true;
+                            }
+                        } else {
+                            interp_opa += 1.0 * w;
+                            interp_mul[0] += 1.0 * w;
+                            interp_mul[1] += 1.0 * w;
+                            interp_mul[2] += 1.0 * w;
+                        }
+                    }
+                    opacity = interp_opa;
+                    if has_color {
+                        mul_color = [interp_mul[0], interp_mul[1], interp_mul[2], 1.0];
+                        scr_color = [interp_scr[0], interp_scr[1], interp_scr[2], 1.0];
+                    }
+                } else if !os.keyforms.is_empty() {
+                    opacity = os.keyforms[0].opacity;
+                    if let Some(m) = os.keyforms[0].multiply {
+                        mul_color = [m[0], m[1], m[2], 1.0];
+                    }
+                    if let Some(scr) = os.keyforms[0].screen {
+                        scr_color = [scr[0], scr[1], scr[2], 1.0];
+                    }
+                } else {
+                    opacity = 1.0;
+                }
+
+                // Apply blendshapes
+                for bs in doc.blend_bindings_for_target(os_id) {
+                    if let DeltaKeyforms::Offscreen(ref forms) = bs.keyforms {
+                        for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                            if kf_idx < forms.len() {
+                                let df = &forms[kf_idx];
+                                opacity += df.opacity * eff_w;
+                                if let Some(m) = df.multiply {
+                                    mul_color[0] += (m[0] - 1.0) * eff_w;
+                                    mul_color[1] += (m[1] - 1.0) * eff_w;
+                                    mul_color[2] += (m[2] - 1.0) * eff_w;
+                                }
+                                if let Some(scr) = df.screen {
+                                    scr_color[0] += scr[0] * eff_w;
+                                    scr_color[1] += scr[1] * eff_w;
+                                    scr_color[2] += scr[2] * eff_w;
+                                }
+                            }
+                        }
+                    }
+                }
+                opacity = opacity.clamp(0.0, 1.0);
+            }
+
+            frame.offscreens.push(OffscreenFrame {
+                id: os.id.clone(),
+                runtime_id: os.runtime_id.clone(),
+                owner_part_id: os.part_id.clone(),
+                opacity,
+                enabled: owner_enabled,
+                blend_mode: os.blend_mode,
+                flags: os.flags,
+                masks: os.masks.clone(),
+                multiply_color: mul_color,
+                screen_color: scr_color,
+            });
+        }
     }
 
     *out = frame;

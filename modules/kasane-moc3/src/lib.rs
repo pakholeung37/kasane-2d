@@ -7,7 +7,7 @@ pub mod schema;
 pub mod types;
 
 pub use decoder::{decode_moc3, DecodedMoc3, ImportIdMapping, ImportReport, TextureSlotInfo};
-pub use encoder::{encode_moc3, encode_moc3_into};
+pub use encoder::{encode_moc3, encode_moc3_into, encode_moc3_with_version, Moc3ExportVersion};
 pub use importer::{
     import_from_bare_moc3, import_from_bare_moc3_file, import_from_model3_file,
     import_from_model3_json, DiagnosticSeverity, ImportDiagnostic, ImportResult,

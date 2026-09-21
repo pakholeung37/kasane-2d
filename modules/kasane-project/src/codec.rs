@@ -4,9 +4,10 @@ use std::fmt;
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint,
-    BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform,
-    DeltaPartKeyform, DeltaRotationKeyform, DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset,
-    Mesh, MeshBinding, MeshKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform,
+    BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms,
+    DeltaMeshKeyform, DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform,
+    DeltaWarpKeyform, Glue, GlueVertexPair, ImageAsset, Mesh, MeshBinding, MeshKeyform,
+    Offscreen, OffscreenKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform,
     Status, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
@@ -120,11 +121,13 @@ struct MeshPropertiesWire {
     deformer_id: String,
     appearance: AppearanceWire,
     blend_mode: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    raw_blend_mode: Option<u32>,
     enabled: bool,
     double_sided: bool,
     inverted_mask: bool,
     masks: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     draw_order: Option<f32>,
 }
 
@@ -346,6 +349,15 @@ struct DeltaGlueKeyformWire {
     intensity: f32,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct DeltaOffscreenKeyformWire {
+    opacity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screen: Option<[f32; 3]>,
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type", content = "items", rename_all = "snake_case")]
 enum DeltaKeyformsWire {
@@ -354,6 +366,7 @@ enum DeltaKeyformsWire {
     Rotation(Vec<DeltaRotationKeyformWire>),
     Part(Vec<DeltaPartKeyformWire>),
     Glue(Vec<DeltaGlueKeyformWire>),
+    Offscreen(Vec<DeltaOffscreenKeyformWire>),
 }
 
 #[derive(Serialize, Deserialize)]
@@ -389,6 +402,51 @@ struct GlueWire {
     binding_id: Option<String>,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+struct OffscreenKeyformWire {
+    opacity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    multiply: Option<[f32; 3]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    screen: Option<[f32; 3]>,
+}
+
+impl From<&OffscreenKeyform> for OffscreenKeyformWire {
+    fn from(k: &OffscreenKeyform) -> Self {
+        Self {
+            opacity: k.opacity,
+            multiply: k.multiply,
+            screen: k.screen,
+        }
+    }
+}
+
+impl From<OffscreenKeyformWire> for OffscreenKeyform {
+    fn from(k: OffscreenKeyformWire) -> Self {
+        Self {
+            opacity: k.opacity,
+            multiply: k.multiply,
+            screen: k.screen,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+struct OffscreenWire {
+    id: String,
+    runtime_id: String,
+    name: String,
+    part_id: String,
+    blend_mode: u32,
+    flags: u8,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    masks: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    part_keyform_indices: Vec<i32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    keyforms: Vec<OffscreenKeyformWire>,
+}
+
 fn default_canvas_flag() -> u8 {
     1
 }
@@ -418,14 +476,14 @@ struct DocumentWire {
     blend_bindings: Vec<BlendShapeBindingWire>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     glues: Vec<GlueWire>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    offscreens: Vec<OffscreenWire>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deformers: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     deformation_links: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     organization_links: Option<serde_json::Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    offscreens: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -478,6 +536,7 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
                 double_sided: m.double_sided,
                 inverted_mask: m.inverted_mask,
                 masks: m.masks.clone(),
+                raw_blend_mode: m.raw_blend_mode,
                 draw_order: m.draw_order,
             },
         });
@@ -638,6 +697,16 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
                     })
                     .collect(),
             ),
+            DeltaKeyforms::Offscreen(forms) => DeltaKeyformsWire::Offscreen(
+                forms
+                    .iter()
+                    .map(|f| DeltaOffscreenKeyformWire {
+                        opacity: f.opacity,
+                        multiply: f.multiply,
+                        screen: f.screen,
+                    })
+                    .collect(),
+            ),
         };
         blend_bindings_wire.push(BlendShapeBindingWire {
             id: b.id.clone(),
@@ -675,6 +744,22 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
         });
     }
 
+    let mut offscreens_wire = Vec::with_capacity(document.offscreen_order().len());
+    for id in document.offscreen_order() {
+        let o = document.get_offscreen(id).unwrap();
+        offscreens_wire.push(OffscreenWire {
+            id: o.id.clone(),
+            runtime_id: o.runtime_id.clone(),
+            name: o.name.clone(),
+            part_id: o.part_id.clone(),
+            blend_mode: o.blend_mode,
+            flags: o.flags,
+            masks: o.masks.clone(),
+            part_keyform_indices: o.part_keyform_indices.clone(),
+            keyforms: o.keyforms.iter().map(OffscreenKeyformWire::from).collect(),
+        });
+    }
+
     let mut assets_wire = Vec::with_capacity(document.asset_order().len());
     for id in document.asset_order() {
         assets_wire.push(document.get_asset(id).unwrap().clone());
@@ -701,10 +786,10 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             blend_constraints: blend_constraints_wire,
             blend_bindings: blend_bindings_wire,
             glues: glues_wire,
+            offscreens: offscreens_wire,
             deformers: None,
             deformation_links: None,
             organization_links: None,
-            offscreens: None,
         },
     };
 
@@ -761,18 +846,6 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
     }
 
     let doc = root.document;
-
-    // Reject unimplemented non-empty collections
-    if let Some(offscreens) = &doc.offscreens {
-        if let Some(arr) = offscreens.as_array() {
-            if !arr.is_empty() {
-                return Err(Status::error(
-                    "UNSUPPORTED_FEATURE",
-                    "Offscreen collection is not yet supported in project v4",
-                ));
-            }
-        }
-    }
 
     // Check prototype relationships
     for val in [
@@ -932,6 +1005,7 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             uvs: m.uvs.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
             triangles,
             draw_order: m.properties.draw_order,
+            raw_blend_mode: m.properties.raw_blend_mode,
             appearance: m.properties.appearance.clone().into(),
             blend_mode,
             enabled: m.properties.enabled,
@@ -968,6 +1042,7 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             uvs: m.uvs.iter().map(|p| Vec2::new(p[0], p[1])).collect(),
             triangles,
             draw_order: m.properties.draw_order,
+            raw_blend_mode: m.properties.raw_blend_mode,
             appearance: m.properties.appearance.into(),
             blend_mode,
             enabled: m.properties.enabled,
@@ -1095,6 +1170,24 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         }
     }
 
+    for o in doc.offscreens {
+        let keyforms = o.keyforms.into_iter().map(OffscreenKeyform::from).collect();
+        let res = candidate.create_offscreen(Offscreen {
+            id: o.id,
+            runtime_id: o.runtime_id,
+            name: o.name,
+            part_id: o.part_id,
+            blend_mode: o.blend_mode,
+            flags: o.flags,
+            masks: o.masks,
+            part_keyform_indices: o.part_keyform_indices,
+            keyforms,
+        });
+        if !res.status.is_ok() {
+            return Err(res.status);
+        }
+    }
+
     for b in doc.blend_bindings {
         let keyforms = match b.keyforms {
             DeltaKeyformsWire::Mesh(forms) => DeltaKeyforms::Mesh(
@@ -1154,6 +1247,16 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
                     .into_iter()
                     .map(|f| DeltaGlueKeyform {
                         intensity: f.intensity,
+                    })
+                    .collect(),
+            ),
+            DeltaKeyformsWire::Offscreen(forms) => DeltaKeyforms::Offscreen(
+                forms
+                    .into_iter()
+                    .map(|f| DeltaOffscreenKeyform {
+                        opacity: f.opacity,
+                        multiply: f.multiply,
+                        screen: f.screen,
                     })
                     .collect(),
             ),

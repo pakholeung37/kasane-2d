@@ -216,6 +216,6 @@ python3 tools/validate_m3c.py --manifest <local-manifest.json> --stage all --out
 | S2 | passed | modules/kasane-moc3, modules/kasane-project, tools/create_v42_external_fixture.py, tools/validate_m3c.py | [s2_report.json](../target/kasane/m3c/s2_report.json) | 代码及构造用例交付完成；真实外部 4.2 样本验收保持 not_run |
 | S3 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, modules/kasane-project, tools/create_cyclic_fixture.py, tools/validate_m3c.py | [s3_report.json](../target/kasane/m3c/s3_report.json) | 无；循环参数、wrap 数值与跨周期求值、工程 v4 迁移与未实现集合拦截、双 Core 验证通过 |
 | S4 | passed | modules/kasane-core, modules/kasane-project, modules/kasane-moc3, tools/validate_m3c.py | [s4_report.json](../target/kasane/m3c/s4_report.json) | 无；BlendShape Glue 增量强度求值、[0, 1] 钳制、decoder/encoder bs_glue_src、删除引用保护、工程 v4 往返与双 Core 0 误差通过 |
-| S5 | not_run | — | — | 5.3 数值及导出 |
+| S5 | passed | modules/kasane-core, modules/kasane-project, modules/kasane-moc3, tools/validate_m3c.py | [s5_report.json](../target/kasane/m3c/s5_report.json) | 无；Offscreen 与 raw_blend_mode 语义、v6 480 偏移布局 (5824 头部预留)、Part 映射与求值、工程 v4 编解码、Auto/强制 5.0/5.3 预检及双 Core 24 个 Offscreen 零误差一致通过 |
 | S6 | not_run | — | — | 5.3 GPU |
 | S7 | not_run | — | — | 全矩阵与独立应用 |
