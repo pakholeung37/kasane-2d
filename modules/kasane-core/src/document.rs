@@ -1,5 +1,6 @@
 use crate::draw_order::{validate_groups, DrawOrderGroup};
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use crate::geometry::{validate_positions, validate_render_mesh};
 use crate::types::{
@@ -112,6 +113,14 @@ pub struct Document {
     offscreen_order: Vec<String>,
 
     saved_content: Option<Box<DocumentContent>>,
+    lookup: OnceLock<DocumentLookup>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct DocumentLookup {
+    mesh_bindings: HashMap<String, String>,
+    scene_bindings: HashMap<String, String>,
+    blend_bindings: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -143,6 +152,71 @@ struct DocumentContent {
     glue_order: Vec<String>,
     offscreens: HashMap<String, Offscreen>,
     offscreen_order: Vec<String>,
+}
+
+#[derive(PartialEq)]
+struct ContentRef<'a> {
+    id: &'a String,
+    canvas: &'a Canvas,
+    assets: &'a HashMap<String, ImageAsset>,
+    asset_order: &'a Vec<String>,
+    parts: &'a HashMap<String, Part>,
+    part_order: &'a Vec<String>,
+    transforms: &'a HashMap<String, Transform>,
+    transform_order: &'a Vec<String>,
+    meshes: &'a HashMap<String, Mesh>,
+    mesh_order: &'a Vec<String>,
+    parameters: &'a HashMap<String, Parameter>,
+    parameter_order: &'a Vec<String>,
+    bindings: &'a HashMap<String, MeshBinding>,
+    binding_order: &'a Vec<String>,
+    scene_bindings: &'a HashMap<String, SceneBinding>,
+    scene_binding_order: &'a Vec<String>,
+    draw_order_groups: &'a Option<Vec<DrawOrderGroup>>,
+    blend_key_tables: &'a HashMap<String, BlendShapeKeyTable>,
+    blend_key_table_order: &'a Vec<String>,
+    blend_constraints: &'a HashMap<String, BlendShapeConstraint>,
+    blend_constraint_order: &'a Vec<String>,
+    blend_bindings: &'a HashMap<String, BlendShapeBinding>,
+    blend_binding_order: &'a Vec<String>,
+    glues: &'a HashMap<String, Glue>,
+    glue_order: &'a Vec<String>,
+    offscreens: &'a HashMap<String, Offscreen>,
+    offscreen_order: &'a Vec<String>,
+}
+
+impl DocumentContent {
+    fn content_ref(&self) -> ContentRef<'_> {
+        ContentRef {
+            id: &self.id,
+            canvas: &self.canvas,
+            assets: &self.assets,
+            asset_order: &self.asset_order,
+            parts: &self.parts,
+            part_order: &self.part_order,
+            transforms: &self.transforms,
+            transform_order: &self.transform_order,
+            meshes: &self.meshes,
+            mesh_order: &self.mesh_order,
+            parameters: &self.parameters,
+            parameter_order: &self.parameter_order,
+            bindings: &self.bindings,
+            binding_order: &self.binding_order,
+            scene_bindings: &self.scene_bindings,
+            scene_binding_order: &self.scene_binding_order,
+            draw_order_groups: &self.draw_order_groups,
+            blend_key_tables: &self.blend_key_tables,
+            blend_key_table_order: &self.blend_key_table_order,
+            blend_constraints: &self.blend_constraints,
+            blend_constraint_order: &self.blend_constraint_order,
+            blend_bindings: &self.blend_bindings,
+            blend_binding_order: &self.blend_binding_order,
+            glues: &self.glues,
+            glue_order: &self.glue_order,
+            offscreens: &self.offscreens,
+            offscreen_order: &self.offscreen_order,
+        }
+    }
 }
 
 impl Document {
@@ -198,6 +272,38 @@ impl Document {
         self.revision
     }
 
+    fn content_ref(&self) -> ContentRef<'_> {
+        ContentRef {
+            id: &self.id,
+            canvas: &self.canvas,
+            assets: &self.assets,
+            asset_order: &self.asset_order,
+            parts: &self.parts,
+            part_order: &self.part_order,
+            transforms: &self.transforms,
+            transform_order: &self.transform_order,
+            meshes: &self.meshes,
+            mesh_order: &self.mesh_order,
+            parameters: &self.parameters,
+            parameter_order: &self.parameter_order,
+            bindings: &self.bindings,
+            binding_order: &self.binding_order,
+            scene_bindings: &self.scene_bindings,
+            scene_binding_order: &self.scene_binding_order,
+            draw_order_groups: &self.draw_order_groups,
+            blend_key_tables: &self.blend_key_tables,
+            blend_key_table_order: &self.blend_key_table_order,
+            blend_constraints: &self.blend_constraints,
+            blend_constraint_order: &self.blend_constraint_order,
+            blend_bindings: &self.blend_bindings,
+            blend_binding_order: &self.blend_binding_order,
+            glues: &self.glues,
+            glue_order: &self.glue_order,
+            offscreens: &self.offscreens,
+            offscreen_order: &self.offscreen_order,
+        }
+    }
+
     fn content(&self) -> DocumentContent {
         DocumentContent {
             id: self.id.clone(),
@@ -231,12 +337,12 @@ impl Document {
     }
 
     pub fn same_content(&self, other: &Document) -> bool {
-        self.content() == other.content()
+        self.content_ref() == other.content_ref()
     }
 
     pub fn modified(&self) -> bool {
         match &self.saved_content {
-            Some(saved) => &self.content() != saved.as_ref(),
+            Some(saved) => self.content_ref() != saved.content_ref(),
             None => self.initialized(),
         }
     }
@@ -300,6 +406,10 @@ impl Document {
     ) -> EditResult {
         if object_ids.is_empty() {
             object_ids = mesh_ids.clone();
+        }
+        // References only change with structure edits; vertex drags retain the index.
+        if kind == ChangeKind::Structure {
+            self.lookup.take();
         }
         self.revision += 1;
         EditResult {
@@ -1004,6 +1114,7 @@ impl Document {
         candidate
             .binding_order
             .retain(|id| candidate.bindings.contains_key(id));
+        candidate.lookup.take();
         let result = candidate.replace_mesh(mesh);
         if !result.status.is_ok() {
             return self.failed(result.status);
@@ -1021,6 +1132,7 @@ impl Document {
                 return self.failed(status);
             }
             candidate.blend_bindings.insert(b.id.clone(), b);
+            candidate.lookup.take();
         }
         for g in glues {
             let status = candidate.validate_glue(&g);
@@ -1056,6 +1168,12 @@ impl Document {
     }
 
     pub fn render_indices(&self, id: &str) -> Result<Vec<u32>, Status> {
+        let mut out = Vec::new();
+        self.render_indices_into(id, &mut out)?;
+        Ok(out)
+    }
+
+    pub fn render_indices_into(&self, id: &str, out: &mut Vec<u32>) -> Result<(), Status> {
         let mesh = self
             .get_mesh(id)
             .ok_or_else(|| Status::error("MISSING_MESH", "Mesh does not exist."))?;
@@ -1063,13 +1181,14 @@ impl Document {
             .vertex_slots
             .get(id)
             .ok_or_else(|| Status::error("MISSING_MESH", "Vertex slots missing."))?;
-        let mut out = Vec::with_capacity(mesh.triangles.len() * 3);
+        out.clear();
+        out.reserve(mesh.triangles.len() * 3);
         for triangle in &mesh.triangles {
             for vertex in triangle {
                 out.push(*slots.get(vertex).unwrap() as u32);
             }
         }
-        Ok(out)
+        Ok(())
     }
 
     pub fn rename_mesh(&mut self, id: &str, name: String) -> EditResult {
@@ -1426,13 +1545,37 @@ impl Document {
         self.bindings.get(id)
     }
 
-    pub fn binding_for_mesh(&self, mesh_id: &str) -> Option<&MeshBinding> {
-        for key in &self.binding_order {
-            if self.bindings[key].mesh_id == mesh_id {
-                return Some(&self.bindings[key]);
+    fn lookup(&self) -> &DocumentLookup {
+        self.lookup.get_or_init(|| {
+            let mut lookup = DocumentLookup::default();
+            for id in &self.binding_order {
+                lookup
+                    .mesh_bindings
+                    .insert(self.bindings[id].mesh_id.clone(), id.clone());
             }
-        }
-        None
+            for id in &self.scene_binding_order {
+                lookup
+                    .scene_bindings
+                    .insert(self.scene_bindings[id].target_id.clone(), id.clone());
+            }
+            for id in &self.blend_binding_order {
+                if let Some(binding) = self.blend_bindings.get(id) {
+                    lookup
+                        .blend_bindings
+                        .entry(binding.target_id.clone())
+                        .or_default()
+                        .push(id.clone());
+                }
+            }
+            lookup
+        })
+    }
+
+    pub fn binding_for_mesh(&self, mesh_id: &str) -> Option<&MeshBinding> {
+        self.lookup()
+            .mesh_bindings
+            .get(mesh_id)
+            .and_then(|id| self.bindings.get(id))
     }
 
     fn canonicalize_binding(&self, b: &mut MeshBinding) -> Status {
@@ -1652,12 +1795,10 @@ impl Document {
     }
 
     pub fn binding_for_scene(&self, target_id: &str) -> Option<&SceneBinding> {
-        for key in &self.scene_binding_order {
-            if self.scene_bindings[key].target_id == target_id {
-                return Some(&self.scene_bindings[key]);
-            }
-        }
-        None
+        self.lookup()
+            .scene_bindings
+            .get(target_id)
+            .and_then(|id| self.scene_bindings.get(id))
     }
 
     fn canonicalize_scene_binding(&self, b: &mut SceneBinding) -> Status {
@@ -2103,10 +2244,12 @@ impl Document {
     }
 
     pub fn blend_bindings_for_target(&self, target_id: &str) -> Vec<&BlendShapeBinding> {
-        self.blend_binding_order
-            .iter()
-            .filter_map(|id| self.blend_bindings.get(id))
-            .filter(|b| b.target_id == target_id)
+        self.lookup()
+            .blend_bindings
+            .get(target_id)
+            .into_iter()
+            .flatten()
+            .map(|id| &self.blend_bindings[id])
             .collect()
     }
 

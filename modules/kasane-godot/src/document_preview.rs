@@ -12,7 +12,7 @@ use godot::classes::{
 use godot::prelude::*;
 use std::collections::HashMap;
 
-use kasane_core::evaluation::{DrawableFrame, RenderCommand};
+use kasane_core::evaluation::{DrawableFrame, FrameEvaluator, RenderCommand};
 use kasane_core::types::{BlendMode, Status, Vec2};
 
 use crate::conversions::{error_dict, status_to_dict, Array, Dictionary};
@@ -27,7 +27,26 @@ struct MeshKey {
     texture: Gd<Texture2D>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct MaskKey {
+    sources: Vec<String>,
+    scale_bits: u64,
+    consumer: String,
+}
+
+impl MaskKey {
+    fn new(sources: &[String], scale: f64, consumer: &str) -> Self {
+        Self {
+            sources: sources.to_vec(),
+            scale_bits: scale.to_bits(),
+            consumer: consumer.to_owned(),
+        }
+    }
+}
+
 struct MaskView {
+    last_submission: u64,
+    bounds: Vector4,
     viewport: Gd<SubViewport>,
     root: Gd<Node2D>,
     sources: HashMap<String, Gd<MeshInstance2D>>,
@@ -53,7 +72,9 @@ pub struct KasaneDocumentPreview {
     materials: HashMap<String, Gd<ShaderMaterial>>,
     shaders: HashMap<u32, Gd<Shader>>,
     mask_shader: Option<Gd<Shader>>,
-    masks: HashMap<String, MaskView>,
+    masks: HashMap<MaskKey, MaskView>,
+    mask_targets: HashMap<String, MaskKey>,
+    mask_consumers: HashMap<String, String>,
     offscreens: HashMap<String, OffscreenView>,
     destination_copies: HashMap<String, Gd<BackBufferCopy>>,
     offscreen_creations: i64,
@@ -70,6 +91,10 @@ pub struct KasaneDocumentPreview {
     drawing_submission: Option<(u64, Rid)>,
     pending_draws: i32,
     runtime_frame: Option<DrawableFrame>,
+    evaluated_frame: DrawableFrame,
+    evaluator: FrameEvaluator,
+    verified_assets: HashMap<String, kasane_core::ImageAsset>,
+    verified_manifest: String,
     runtime_textures: HashMap<String, Gd<Texture2D>>,
 }
 
@@ -86,6 +111,9 @@ impl INode2D for KasaneDocumentPreview {
         // A completed image from the previous viewport cannot certify the new one.
         self.completed_submission = 0;
         self.surface_viewport = None;
+        for mask in self.masks.values_mut() {
+            mask.viewport.set_update_mode(UpdateMode::ONCE);
+        }
         self.pending_draws = if self.masks.is_empty() { 1 } else { 2 };
     }
 
@@ -131,6 +159,8 @@ impl INode2D for KasaneDocumentPreview {
 #[godot_api]
 impl KasaneDocumentPreview {
     fn clear_views(&mut self) {
+        self.mask_targets.clear();
+        self.mask_consumers.clear();
         for (_, mut copy) in self.destination_copies.drain() {
             copy.queue_free();
         }
@@ -197,7 +227,18 @@ impl KasaneDocumentPreview {
 
     #[func]
     pub fn _document_changed(&mut self, _change: Dictionary) {
-        self.refresh();
+        let reload_assets = self.document.as_ref().is_none_or(|doc| {
+            let doc = doc.bind();
+            let session = doc.session();
+            let source = session.document();
+            self.verified_manifest != session.manifest().to_string_lossy()
+                || source.asset_order().len() != self.verified_assets.len()
+                || source
+                    .asset_order()
+                    .iter()
+                    .any(|id| source.get_asset(id) != self.verified_assets.get(id))
+        });
+        self.refresh_inner(reload_assets);
     }
 
     #[func]
@@ -358,6 +399,13 @@ impl KasaneDocumentPreview {
     }
 
     fn refresh_inner(&mut self, reload_assets: bool) -> Dictionary {
+        let mut frame = std::mem::take(&mut self.evaluated_frame);
+        let result = self.refresh_with_frame(reload_assets, &mut frame);
+        self.evaluated_frame = frame;
+        result
+    }
+
+    fn refresh_with_frame(&mut self, reload_assets: bool, frame: &mut DrawableFrame) -> Dictionary {
         let Some(doc) = self.document.clone() else {
             self.clear_views();
             let res = error_dict("MISSING_DOCUMENT", "Attach a Document.");
@@ -365,30 +413,7 @@ impl KasaneDocumentPreview {
             return res;
         };
 
-        if reload_assets && !doc.bind().session().root().as_os_str().is_empty() {
-            let diags = doc.bind().session().diagnose();
-            if !diags.is_empty() {
-                self.clear_views();
-                let mut out = error_dict(
-                    "INCOMPLETE_RESOURCES",
-                    "Project resources failed verification.",
-                );
-                let mut diag_arr = Array::new();
-                for d in &diags {
-                    let mut item = Dictionary::new();
-                    item.set("asset_id", d.asset_id.as_str());
-                    item.set("code", d.code.as_str());
-                    item.set("message", d.message.as_str());
-                    diag_arr.push(&item);
-                }
-                out.set("diagnostics", &diag_arr);
-                self.last_result = out.clone();
-                return out;
-            }
-        }
-
-        let mut frame = DrawableFrame::default();
-        let status = doc.bind().evaluate(&mut frame);
+        let status = doc.bind().evaluate_reusing(&mut self.evaluator, frame);
         if !status.is_ok() {
             self.clear_views();
             let out = status_to_dict(&status);
@@ -403,6 +428,45 @@ impl KasaneDocumentPreview {
             return out;
         };
 
+        if reload_assets && !doc.bind().session().root().as_os_str().is_empty() {
+            let used: std::collections::HashSet<&str> = frame
+                .drawables
+                .iter()
+                .map(|d| d.texture_asset_id.as_str())
+                .collect();
+            let ids = doc.bind().session().document().asset_order().to_vec();
+            let mut diagnostics = Array::new();
+            for id in ids {
+                let status = if used.contains(id.as_str()) {
+                    textures
+                        .bind_mut()
+                        .resolve_asset(Some(doc.clone()), GString::from(id.as_str()))
+                } else {
+                    match doc.bind().session().read_asset(&id) {
+                        Ok(_) => Status::ok(),
+                        Err(status) => status,
+                    }
+                };
+                if !status.is_ok() {
+                    let mut item = Dictionary::new();
+                    item.set("asset_id", id.as_str());
+                    item.set("code", status.code.as_str());
+                    item.set("message", status.message.as_str());
+                    diagnostics.push(&item);
+                }
+            }
+            if !diagnostics.is_empty() {
+                self.clear_views();
+                let mut out = error_dict(
+                    "INCOMPLETE_RESOURCES",
+                    "Project resources failed verification.",
+                );
+                out.set("diagnostics", &diagnostics);
+                self.last_result = out.clone();
+                return out;
+            }
+        }
+
         let mut resolved = HashMap::new();
         for d in &frame.drawables {
             // Shared atlas assets must be validated/decoded once per refresh, not
@@ -414,7 +478,8 @@ impl KasaneDocumentPreview {
                 .bind()
                 .get_texture(GString::from(d.texture_asset_id.as_str()))
                 .is_none();
-            if (reload_assets || missing_texture)
+            if missing_texture
+                && !reload_assets
                 && !doc.bind().session().root().as_os_str().is_empty()
             {
                 let s = textures.bind_mut().resolve_asset(
@@ -465,7 +530,18 @@ impl KasaneDocumentPreview {
             drop(doc_bind);
             resolved.insert(d.texture_asset_id.clone(), tex);
         }
-        self.render_frame(&frame, &resolved)
+        let result = self.render_frame(&frame, &resolved);
+        if reload_assets && result.get("ok").and_then(|v| v.try_to::<bool>().ok()) == Some(true) {
+            let doc = doc.bind();
+            let source = doc.session().document();
+            self.verified_assets = source
+                .asset_order()
+                .iter()
+                .map(|id| (id.clone(), source.get_asset(id).unwrap().clone()))
+                .collect();
+            self.verified_manifest = doc.session().manifest().to_string_lossy().into_owned();
+        }
+        result
     }
 
     /// Shared Rust drawing contract. A runtime model can submit an evaluated
@@ -551,6 +627,8 @@ impl KasaneDocumentPreview {
                 false
             }
         });
+        self.mask_targets.clear();
+        self.mask_consumers = plan.mask_consumers;
         self.update_surfaces(frame, &active_offscreens, surface_size, surface_transform);
         for d in &frame.drawables {
             let Some(tex) = textures.get(&d.texture_asset_id).cloned() else {
@@ -567,20 +645,6 @@ impl KasaneDocumentPreview {
                 positions[i] = Vector2::new(px, py);
             }
 
-            let mut uvs = PackedVector2Array::new();
-            uvs.resize(d.uvs.len());
-            for (i, uv) in d.uvs.iter().enumerate() {
-                uvs[i] = Vector2::new(uv.x, 1.0 - uv.y);
-            }
-
-            let mut indices = PackedInt32Array::new();
-            indices.resize(d.indices.len());
-            for i in (0..d.indices.len()).step_by(3) {
-                indices[i] = d.indices[i] as i32;
-                indices[i + 1] = d.indices[i + 2] as i32;
-                indices[i + 2] = d.indices[i + 1] as i32;
-            }
-
             let reuse = self.mesh_keys.get(&d.id).is_some_and(|key| {
                 key.indices == d.indices && key.uvs == d.uvs && key.texture == tex
             });
@@ -592,6 +656,20 @@ impl KasaneDocumentPreview {
             let update_status = if reuse {
                 view.bind_mut().update_positions(positions)
             } else {
+                let mut uvs = PackedVector2Array::new();
+                uvs.resize(d.uvs.len());
+                for (i, uv) in d.uvs.iter().enumerate() {
+                    uvs[i] = Vector2::new(uv.x, 1.0 - uv.y);
+                }
+
+                let mut indices = PackedInt32Array::new();
+                indices.resize(d.indices.len());
+                for i in (0..d.indices.len()).step_by(3) {
+                    indices[i] = d.indices[i] as i32;
+                    indices[i + 1] = d.indices[i + 2] as i32;
+                    indices[i + 2] = d.indices[i + 1] as i32;
+                }
+
                 view.bind_mut()
                     .initialize(positions, uvs, indices, Some(tex.clone()))
             };
@@ -637,9 +715,6 @@ impl KasaneDocumentPreview {
             }
             self.mesh_keys.remove(&id);
             self.materials.remove(&id);
-            if let Some(mut mask) = self.masks.remove(&id) {
-                mask.viewport.queue_free();
-            }
         }
 
         for offscreen in &frame.offscreens {
@@ -759,6 +834,14 @@ impl KasaneDocumentPreview {
             }
         }
 
+        self.masks.retain(|_, mask| {
+            if mask.last_submission == self.submission_id {
+                true
+            } else {
+                mask.viewport.queue_free();
+                false
+            }
+        });
         self.execute_render_plan(frame, &required_copies);
 
         let mut res = status_to_dict(&Status::ok());

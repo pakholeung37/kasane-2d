@@ -14,15 +14,15 @@ fn is_representable(id: &str) -> bool {
     !id.is_empty() && id.len() <= 63 && id.bytes().all(|c| (0x20..=0x7e).contains(&c))
 }
 
-fn index_of(ids: &[String], id: &str) -> i32 {
-    if id.is_empty() {
-        -1
-    } else {
-        ids.iter()
-            .position(|x| x == id)
-            .map(|i| i as i32)
-            .unwrap_or(-1)
-    }
+fn index_map(ids: &[String]) -> HashMap<&str, usize> {
+    ids.iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect()
+}
+
+fn index_of(ids: &HashMap<&str, usize>, id: &str) -> i32 {
+    ids.get(id).map(|&index| index as i32).unwrap_or(-1)
 }
 
 fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> Result<u16, Status> {
@@ -285,6 +285,12 @@ pub fn encode_moc3_with_version(
 
     let parts = doc.sorted_parts();
     let transforms = doc.sorted_transforms();
+    let part_indices = index_map(&parts);
+    let transform_indices = index_map(&transforms);
+    let mesh_indices = index_map(doc.mesh_order());
+    let parameter_indices = index_map(doc.parameter_order());
+    let glue_indices = index_map(doc.glue_order());
+    let offscreen_indices = index_map(doc.offscreen_order());
 
     for id in &parts {
         let p = doc.get_part(id).unwrap();
@@ -597,7 +603,7 @@ pub fn encode_moc3_with_version(
         l.integer("part_src.enable", if part.enabled { 1 } else { 0 })?;
         l.integer(
             "part_src.parent_part_idx",
-            index_of(&parts, &part.parent_id),
+            index_of(&part_indices, &part.parent_id),
         )?;
 
         if export_version >= 6 {
@@ -663,10 +669,13 @@ pub fn encode_moc3_with_version(
         )?;
         l.integer("deformer_src.visible", 1)?;
         l.integer("deformer_src.enable", if t.enabled { 1 } else { 0 })?;
-        l.integer("deformer_src.parent_part_idx", index_of(&parts, &t.part_id))?;
+        l.integer(
+            "deformer_src.parent_part_idx",
+            index_of(&part_indices, &t.part_id),
+        )?;
         l.integer(
             "deformer_src.parent_deformer_idx",
-            index_of(&transforms, &t.parent_id),
+            index_of(&transform_indices, &t.parent_id),
         )?;
         l.integer("deformer_src.type", if warp { 0 } else { 1 })?;
 
@@ -765,9 +774,9 @@ pub fn encode_moc3_with_version(
             l.integer(
                 "draw_group_obj_src.idx",
                 if is_part {
-                    index_of(&parts, id)
+                    index_of(&part_indices, id)
                 } else {
-                    index_of(doc.mesh_order(), id)
+                    index_of(&mesh_indices, id)
                 },
             )?;
             l.integer(
@@ -795,9 +804,7 @@ pub fn encode_moc3_with_version(
 
     l.counts[19] = checked(l.field("draw_group_obj_src.idx")?.len() / 4, "draw_items")? as u32;
 
-    let mut mesh_indices: HashMap<&str, usize> = HashMap::new();
     for (i, d) in drawables.iter().enumerate() {
-        mesh_indices.insert(d.id.as_str(), i);
         {
             let ids = l.field("art_mesh_src.id")?;
             ids.extend_from_slice(d.runtime_id.as_bytes());
@@ -832,11 +839,11 @@ pub fn encode_moc3_with_version(
         l.integer("art_mesh_src.enable", if mesh.enabled { 1 } else { 0 })?;
         l.integer(
             "art_mesh_src.parent_part_idx",
-            index_of(&parts, &mesh.part_id),
+            index_of(&part_indices, &mesh.part_id),
         )?;
         l.integer(
             "art_mesh_src.parent_deformer_idx",
-            index_of(&transforms, &mesh.deformer_id),
+            index_of(&transform_indices, &mesh.deformer_id),
         )?;
         l.integer("art_mesh_src.texture_no", d.texture_slot)?;
 
@@ -869,7 +876,7 @@ pub fn encode_moc3_with_version(
         l.integer("art_mesh_src.mask_len", checked(mesh.masks.len(), &d.id)?)?;
 
         for mask in &mesh.masks {
-            l.integer("mask_src.art_mesh_idx", index_of(doc.mesh_order(), mask))?;
+            l.integer("mask_src.art_mesh_idx", index_of(&mesh_indices, mask))?;
         }
 
         if export_version >= 6 {
@@ -945,8 +952,8 @@ pub fn encode_moc3_with_version(
         let g = doc.get_glue(g_id).unwrap();
         let mesh_a = doc.get_mesh(&g.mesh_a_id).unwrap();
         let mesh_b = doc.get_mesh(&g.mesh_b_id).unwrap();
-        let ma_idx = index_of(doc.mesh_order(), &g.mesh_a_id);
-        let mb_idx = index_of(doc.mesh_order(), &g.mesh_b_id);
+        let ma_idx = index_of(&mesh_indices, &g.mesh_a_id);
+        let mb_idx = index_of(&mesh_indices, &g.mesh_b_id);
         let b_idx = if g.binding.is_some() {
             binding_indices[g_id.as_str()]
         } else {
@@ -994,7 +1001,7 @@ pub fn encode_moc3_with_version(
     let mut constraint_index_map: HashMap<&str, i32> = HashMap::new();
     for (c_idx, c_id) in doc.blend_constraint_order().iter().enumerate() {
         let c = doc.get_blend_constraint(c_id).unwrap();
-        let p_idx = index_of(doc.parameter_order(), &c.parameter_id);
+        let p_idx = index_of(&parameter_indices, &c.parameter_id);
         let val_off = checked(
             l.field("blend_constraint_val_src.key")?.len() / 4,
             "constraint_vals",
@@ -1026,7 +1033,7 @@ pub fn encode_moc3_with_version(
             l.integer("offscreen_src.mask_off", mask_off)?;
             l.integer("offscreen_src.mask_len", checked(os.masks.len(), &os.id)?)?;
             for mask in &os.masks {
-                l.integer("mask_src.art_mesh_idx", index_of(doc.mesh_order(), mask))?;
+                l.integer("mask_src.art_mesh_idx", index_of(&mesh_indices, mask))?;
             }
         }
     }
@@ -1087,7 +1094,7 @@ pub fn encode_moc3_with_version(
     sorted_mesh_targets.sort_by_key(|id| mesh_indices.get(id).copied().unwrap_or(usize::MAX));
 
     let mut sorted_part_targets: Vec<&str> = part_targets.keys().copied().collect();
-    sorted_part_targets.sort_by_key(|id| index_of(&parts, id));
+    sorted_part_targets.sort_by_key(|id| index_of(&part_indices, id));
 
     let mut sorted_rot_targets: Vec<&str> = rot_targets.keys().copied().collect();
     sorted_rot_targets.sort_by_key(|id| {
@@ -1098,7 +1105,7 @@ pub fn encode_moc3_with_version(
     });
 
     let mut sorted_glue_targets: Vec<&str> = glue_targets.keys().copied().collect();
-    sorted_glue_targets.sort_by_key(|id| index_of(doc.glue_order(), id));
+    sorted_glue_targets.sort_by_key(|id| index_of(&glue_indices, id));
 
     // 1. Warp BlendShapes
     for target_id in sorted_warp_targets {
@@ -1191,7 +1198,7 @@ pub fn encode_moc3_with_version(
 
     // 3. Part BlendShapes
     for target_id in sorted_part_targets {
-        let target_idx = index_of(&parts, target_id);
+        let target_idx = index_of(&part_indices, target_id);
         let binding_ids = &part_targets[target_id];
         let bs_b_off = l.counts[26] as i32;
         let bs_b_len = checked(binding_ids.len(), "bs_part_b_len")?;
@@ -1275,7 +1282,7 @@ pub fn encode_moc3_with_version(
 
     // 5. Glue BlendShapes
     for target_id in sorted_glue_targets {
-        let target_idx = index_of(doc.glue_order(), target_id);
+        let target_idx = index_of(&glue_indices, target_id);
         let binding_ids = &glue_targets[target_id];
         let bs_b_off = l.counts[26] as i32;
         let bs_b_len = checked(binding_ids.len(), "bs_glue_b_len")?;
@@ -1309,10 +1316,10 @@ pub fn encode_moc3_with_version(
     // 6. Offscreen BlendShapes
     if export_version >= 6 {
         let mut sorted_offscreen_targets: Vec<&str> = offscreen_targets.keys().copied().collect();
-        sorted_offscreen_targets.sort_by_key(|id| index_of(doc.offscreen_order(), id));
+        sorted_offscreen_targets.sort_by_key(|id| index_of(&offscreen_indices, id));
 
         for target_id in sorted_offscreen_targets {
-            let target_idx = index_of(doc.offscreen_order(), target_id);
+            let target_idx = index_of(&offscreen_indices, target_id);
             let binding_ids = &offscreen_targets[target_id];
             let bs_b_off = l.counts[26] as i32;
             let bs_b_len = checked(binding_ids.len(), "bs_offscreen_b_len")?;

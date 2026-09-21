@@ -33,9 +33,6 @@ impl KasaneDocumentPreview {
                 view.composite.queue_free();
                 view.viewport.queue_free();
             }
-            if let Some(mut mask) = self.masks.remove(&id) {
-                mask.viewport.queue_free();
-            }
         }
         if !frame.offscreens.is_empty() {
             let texture_to_model = surface_transform.affine_inverse();

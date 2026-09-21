@@ -357,6 +357,31 @@ pub fn decode_moc3(
         Ok(appearance)
     };
 
+    // Resolve key-table ownership once. Preserve the first owner's precedence.
+    let mut key_table_owners = vec![None; counts.key_tables as usize];
+    for p in 0..counts.parameters as usize {
+        let offset = read_i32(
+            bytes,
+            offsets[section::PARAM_SRC_KEY_TABLE_OFF] as usize + p * 4,
+        )?;
+        let len = read_i32(
+            bytes,
+            offsets[section::PARAM_SRC_KEY_TABLE_LEN] as usize + p * 4,
+        )?;
+        if len == 0 {
+            continue;
+        }
+        let end = offset
+            .checked_add(len)
+            .filter(|&end| offset >= 0 && len >= 0 && end <= counts.key_tables)
+            .ok_or_else(|| Status::error("INVALID_BINDING", "Invalid parameter key-table range"))?;
+        for owner in &mut key_table_owners[offset as usize..end as usize] {
+            if owner.is_none() {
+                *owner = Some(p);
+            }
+        }
+    }
+
     // Helper: recover binding axes for binding_idx
     let get_binding_axes = |b_idx: i32| -> Result<Vec<BindingAxis>, Status> {
         if b_idx < 0 || b_idx >= counts.bindings {
@@ -380,22 +405,11 @@ pub fn decode_moc3(
                 bytes,
                 offsets[section::KEY_TABLE_IDX_SRC_IDX] as usize + (kt_off + a) * 4,
             )?;
-            // Find which parameter owns kt
-            let mut param_idx: Option<usize> = None;
-            for p in 0..counts.parameters as usize {
-                let p_off = read_i32(
-                    bytes,
-                    offsets[section::PARAM_SRC_KEY_TABLE_OFF] as usize + p * 4,
-                )?;
-                let p_len = read_i32(
-                    bytes,
-                    offsets[section::PARAM_SRC_KEY_TABLE_LEN] as usize + p * 4,
-                )?;
-                if kt >= p_off && kt < p_off + p_len {
-                    param_idx = Some(p);
-                    break;
-                }
-            }
+            let param_idx = usize::try_from(kt)
+                .ok()
+                .and_then(|kt| key_table_owners.get(kt))
+                .copied()
+                .flatten();
             let p = param_idx.ok_or_else(|| {
                 Status::error(
                     "INVALID_BINDING",

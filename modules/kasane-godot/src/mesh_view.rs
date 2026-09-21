@@ -187,6 +187,9 @@ impl KasaneMeshView {
         }
         self.surface = None;
         self.positions.clear();
+        self.base_mut()
+            .set_mesh(Gd::<godot::classes::Mesh>::null_arg());
+        self.base_mut().set_visible(false);
     }
 
     #[func]

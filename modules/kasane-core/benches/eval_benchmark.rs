@@ -3,7 +3,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use kasane_core::{
-    evaluate_frame, BindingAxis, Canvas, Document, DrawableFrame, ImageAsset, Mesh, MeshBinding,
+    BindingAxis, Canvas, Document, DrawableFrame, FrameEvaluator, ImageAsset, Mesh, MeshBinding,
     MeshKeyform, Parameter, Part, RotationPose, SceneBinding, SceneKeyform, Transform,
     TransformKind, Vec2, VertexId,
 };
@@ -259,6 +259,7 @@ fn main() {
     );
 
     let mut frame = DrawableFrame::default();
+    let mut evaluator = FrameEvaluator::default();
     let mut preview = HashMap::new();
 
     // Warmup
@@ -266,7 +267,7 @@ fn main() {
         let val = (i as f32 * 0.1).sin();
         preview.insert(param_ids[0].clone(), val);
         preview.insert(param_ids[1].clone(), -val);
-        assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+        assert!(evaluator.evaluate(&doc, &preview, &mut frame).is_ok());
     }
 
     let iterations = 5000;
@@ -275,7 +276,9 @@ fn main() {
         let val = (i as f32 * 0.05).sin();
         preview.insert(param_ids[0].clone(), val);
         preview.insert(param_ids[1].clone(), -val * 0.8);
-        assert!(evaluate_frame(black_box(&doc), black_box(&preview), &mut frame).is_ok());
+        assert!(evaluator
+            .evaluate(black_box(&doc), black_box(&preview), &mut frame)
+            .is_ok());
         black_box(&frame);
     }
     let elapsed = start.elapsed();

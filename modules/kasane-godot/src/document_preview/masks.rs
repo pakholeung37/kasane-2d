@@ -15,12 +15,23 @@ impl KasaneDocumentPreview {
         requested_scale: f64,
     ) -> Option<(Variant, Vector4)> {
         if mask_ids.is_empty() {
-            if let Some(mut mask) = self.masks.remove(target_id) {
-                mask.viewport.queue_free();
-            }
             return None;
         }
 
+        // Share within a consumer viewport. Different offscreen consumers need
+        // separate dependency edges so every mask is ready in the same frame.
+        let consumer = self
+            .mask_consumers
+            .get(target_id)
+            .map(String::as_str)
+            .unwrap_or("");
+        let key = MaskKey::new(mask_ids, requested_scale, consumer);
+        self.mask_targets.insert(target_id.to_owned(), key.clone());
+        if let Some(mask) = self.masks.get(&key) {
+            if mask.last_submission == self.submission_id {
+                return Some((mask.viewport.get_texture()?.to_variant(), mask.bounds));
+            }
+        }
         let sources: Vec<MaskSourceSnapshot> = mask_ids
             .iter()
             .filter_map(|id| {
@@ -57,17 +68,19 @@ impl KasaneDocumentPreview {
         let final_sx = 1.max((size_x as f32 * scale).ceil() as i32);
         let final_sy = 1.max((size_y as f32 * scale).ceil() as i32);
 
-        if !self.masks.contains_key(target_id) {
+        if !self.masks.contains_key(&key) {
             let mut viewport = SubViewport::new_alloc();
             viewport.set_transparent_background(true);
             viewport.set_disable_3d(true);
-            viewport.set_update_mode(UpdateMode::ALWAYS);
+            viewport.set_update_mode(UpdateMode::ONCE);
             self.base_mut().add_child(&viewport);
             let root = Node2D::new_alloc();
             viewport.add_child(&root);
             self.masks.insert(
-                target_id.to_owned(),
+                key.clone(),
                 MaskView {
+                    last_submission: u64::MAX,
+                    bounds: Vector4::ZERO,
                     viewport,
                     root,
                     sources: HashMap::new(),
@@ -83,7 +96,9 @@ impl KasaneDocumentPreview {
                 shader
             })
             .clone();
-        let mask = self.masks.get_mut(target_id).unwrap();
+        let mask = self.masks.get_mut(&key).unwrap();
+        mask.last_submission = self.submission_id;
+        mask.viewport.set_update_mode(UpdateMode::ONCE);
         mask.viewport.set_size(Vector2i::new(final_sx, final_sy));
         mask.root.set_scale(Vector2::new(scale, scale));
         mask.root.set_position(-bounds.position * scale);
@@ -118,14 +133,58 @@ impl KasaneDocumentPreview {
             mesh.set_material(&*material);
         }
         let texture = mask.viewport.get_texture()?.to_variant();
-        Some((
-            texture,
-            Vector4::new(
-                bounds.position.x,
-                bounds.position.y,
-                final_sx as f32 / scale,
-                final_sy as f32 / scale,
-            ),
-        ))
+        mask.bounds = Vector4::new(
+            bounds.position.x,
+            bounds.position.y,
+            final_sx as f32 / scale,
+            final_sy as f32 / scale,
+        );
+        Some((texture, mask.bounds))
     }
+}
+
+pub(super) fn consumers(frame: &DrawableFrame) -> HashMap<String, String> {
+    let mut consumers = HashMap::new();
+    let masked: std::collections::HashSet<&str> = frame
+        .drawables
+        .iter()
+        .filter(|d| !d.masks.is_empty())
+        .map(|d| d.id.as_str())
+        .chain(
+            frame
+                .offscreens
+                .iter()
+                .filter(|o| !o.masks.is_empty())
+                .map(|o| o.id.as_str()),
+        )
+        .collect();
+    if masked.is_empty() {
+        return consumers;
+    }
+    let mut stack: Vec<&str> = Vec::new();
+    for command in &frame.render_plan {
+        match command {
+            RenderCommand::BeginOffscreen { offscreen_id } => {
+                if masked.contains(offscreen_id.as_str()) {
+                    consumers.insert(
+                        offscreen_id.clone(),
+                        stack.last().copied().unwrap_or("").to_owned(),
+                    );
+                }
+                stack.push(offscreen_id);
+            }
+            RenderCommand::DrawMesh { mesh_id } => {
+                if masked.contains(mesh_id.as_str()) {
+                    consumers.insert(
+                        mesh_id.clone(),
+                        stack.last().copied().unwrap_or("").to_owned(),
+                    );
+                }
+            }
+            RenderCommand::EndOffscreen { .. } => {
+                stack.pop();
+            }
+        }
+    }
+    consumers
 }

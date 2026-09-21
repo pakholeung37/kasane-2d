@@ -48,7 +48,11 @@ impl KasaneDocumentPreview {
                             self.offscreens[offscreen_id].viewport.get_viewport_rid(),
                             parent_rid,
                         );
-                        if let Some(mask) = self.masks.get(offscreen_id) {
+                        if let Some(mask) = self
+                            .mask_targets
+                            .get(offscreen_id)
+                            .and_then(|key| self.masks.get(key))
+                        {
                             RenderingServer::singleton().viewport_set_parent_viewport(
                                 mask.viewport.get_viewport_rid(),
                                 parent_rid,
@@ -77,7 +81,11 @@ impl KasaneDocumentPreview {
                         stack.push(offscreen_id.clone());
                     }
                     RenderCommand::DrawMesh { mesh_id } => {
-                        if let Some(mask) = self.masks.get(mesh_id) {
+                        if let Some(mask) = self
+                            .mask_targets
+                            .get(mesh_id)
+                            .and_then(|key| self.masks.get(key))
+                        {
                             let parent_rid = stack
                                 .last()
                                 .map(|id| self.offscreens[id].viewport.get_viewport_rid())

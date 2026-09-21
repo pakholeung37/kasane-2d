@@ -78,10 +78,30 @@ pub fn project_manifest(path: &Path) -> PathBuf {
 }
 
 pub fn read_project_asset(root: &Path, asset: &ImageAsset) -> Result<AssetData, Status> {
+    read_project_asset_if_changed(root, asset, None).map(|data| data.unwrap())
+}
+
+/// Skip PNG decoding only when these exact bytes have already been validated.
+/// Cached dimensions are checked against current metadata before skipping decode.
+pub fn read_project_asset_if_changed(
+    root: &Path,
+    asset: &ImageAsset,
+    validated_image: Option<(&str, u32, u32)>,
+) -> Result<Option<AssetData>, Status> {
     let source_path = asset_path(root, asset)?;
 
     let bytes = fs::read(&source_path)
         .map_err(|e| Status::error("PROJECT_IO", format!("{}: {}", asset.id, e)))?;
+
+    if let Some((hash, width, height)) = validated_image {
+        if width == asset.width
+            && height == asset.height
+            && (asset.sha256.is_empty() || asset.sha256 == hash)
+            && content_sha256(&bytes) == hash
+        {
+            return Ok(None);
+        }
+    }
 
     let data = decode_png(&bytes).map_err(|mut s| {
         s.message = format!("{}: {}", asset.id, s.message);
@@ -102,7 +122,7 @@ pub fn read_project_asset(root: &Path, asset: &ImageAsset) -> Result<AssetData, 
         ));
     }
 
-    Ok(data)
+    Ok(Some(data))
 }
 
 pub struct DocumentStore {
@@ -497,6 +517,18 @@ impl DocumentSession {
             .get_asset(asset_id)
             .ok_or_else(|| Status::error("NOT_FOUND", asset_id))?;
         read_project_asset(&self.root(), asset)
+    }
+
+    pub fn read_asset_if_changed(
+        &self,
+        asset_id: &str,
+        validated_image: Option<(&str, u32, u32)>,
+    ) -> Result<Option<AssetData>, Status> {
+        let asset = self
+            .document
+            .get_asset(asset_id)
+            .ok_or_else(|| Status::error("NOT_FOUND", asset_id))?;
+        read_project_asset_if_changed(&self.root(), asset, validated_image)
     }
 
     pub fn relocate_asset(&mut self, id: &str, path: &Path) -> kasane_core::types::EditResult {

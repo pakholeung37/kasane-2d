@@ -48,36 +48,43 @@ impl KasaneTextureStore {
         };
         let d_bind = d.bind();
         let id_str = id.to_string();
-        if d_bind.session().document().get_asset(&id_str).is_none() {
+        let Some(_) = d_bind.session().document().get_asset(&id_str) else {
             return Status::error("MISSING_ASSET", id_str);
-        }
-        let bytes = match d_bind.session().read_asset(&id_str) {
-            Ok(b) => b,
+        };
+        let validated_image = self.textures.get(&id_str).and_then(|t| {
+            self.content_hashes
+                .get(&id_str)
+                .map(|hash| (hash.as_str(), t.get_width() as u32, t.get_height() as u32))
+        });
+        let bytes = match d_bind
+            .session()
+            .read_asset_if_changed(&id_str, validated_image)
+        {
+            Ok(None) => return Status::ok(),
+            Ok(Some(b)) => b,
             Err(s) => {
                 self.textures.remove(&id_str);
                 self.content_hashes.remove(&id_str);
                 return s;
             }
         };
-        if self.content_hashes.get(&id_str) != Some(&bytes.sha256) {
-            let mut packed = PackedByteArray::new();
-            packed.resize(bytes.rgba.len());
-            for (i, &b) in bytes.rgba.iter().enumerate() {
-                packed[i] = b;
-            }
-            let image = Image::create_from_data(
-                bytes.width as i32,
-                bytes.height as i32,
-                false,
-                Format::RGBA8,
-                &packed,
-            );
-            if let Some(mut img) = image {
-                let _ = img.generate_mipmaps();
-                if let Some(tex) = ImageTexture::create_from_image(&img) {
-                    self.textures.insert(id_str.clone(), tex.upcast());
-                    self.content_hashes.insert(id_str, bytes.sha256);
-                }
+        let mut packed = PackedByteArray::new();
+        packed.resize(bytes.rgba.len());
+        for (i, &b) in bytes.rgba.iter().enumerate() {
+            packed[i] = b;
+        }
+        let image = Image::create_from_data(
+            bytes.width as i32,
+            bytes.height as i32,
+            false,
+            Format::RGBA8,
+            &packed,
+        );
+        if let Some(mut img) = image {
+            let _ = img.generate_mipmaps();
+            if let Some(tex) = ImageTexture::create_from_image(&img) {
+                self.textures.insert(id_str.clone(), tex.upcast());
+                self.content_hashes.insert(id_str, bytes.sha256);
             }
         }
         Status::ok()

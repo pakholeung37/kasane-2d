@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use crate::deformers::{rotation_parent_angle, rotation_points, warp_points, PsmVec2};
 use crate::document::Document;
 use crate::geometry::{to_runtime_positions, validate_positions};
-use crate::keyforms::{blend_vectors, find_key_segment, key_combinations, KeyAxis};
+use crate::keyforms::{find_key_segment, key_combinations, KeyAxis};
 use crate::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, Canvas,
     DeltaKeyforms, Mesh, RotationPose, Status, Transform, TransformKind, Vec2, VertexId,
@@ -331,47 +331,66 @@ pub fn evaluate_blend_binding(
         .collect()
 }
 
-fn blend_positions<F>(
+fn default_selection() -> &'static Selection {
+    static SELECTION: std::sync::OnceLock<Selection> = std::sync::OnceLock::new();
+    SELECTION.get_or_init(|| Selection {
+        indices: vec![0],
+        weights: vec![1.0],
+        enabled: true,
+    })
+}
+
+fn blend_positions<'a, F>(
     doc: &Document,
     parent: &str,
     s: &Selection,
     mut get: F,
-) -> Result<Vec<Vec2>, Status>
+    out: &mut Vec<Vec2>,
+) -> Result<(), Status>
 where
-    F: FnMut(usize) -> Vec<Vec2>,
+    F: FnMut(usize) -> &'a [Vec2],
 {
-    let mut data: Vec<Vec<f32>> = Vec::with_capacity(s.indices.len());
-    let mut size = 0usize;
-
-    for k in 0..s.indices.len() {
-        let raw = get(s.indices[k]);
-        let converted = to_parent_positions(doc, parent, &raw)?;
-        size = converted.len();
-        let mut row = Vec::with_capacity(size * 2);
-        for p in converted {
-            row.push(p.x);
-            row.push(p.y);
-        }
-        data.push(row);
+    if !parent.is_empty() && doc.get_transform(parent).is_none() {
+        return Err(Status::error("MISSING_TRANSFORM", parent));
     }
-
+    let size = s.indices.first().map(|&i| get(i).len()).unwrap_or(0);
     if size > (i32::MAX as usize) / 2 {
         return Err(Status::error("CAPACITY", "positions"));
     }
-
-    let mut xy = vec![0.0f32; size * 2];
-    let pointers: Vec<&[f32]> = data.iter().map(|v| v.as_slice()).collect();
-    blend_vectors(&pointers, &s.weights, size * 2, &mut xy);
-
-    let mut out = Vec::with_capacity(size);
-    for i in 0..size {
-        out.push(Vec2::new(xy[2 * i], xy[2 * i + 1]));
+    out.clear();
+    out.resize(size, Vec2::default());
+    let canvas = doc.canvas();
+    for (&index, &weight) in s.indices.iter().zip(&s.weights) {
+        let raw = get(index);
+        if raw.len() != size {
+            return Err(Status::error("INVALID_LENGTH", "keyform positions"));
+        }
+        for (target, p) in out.iter_mut().zip(raw) {
+            let q = if parent.is_empty() {
+                Vec2::new(
+                    ((p.x as f64 - canvas.origin.x as f64) / canvas.pixels_per_unit as f64) as f32,
+                    ((canvas.origin.y as f64 - p.y as f64) / canvas.pixels_per_unit as f64) as f32,
+                )
+            } else {
+                *p
+            };
+            if !q.x.is_finite() || !q.y.is_finite() {
+                return Err(Status::error(
+                    "NON_FINITE",
+                    "Position conversion overflows float32",
+                ));
+            }
+            if weight != 0.0 {
+                target.x += q.x * weight;
+                target.y += q.y * weight;
+            }
+        }
     }
-    let status = validate_positions(&out);
+    let status = validate_positions(out);
     if !status.is_ok() {
         return Err(status);
     }
-    Ok(out)
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -423,7 +442,33 @@ fn f32_to_i32(v: f32) -> i32 {
     }
 }
 
+/// Reusable, transactional evaluator. Retain both this workspace and the output
+/// frame across updates. Failure leaves the last successful output untouched.
+#[derive(Debug, Default)]
+pub struct FrameEvaluator {
+    scratch: DrawableFrame,
+}
+
+impl FrameEvaluator {
+    pub fn evaluate(
+        &mut self,
+        doc: &Document,
+        preview: &PreviewValues,
+        out: &mut DrawableFrame,
+    ) -> Status {
+        let status = evaluate_into(doc, preview, &mut self.scratch);
+        if status.is_ok() {
+            std::mem::swap(out, &mut self.scratch);
+        }
+        status
+    }
+}
+
 pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut DrawableFrame) -> Status {
+    FrameEvaluator::default().evaluate(doc, preview, out)
+}
+
+fn evaluate_into(doc: &Document, preview: &PreviewValues, frame: &mut DrawableFrame) -> Status {
     if !doc.initialized() {
         return Status::error("NOT_INITIALIZED", "Initialize Document first");
     }
@@ -440,14 +485,14 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         }
     }
 
-    let mut frame = DrawableFrame {
-        source_revision: doc.revision(),
-        canvas: doc.canvas(),
-        parameters: Vec::with_capacity(doc.parameter_order().len()),
-        drawables: Vec::with_capacity(doc.mesh_order().len()),
-        offscreens: Vec::with_capacity(doc.offscreen_order().len()),
-        render_plan: Vec::new(),
-    };
+    frame.source_revision = doc.revision();
+    frame.canvas = doc.canvas();
+    frame.parameters.clear();
+    frame.offscreens.clear();
+    frame.render_plan.clear();
+    frame
+        .drawables
+        .resize_with(doc.mesh_order().len(), Drawable::default);
 
     let mut values = HashMap::new();
     for id in doc.parameter_order() {
@@ -572,21 +617,22 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 }
             }
             if t.kind == TransformKind::Warp {
-                let default_sel = Selection {
-                    indices: vec![0],
-                    weights: vec![1.0],
-                    enabled: true,
-                };
-                let sel_ref = selection.as_ref().unwrap_or(&default_sel);
-                let blended = blend_positions(doc, &t.parent_id, sel_ref, |i| {
-                    if let Some(b_ref) = b {
-                        b_ref.keyforms[i].positions.clone()
-                    } else {
-                        t.points.clone()
-                    }
-                });
+                let sel_ref = selection.as_ref().unwrap_or(default_selection());
+                let blended = blend_positions(
+                    doc,
+                    &t.parent_id,
+                    sel_ref,
+                    |i| {
+                        if let Some(b_ref) = b {
+                            &b_ref.keyforms[i].positions
+                        } else {
+                            &t.points
+                        }
+                    },
+                    &mut points,
+                );
                 match blended {
-                    Ok(pts) => points = pts,
+                    Ok(()) => (),
                     Err(s) => return s,
                 }
             } else if b.is_none() {
@@ -707,7 +753,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
             };
 
             if !t.parent_id.is_empty() {
-                let parent = transforms.get(&t.parent_id).unwrap().clone();
+                let parent = transforms.get(&t.parent_id).unwrap();
                 inherit_appearance(&mut state.appearance, &parent.appearance);
                 if t.kind == TransformKind::Warp {
                     for p in &mut points {
@@ -742,28 +788,33 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         transforms.insert(id.clone(), state);
     }
 
-    for id in doc.mesh_order() {
+    let asset_slots: HashMap<&str, usize> = doc
+        .asset_order()
+        .iter()
+        .enumerate()
+        .map(|(i, id)| (id.as_str(), i))
+        .collect();
+    for (mesh_index, id) in doc.mesh_order().iter().enumerate() {
         let mesh = doc.get_mesh(id).unwrap();
-        let mut d = Drawable {
-            id: id.clone(),
-            runtime_id: mesh.runtime_id.clone(),
-            part_id: mesh.part_id.clone(),
-            raw_blend_mode: mesh.raw_blend_mode,
-            texture_asset_id: mesh.texture_asset_id.clone(),
-            blend_mode: mesh.blend_mode,
-            double_sided: mesh.double_sided,
-            inverted_mask: mesh.inverted_mask,
-            masks: mesh.masks.clone(),
-            ..Default::default()
-        };
-
-        let mut order = mesh.draw_order.unwrap_or(frame.drawables.len() as f32);
+        let d = &mut frame.drawables[mesh_index];
+        d.id.clone_from(id);
+        d.runtime_id.clone_from(&mesh.runtime_id);
+        d.part_id.clone_from(&mesh.part_id);
+        d.raw_blend_mode = mesh.raw_blend_mode;
+        d.texture_asset_id.clone_from(&mesh.texture_asset_id);
+        d.blend_mode = mesh.blend_mode;
+        d.double_sided = mesh.double_sided;
+        d.inverted_mask = mesh.inverted_mask;
+        d.masks.clone_from(&mesh.masks);
+        d.multiply_color[3] = 1.0;
+        d.screen_color[3] = 1.0;
+        d.positions.clear();
+        d.uvs.clear();
+        d.indices.clear();
+        let mut order = mesh.draw_order.unwrap_or(mesh_index as f32);
         let mut appearance = mesh.appearance;
 
-        let slot = doc
-            .asset_order()
-            .iter()
-            .position(|aid| aid == &mesh.texture_asset_id);
+        let slot = asset_slots.get(mesh.texture_asset_id.as_str()).copied();
         match slot {
             Some(s) => d.texture_slot = s as i32,
             None => return Status::error("MISSING_ASSET", id),
@@ -785,8 +836,8 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
             ));
         }
 
-        match doc.render_indices(id) {
-            Ok(indices) => d.indices = indices,
+        match doc.render_indices_into(id, &mut d.indices) {
+            Ok(()) => (),
             Err(s) => return s,
         }
 
@@ -806,21 +857,22 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         d.enabled = d.visible;
 
         if d.visible {
-            let default_sel = Selection {
-                indices: vec![0],
-                weights: vec![1.0],
-                enabled: true,
-            };
-            let sel_ref = selection.as_ref().unwrap_or(&default_sel);
-            let blended = blend_positions(doc, &mesh.deformer_id, sel_ref, |i| {
-                if let Some(b_ref) = b {
-                    b_ref.keyforms[i].positions.clone()
-                } else {
-                    mesh.base_positions.clone()
-                }
-            });
+            let sel_ref = selection.as_ref().unwrap_or(default_selection());
+            let blended = blend_positions(
+                doc,
+                &mesh.deformer_id,
+                sel_ref,
+                |i| {
+                    if let Some(b_ref) = b {
+                        &b_ref.keyforms[i].positions
+                    } else {
+                        &mesh.base_positions
+                    }
+                },
+                &mut d.positions,
+            );
             match blended {
-                Ok(pos) => d.positions = pos,
+                Ok(()) => (),
                 Err(e) => return Status::error(e.code, format!("{}: {}", id, e.message)),
             }
 
@@ -911,7 +963,6 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
             d.multiply_color[c] = appearance.multiply[c];
             d.screen_color[c] = appearance.screen[c];
         }
-        frame.drawables.push(d);
     }
 
     // Apply Glues across transformed mesh positions (before canvas Y-reversal, matching PurismCore)
@@ -1269,6 +1320,5 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         });
     }
 
-    *out = frame;
     Status::ok()
 }

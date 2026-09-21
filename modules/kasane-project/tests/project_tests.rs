@@ -41,6 +41,61 @@ fn create_test_png(path: &Path) -> (Vec<u8>, String) {
     (buf, sha)
 }
 
+#[test]
+fn cached_asset_reads_still_validate_disk_content_and_metadata() {
+    use kasane_project::store::read_project_asset_if_changed;
+    let root = std::env::temp_dir().join(format!("kasane-cached-resource-{}", std::process::id()));
+    let path = root.join("assets/texture.png");
+    let (_, hash) = create_test_png(&path);
+    let mut asset = ImageAsset {
+        id: id(2),
+        source: "assets/texture.png".into(),
+        width: 8,
+        height: 8,
+        sha256: hash.clone(),
+        ..Default::default()
+    };
+    let decoded = read_project_asset_if_changed(&root, &asset, None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(decoded.rgba.len(), 8 * 8 * 4);
+    let cached = Some((hash.as_str(), 8, 8));
+    assert!(read_project_asset_if_changed(&root, &asset, cached)
+        .unwrap()
+        .is_none());
+    asset.width = 16;
+    assert_eq!(
+        read_project_asset_if_changed(&root, &asset, cached)
+            .unwrap_err()
+            .code,
+        "RESOURCE_DIMENSIONS"
+    );
+    asset.width = 8;
+    asset.sha256 = "0".repeat(64);
+    assert_eq!(
+        read_project_asset_if_changed(&root, &asset, cached)
+            .unwrap_err()
+            .code,
+        "RESOURCE_HASH"
+    );
+    asset.sha256 = hash.clone();
+    fs::write(&path, b"corrupt image").unwrap();
+    assert_eq!(
+        read_project_asset_if_changed(&root, &asset, cached)
+            .unwrap_err()
+            .code,
+        "INVALID_PNG"
+    );
+    fs::remove_file(&path).unwrap();
+    assert_eq!(
+        read_project_asset_if_changed(&root, &asset, cached)
+            .unwrap_err()
+            .code,
+        "PROJECT_IO"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn fixture_doc(sha1: &str, sha2: &str) -> Document {
     let mut doc = Document::new();
     assert!(doc

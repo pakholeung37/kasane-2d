@@ -3,7 +3,7 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use kasane_core::{
-    evaluate_frame, BindingAxis, Canvas, Document, DrawableFrame, ImageAsset, Mesh, MeshBinding,
+    BindingAxis, Canvas, Document, DrawableFrame, FrameEvaluator, ImageAsset, Mesh, MeshBinding,
     MeshKeyform, Parameter, Part, RotationPose, Transform, TransformKind, Vec2, VertexId,
     VertexPositionUpdate,
 };
@@ -308,6 +308,7 @@ fn main() {
     println!("  Parameters:      {}", param_ids.len());
 
     let mut frame = DrawableFrame::default();
+    let mut evaluator = FrameEvaluator::default();
     let mut preview = HashMap::new();
 
     // Warmup
@@ -316,7 +317,7 @@ fn main() {
         preview.insert(param_ids[0].clone(), angle.sin());
         preview.insert(param_ids[1].clone(), angle.cos());
         preview.insert(param_ids[2].clone(), (angle * 0.5).sin());
-        assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+        assert!(evaluator.evaluate(&doc, &preview, &mut frame).is_ok());
     }
 
     // Workload 1: Continuous 60 FPS Playback Simulation (3,600 frames = 1 full minute)
@@ -337,7 +338,9 @@ fn main() {
         preview.insert(param_ids[3].clone(), (t * 2.3).sin() * 0.5);
 
         let t0 = Instant::now();
-        assert!(evaluate_frame(black_box(&doc), black_box(&preview), &mut frame).is_ok());
+        assert!(evaluator
+            .evaluate(black_box(&doc), black_box(&preview), &mut frame)
+            .is_ok());
         black_box(&frame);
         let dt = t0.elapsed().as_secs_f64() * 1_000_000.0;
         latencies_us.push(dt);
@@ -401,7 +404,9 @@ fn main() {
         let t0 = Instant::now();
         assert!(doc.apply_vertex_position_updates(&[update]).status.is_ok());
         preview.insert(param_ids[0].clone(), (f as f32 * 0.05).sin());
-        assert!(evaluate_frame(black_box(&doc), black_box(&preview), &mut frame).is_ok());
+        assert!(evaluator
+            .evaluate(black_box(&doc), black_box(&preview), &mut frame)
+            .is_ok());
         black_box(&frame);
         let dt = t0.elapsed().as_secs_f64() * 1_000_000.0;
         scrub_latencies_us.push(dt);

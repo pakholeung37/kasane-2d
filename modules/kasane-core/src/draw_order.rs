@@ -81,21 +81,23 @@ pub fn resolved_groups(doc: &Document) -> Vec<DrawOrderGroup> {
         groups.to_vec()
     } else {
         let parts = doc.sorted_parts();
+        let mut children: HashMap<&str, Vec<String>> = HashMap::new();
+        for id in doc.mesh_order() {
+            children
+                .entry(&doc.get_mesh(id).unwrap().part_id)
+                .or_default()
+                .push(id.clone());
+        }
+        for id in &parts {
+            children
+                .entry(&doc.get_part(id).unwrap().parent_id)
+                .or_default()
+                .push(id.clone());
+        }
         std::iter::once(String::new())
-            .chain(parts.iter().cloned())
+            .chain(parts)
             .map(|owner| {
-                let items = doc
-                    .mesh_order()
-                    .iter()
-                    .filter(|id| doc.get_mesh(id).unwrap().part_id == owner)
-                    .cloned()
-                    .chain(
-                        parts
-                            .iter()
-                            .filter(|id| doc.get_part(id).unwrap().parent_id == owner)
-                            .cloned(),
-                    )
-                    .collect();
+                let items = children.remove(owner.as_str()).unwrap_or_default();
                 DrawOrderGroup {
                     owner,
                     items,

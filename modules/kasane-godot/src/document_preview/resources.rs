@@ -2,6 +2,7 @@ use super::*;
 
 pub(super) struct SubmissionPlan<'a> {
     pub active: std::collections::HashSet<&'a str>,
+    pub mask_consumers: HashMap<String, String>,
     pub size: Vector2i,
     pub transform: Transform2D,
 }
@@ -34,18 +35,32 @@ pub(super) fn plan<'a>(
         active.len(),
     )?;
     let surface_bytes = i64::from(size.x) * i64::from(size.y) * 8 * active.len() as i64;
-    let mask_bytes: i64 = frame
+    // Account for the same shared mask keys used by the renderer.
+    let consumers = masks::consumers(frame);
+    let mut masks = std::collections::HashSet::new();
+    let mut mask_bytes = 0;
+    for (id, ids, scale) in frame
         .drawables
         .iter()
-        .map(|d| mask_reserved_bytes(frame, &d.masks, scale))
+        .map(|d| (&d.id, &d.masks, scale))
         .chain(
             frame
                 .offscreens
                 .iter()
                 .filter(|o| active.contains(o.id.as_str()))
-                .map(|o| mask_reserved_bytes(frame, &o.masks, scale.max(1.0))),
+                .map(|o| (&o.id, &o.masks, scale.max(1.0))),
         )
-        .sum();
+    {
+        if !ids.is_empty()
+            && masks.insert(MaskKey::new(
+                ids,
+                scale,
+                consumers.get(id).map(String::as_str).unwrap_or(""),
+            ))
+        {
+            mask_bytes += mask_reserved_bytes(frame, ids, scale);
+        }
+    }
     if surface_bytes + mask_bytes > OFFSCREEN_BUDGET_BYTES {
         return Err(Status::error(
             "OFFSCREEN_BUDGET_EXCEEDED",
@@ -54,6 +69,7 @@ pub(super) fn plan<'a>(
     }
     Ok(SubmissionPlan {
         active,
+        mask_consumers: consumers,
         size,
         transform,
     })

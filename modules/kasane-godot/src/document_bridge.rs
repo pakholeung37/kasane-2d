@@ -2,7 +2,7 @@ use godot::prelude::*;
 use std::collections::HashMap;
 
 use kasane_core::document::Document;
-use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
+use kasane_core::evaluation::{evaluate_frame, DrawableFrame, FrameEvaluator};
 use kasane_core::types::{
     BlendMode, Canvas, ChangeKind, EditResult, ImageAsset, Mesh, RotationPose, Status, Transform,
     TransformKind, Vec2, VertexPositionUpdate,
@@ -86,6 +86,14 @@ impl KasaneDocumentBridge {
 
     pub fn evaluate(&self, out: &mut DrawableFrame) -> Status {
         evaluate_frame(self.session.document(), &self.preview_values, out)
+    }
+
+    pub fn evaluate_reusing(
+        &self,
+        evaluator: &mut FrameEvaluator,
+        out: &mut DrawableFrame,
+    ) -> Status {
+        evaluator.evaluate(self.session.document(), &self.preview_values, out)
     }
 
     pub fn apply(&mut self, edit: EditResult) -> Dictionary {
