@@ -129,6 +129,37 @@ fn write_positions(
     Ok(())
 }
 
+fn write_delta_positions(
+    l: &mut Layout,
+    doc: &Document,
+    prefix: &str,
+    parent: &str,
+    positions: &[Vec2],
+    expected_len: usize,
+) -> Result<(), Status> {
+    let ppu = doc.canvas().pixels_per_unit;
+    let is_root = parent.is_empty();
+    let offset = checked(l.field("key_pos_src.xy")?.len() / 4, "positions")?;
+    l.integer(&format!("{prefix}.key_pos_off"), offset)?;
+    if positions.is_empty() {
+        for _ in 0..expected_len {
+            l.scalar("key_pos_src.xy", 0.0)?;
+            l.scalar("key_pos_src.xy", 0.0)?;
+        }
+    } else {
+        for p in positions {
+            if is_root {
+                l.scalar("key_pos_src.xy", p.x / ppu)?;
+                l.scalar("key_pos_src.xy", -p.y / ppu)?;
+            } else {
+                l.scalar("key_pos_src.xy", p.x)?;
+                l.scalar("key_pos_src.xy", p.y)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
     if doc.transaction_active() {
         return Err(Status::error(
@@ -869,10 +900,10 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
                 let key_bs_len = forms.len() as i32;
                 write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
                 l.counts[26] += 1;
+                let pt_count = ((warp.rows + 1) * (warp.columns + 1)) as usize;
                 for f in forms {
-                    l.scalar("warp_key_src.opacity", f.opacity.unwrap_or(1.0))?;
-                    let pts = if f.points.is_empty() { &warp.points } else { &f.points };
-                    write_positions(&mut l, doc, "warp_key_src", &warp.parent_id, pts)?;
+                    l.scalar("warp_key_src.opacity", f.opacity.unwrap_or(0.0))?;
+                    write_delta_positions(&mut l, doc, "warp_key_src", &warp.parent_id, &f.points, pt_count)?;
                     write_bs_colors(&mut l, "warp_key_src", f.multiply, f.screen)?;
                     l.counts[7] += 1;
                 }
@@ -899,11 +930,11 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
                 let key_bs_len = forms.len() as i32;
                 write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
                 l.counts[26] += 1;
+                let vc = mesh.vertex_ids.len();
                 for f in forms {
-                    l.scalar("art_mesh_key_src.opacity", f.opacity.unwrap_or(1.0))?;
+                    l.scalar("art_mesh_key_src.opacity", f.opacity.unwrap_or(0.0))?;
                     l.scalar("art_mesh_key_src.draw_order", f.draw_order.unwrap_or(0.0))?;
-                    let pts = if f.positions.is_empty() { &mesh.base_positions } else { &f.positions };
-                    write_positions(&mut l, doc, "art_mesh_key_src", &mesh.deformer_id, pts)?;
+                    write_delta_positions(&mut l, doc, "art_mesh_key_src", &mesh.deformer_id, &f.positions, vc)?;
                     write_bs_colors(&mut l, "art_mesh_key_src", f.multiply, f.screen)?;
                     l.counts[9] += 1;
                 }
@@ -960,7 +991,12 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
                     l.scalar("rotation_key_src.opacity", f.opacity.unwrap_or(0.0))?;
                     l.scalar("rotation_key_src.angle", f.angle.unwrap_or(0.0))?;
                     let origin = if let Some(o) = f.origin {
-                        to_parent_positions(doc, &rot.parent_id, &[o])?[0]
+                        if rot.parent_id.is_empty() {
+                            let ppu = doc.canvas().pixels_per_unit;
+                            Vec2::new(o.x / ppu, -o.y / ppu)
+                        } else {
+                            o
+                        }
                     } else {
                         Vec2::default()
                     };
