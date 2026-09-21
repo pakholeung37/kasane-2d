@@ -196,7 +196,7 @@ fn test_project_encode_decode_roundtrip() {
 
     let encoded = encode_project(&before).expect("encode_project failed");
     assert!(encoded.contains("\"format\": \"kasane-directory-project\""));
-    assert!(encoded.contains("\"format_version\": 3"));
+    assert!(encoded.contains("\"format_version\": 4"));
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(before.same_content(&decoded));
@@ -1311,6 +1311,7 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
             default_value: 0.0,
             decimal_places: 2,
             kind: ParameterKind::BlendShape,
+            repeat: false,
         })
         .status
         .is_ok());
@@ -1398,7 +1399,7 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
         .is_ok());
 
     let encoded = encode_project(&doc).expect("encode_project failed");
-    assert!(encoded.contains("\"format_version\": 3"));
+    assert!(encoded.contains("\"format_version\": 4"));
     assert!(encoded.contains("blend_key_tables"));
     assert!(encoded.contains("blend_constraints"));
     assert!(encoded.contains("blend_bindings"));
@@ -1413,20 +1414,100 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
 }
 
 #[test]
-fn test_project_v1_migration_to_v3() {
+fn test_project_v1_v2_v3_migration_to_v4() {
     let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
-    let doc_v1 = fixture_doc(sha1, sha2);
+    let doc = fixture_doc(sha1, sha2);
 
-    // Encode to v3, then manually rewrite format_version to 1 and remove blend/glue fields to simulate a v1 project
-    let mut encoded_v1 = encode_project(&doc_v1).unwrap();
-    encoded_v1 = encoded_v1.replace("\"format_version\": 3", "\"format_version\": 1");
+    for old_ver in [1, 2, 3] {
+        let mut encoded = encode_project(&doc).unwrap();
+        encoded = encoded.replace("\"format_version\": 4", &format!("\"format_version\": {}", old_ver));
+        if old_ver == 1 {
+            // v1 had no blend or glue fields
+            encoded = encoded.replace("\"blend_key_tables\": [],\n", "");
+            encoded = encoded.replace("\"blend_constraints\": [],\n", "");
+            encoded = encoded.replace("\"blend_bindings\": [],\n", "");
+            encoded = encoded.replace("\"glues\": [],\n", "");
+        }
 
-    let decoded = decode_project(&encoded_v1).expect("Failed to decode v1 project");
-    assert_eq!(decoded.blend_key_table_order().len(), 0);
-    assert_eq!(decoded.glue_order().len(), 0);
+        let decoded = decode_project(&encoded).unwrap_or_else(|e| panic!("Failed to decode v{} project: {:?}", old_ver, e));
+        // Verify default value populated for repeat
+        for p_id in decoded.parameter_order() {
+            let p = decoded.get_parameter(p_id).unwrap();
+            assert!(!p.repeat, "Migrated v{} parameter must have repeat: false by default", old_ver);
+        }
 
-    // Saving the decoded v1 project automatically upgrades it to v3
-    let re_encoded = encode_project(&decoded).expect("Failed to re-encode project");
-    assert!(re_encoded.contains("\"format_version\": 3"));
+        // Saving automatically upgrades to v4
+        let re_encoded = encode_project(&decoded).expect("Failed to re-encode project");
+        assert!(re_encoded.contains("\"format_version\": 4"));
+    }
+}
+
+#[test]
+fn test_legacy_reader_rejects_v4() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let doc = fixture_doc(sha1, sha2);
+    let encoded_v4 = encode_project(&doc).unwrap();
+
+    // Simulate an older reader that only accepts 1..=3
+    let v: serde_json::Value = serde_json::from_str(&encoded_v4).unwrap();
+    let ver = v["format_version"].as_u64().unwrap() as u32;
+    let accepted_by_legacy = (1..=3).contains(&ver);
+    assert!(!accepted_by_legacy, "Legacy reader (1..=3) must reject v4");
+}
+
+#[test]
+fn test_project_v4_rejects_unimplemented_collections() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let doc = fixture_doc(sha1, sha2);
+    let encoded_v4 = encode_project(&doc).unwrap();
+
+    // Inject non-empty offscreens collection (unsupported in v4, scheduled for S5)
+    let bad_project = encoded_v4.replace(
+        "\"document\": {",
+        "\"document\": {\n    \"offscreens\": [{\"id\": \"off1\"}],",
+    );
+    let err = decode_project(&bad_project).expect_err("Non-empty offscreens must be rejected");
+    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
+    assert!(err.message.contains("Offscreen"));
+}
+
+#[test]
+fn test_project_v4_preserves_repeat_parameter() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let mut doc = fixture_doc(sha1, sha2);
+
+    let param_id = doc.parameter_order()[0].clone();
+    let mut p = doc.get_parameter(&param_id).unwrap().clone();
+    p.repeat = true;
+    assert!(doc.replace_parameter(p).status.is_ok());
+
+    let encoded = encode_project(&doc).expect("encode_project failed");
+    assert!(encoded.contains("\"format_version\": 4"));
+    assert!(encoded.contains("\"repeat\": true"));
+
+    let decoded = decode_project(&encoded).expect("decode_project failed");
+    let decoded_param = decoded.get_parameter(&param_id).unwrap();
+    assert!(decoded_param.repeat, "repeat: true must be preserved after project decode");
+}
+
+#[test]
+fn test_project_failure_preserves_document() {
+    let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+    let mut doc = fixture_doc(sha1, sha2);
+    let snap = doc.clone();
+
+    // Attempt invalid parameter edit
+    let mut bad_p = doc.get_parameter(&doc.parameter_order()[0]).unwrap().clone();
+    bad_p.maximum = bad_p.minimum - 1.0; // invalid range
+    let res = doc.replace_parameter(bad_p);
+    assert!(!res.status.is_ok());
+    assert_eq!(res.status.code, "INVALID_PARAMETER");
+
+    // Document state remains completely unaltered
+    assert!(doc.same_content(&snap));
 }

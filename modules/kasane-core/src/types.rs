@@ -324,6 +324,8 @@ pub struct Parameter {
     pub decimal_places: i32,
     #[serde(default)]
     pub kind: ParameterKind,
+    #[serde(default)]
+    pub repeat: bool,
 }
 
 impl Default for Parameter {
@@ -337,6 +339,7 @@ impl Default for Parameter {
             default_value: 0.0,
             decimal_places: 6,
             kind: ParameterKind::Normal,
+            repeat: false,
         }
     }
 }

@@ -373,6 +373,11 @@ pub fn decode_moc3(
         let min = read_f32(bytes, offsets[52] as usize + p * 4)?;
         let default_val = read_f32(bytes, offsets[53] as usize + p * 4)?;
         let dec_places = read_i32(bytes, offsets[55] as usize + p * 4)?;
+        let repeat = if offsets.len() > 54 && offsets[54] > 0 {
+            read_i32(bytes, offsets[54] as usize + p * 4)? != 0
+        } else {
+            false
+        };
         let param_type = if ver >= 4 && offsets.len() > 114 && offsets[114] > 0 {
             read_i32(bytes, offsets[114] as usize + p * 4)?
         } else {
@@ -402,6 +407,7 @@ pub fn decode_moc3(
                 default_value: default_val,
                 decimal_places: dec_places,
                 kind,
+                repeat,
             })
             .status
         );

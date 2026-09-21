@@ -341,7 +341,7 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         l.scalar("param_src.maximum_value", p.maximum)?;
         l.scalar("param_src.minimum_value", p.minimum)?;
         l.scalar("param_src.default_value", p.default_value)?;
-        l.integer("param_src.repeat", 0)?;
+        l.integer("param_src.repeat", if p.repeat { 1 } else { 0 })?;
         l.integer("param_src.decimal_places", p.decimal_places)?;
 
         let is_bs_param = p.kind == ParameterKind::BlendShape;

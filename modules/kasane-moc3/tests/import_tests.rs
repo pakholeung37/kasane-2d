@@ -687,7 +687,7 @@ fn test_unsupported_features_rejected() {
     let err = inspect_moc3(&bytes).expect_err("Version 99 must be rejected");
     assert_eq!(err.code, "UNSUPPORTED_VERSION");
 
-    // 3. Cyclic parameter rejection
+    // 3. Cyclic parameter acceptance in S3
     let doc = create_m1_fixture_doc();
     let encoded = encode_moc3(&doc).unwrap();
     let offsets = &inspect_moc3(&encoded.bytes).unwrap().section_offsets;
@@ -696,9 +696,20 @@ fn test_unsupported_features_rejected() {
 
     let mut cyclic_bytes = encoded.bytes.clone();
     cyclic_bytes[rep_off] = 1; // set repeat = 1
-    let err = inspect_moc3(&cyclic_bytes).expect_err("Cyclic parameter must be rejected");
+    let insp = inspect_moc3(&cyclic_bytes).expect("Cyclic parameter must now be accepted in S3");
+    assert!(insp.unsupported_features.is_empty());
+    let imported = import_from_bare_moc3(&cyclic_bytes, &std::collections::HashMap::new())
+        .expect("Decode cyclic model");
+    let decoded = &imported.document;
+    assert!(decoded.get_parameter(decoded.parameter_order()[0].as_str()).unwrap().repeat);
+
+    // 4. Unknown parameter type is rejected as unsupported feature
+    let type_off = offsets[114] as usize;
+    let mut bad_type_bytes = encoded.bytes.clone();
+    bad_type_bytes[type_off..type_off + 4].copy_from_slice(&2i32.to_le_bytes());
+    let err = inspect_moc3(&bad_type_bytes).expect_err("Unknown parameter type must be rejected");
     assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-    assert!(err.message.contains("repeat") || err.message.contains("cyclic"));
+    assert!(err.message.contains("unknown type 2"));
 
     // Fabricated extension counts have no matching data tables. Safety must
     // reject corruption even when the same file advertises unsupported features.
@@ -1828,6 +1839,48 @@ fn test_v42_does_not_access_v50_fields() {
             }
             _ => {}
         }
+    }
+}
+
+#[test]
+fn test_cyclic_parameter_moc3_roundtrip_and_evaluation() {
+    let mut doc = create_m1_fixture_doc();
+    let param_id = doc.parameter_order()[0].clone();
+    let mut p = doc.get_parameter(&param_id).unwrap().clone();
+    p.repeat = true;
+    assert!(doc.replace_parameter(p).status.is_ok());
+
+    let encoded = encode_moc3(&doc).expect("encode_moc3 failed");
+    let offsets = &inspect_moc3(&encoded.bytes).unwrap().section_offsets;
+    let rep_off = offsets[54] as usize;
+    let rep_val = i32::from_le_bytes(encoded.bytes[rep_off..rep_off + 4].try_into().unwrap());
+    assert_eq!(rep_val, 1, "Section 54 (param_src.repeat) must be 1");
+
+    let imported = import_from_bare_moc3(&encoded.bytes, &HashMap::new())
+        .expect("Import encoded cyclic model");
+    let re_doc = &imported.document;
+    assert!(
+        re_doc.get_parameter(re_doc.parameter_order()[0].as_str()).unwrap().repeat,
+        "Re-imported document must have repeat: true"
+    );
+
+    // Evaluate across periods on both original and re-imported
+    for &test_val in &[-3.5, -1.5, -1.0, 0.0, 0.5, 1.0, 2.5, 4.5] {
+        let mut preview = HashMap::new();
+        preview.insert(param_id.clone(), test_val);
+
+        let mut frame_orig = kasane_core::evaluation::DrawableFrame::default();
+        let mut frame_re = kasane_core::evaluation::DrawableFrame::default();
+
+        let re_param_id = re_doc.parameter_order()[0].clone();
+        let mut preview_re = HashMap::new();
+        preview_re.insert(re_param_id, test_val);
+
+        assert!(kasane_core::evaluate_frame(&doc, &preview, &mut frame_orig).is_ok());
+        assert!(kasane_core::evaluate_frame(re_doc, &preview_re, &mut frame_re).is_ok());
+
+        assert_eq!(frame_orig.parameters[0].value, frame_re.parameters[0].value);
+        assert_eq!(frame_orig.drawables[0].positions, frame_re.drawables[0].positions);
     }
 }
 

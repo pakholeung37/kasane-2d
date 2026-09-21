@@ -401,6 +401,18 @@ impl KasaneDocumentBridge {
     }
 
     #[func]
+    pub fn get_parameter(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        if let Some(p) = self.session.document().get_parameter(&id.to_string()) {
+            dict_from_parameter(p)
+        } else {
+            Dictionary::new()
+        }
+    }
+
+    #[func]
     pub fn references_to(&self, id: GString) -> Dictionary {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");

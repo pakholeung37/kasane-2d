@@ -75,12 +75,14 @@ func rebuild(summary: Dictionary, selected_id: String = "") -> void:
 		var p_id: String = p.get("id", "")
 		var p_name: String = p.get("name", p_id)
 		if p.get("kind", "normal") == "blend_shape": p_name += " · BlendShape"
+		var is_repeat: bool = p.get("repeat", false)
+		if is_repeat: p_name += " ⟲"
 		var p_min: float = p.get("minimum", -1.0)
 		var p_max: float = p.get("maximum", 1.0)
 		var p_def: float = p.get("default_value", 0.0)
 		var p_dec: int = p.get("decimal_places", 2)
 
-		var row = ParamSliderRow.new(p_id, p_name, p_min, p_max, p_def, p_dec)
+		var row = ParamSliderRow.new(p_id, p_name, p_min, p_max, p_def, p_dec, is_repeat)
 		list_box.add_child(row)
 		parameter_controls[p_id] = row
 

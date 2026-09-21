@@ -252,6 +252,11 @@ pub fn parameter_from_dict(d: &Dictionary) -> Result<Parameter, Status> {
             _ => return Err(Status::error("INVALID_PARAMETER_KIND", "Expected normal or blend_shape")),
         }
     };
+    let repeat = if d.contains_key("repeat") {
+        get_bool(d, "repeat")?
+    } else {
+        false
+    };
     Ok(Parameter {
         id,
         runtime_id,
@@ -261,6 +266,7 @@ pub fn parameter_from_dict(d: &Dictionary) -> Result<Parameter, Status> {
         default_value,
         decimal_places,
         kind,
+        repeat,
     })
 }
 
@@ -280,6 +286,7 @@ pub fn dict_from_parameter(p: &Parameter) -> Dictionary {
             kasane_core::types::ParameterKind::BlendShape => "blend_shape",
         },
     );
+    d.set("repeat", p.repeat);
     d
 }
 

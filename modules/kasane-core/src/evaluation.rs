@@ -422,12 +422,33 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
     for id in doc.parameter_order() {
         let p = doc.get_parameter(id).unwrap();
         let requested = preview.get(id).copied().unwrap_or(p.default_value);
-        let v = requested.clamp(p.minimum, p.maximum);
+        if !requested.is_finite() {
+            return Status::error("NON_FINITE", format!("{}.preview_value", id));
+        }
+        let range_length = p.maximum - p.minimum;
+        if !range_length.is_finite() || range_length <= 0.0 {
+            return Status::error(
+                "INVALID_PARAMETER_RANGE",
+                format!("{}: range length must be positive", id),
+            );
+        }
+        let (v, clamped) = if p.repeat {
+            let normalized = (requested - p.minimum) / range_length;
+            let wrapped = normalized - normalized.floor();
+            let mut val = wrapped * range_length + p.minimum;
+            if val < p.minimum || val >= p.maximum {
+                val = p.minimum;
+            }
+            (val, false)
+        } else {
+            let clamped_val = requested.clamp(p.minimum, p.maximum);
+            (clamped_val, requested != clamped_val)
+        };
         frame.parameters.push(EvaluatedParameter {
             id: id.clone(),
             requested,
             value: v,
-            clamped: requested != v,
+            clamped,
         });
         values.insert(id.clone(), v);
     }

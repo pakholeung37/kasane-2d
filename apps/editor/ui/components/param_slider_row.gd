@@ -10,6 +10,7 @@ var min_val := -1.0
 var max_val := 1.0
 var def_val := 0.0
 var decimals := 2
+var is_repeat := false
 
 var keys: Array[float] = []
 
@@ -19,13 +20,14 @@ var reset_btn: Button
 var slider: HSlider
 var dots_overlay: Control
 
-func _init(p_id: String, p_name: String, p_min: float, p_max: float, p_def: float, p_decimals: int = 2) -> void:
+func _init(p_id: String, p_name: String, p_min: float, p_max: float, p_def: float, p_decimals: int = 2, p_repeat: bool = false) -> void:
 	param_id = p_id
 	param_name = p_name
 	min_val = p_min
 	max_val = p_max
 	def_val = p_def
 	decimals = p_decimals
+	is_repeat = p_repeat
 	add_theme_constant_override("separation", 2)
 
 func _ready() -> void:
@@ -36,7 +38,8 @@ func _ready() -> void:
 
 	name_label = Label.new()
 	name_label.text = param_name
-	name_label.tooltip_text = "%s (%s)\n范围: [%.2f, %.2f] 默认: %.2f\n双击重置为默认值" % [param_name, param_id, min_val, max_val, def_val]
+	var repeat_info := " 循环: 开启" if is_repeat else ""
+	name_label.tooltip_text = "%s (%s)\n范围: [%.2f, %.2f] 默认: %.2f%s\n双击重置为默认值" % [param_name, param_id, min_val, max_val, def_val, repeat_info]
 	name_label.add_theme_font_size_override("font_size", 11)
 	name_label.add_theme_color_override("font_color", EditorTheme.TEXT_MUTED)
 	name_label.mouse_filter = Control.MOUSE_FILTER_STOP
@@ -124,8 +127,22 @@ func _on_slider_gui_input(event: InputEvent) -> void:
 
 func _on_text_submitted(text: String) -> void:
 	var val := text.to_float()
-	val = clampf(val, min_val, max_val)
-	slider.value = val
+	if not is_repeat:
+		val = clampf(val, min_val, max_val)
+		slider.value = val
+	else:
+		# Allow cross-period preview value for repeat parameters
+		var span := max_val - min_val
+		var wrapped := val
+		if span > 0.0:
+			var norm := (val - min_val) / span
+			var frac := norm - floorf(norm)
+			wrapped = frac * span + min_val
+			if wrapped < min_val or wrapped >= max_val:
+				wrapped = min_val
+		slider.set_value_no_signal(wrapped)
+		value_display.text = _format_value(val)
+		value_committed.emit(param_id, val)
 
 func _on_draw_dots() -> void:
 	if keys.is_empty() or slider == null:

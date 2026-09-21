@@ -421,39 +421,6 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         });
     }
 
-    // 3. Cyclic parameter check (param_src.repeat)
-    // Section 54 is param_src.repeat
-    if counts.parameters > 0 && section_offsets.len() > 54 {
-        let repeat_off = section_offsets[54] as usize;
-        let id_off = section_offsets[50] as usize;
-        if repeat_off + counts.parameters as usize * 4 <= bytes.len() {
-            let mut cyclic_params = Vec::new();
-            for p in 0..counts.parameters as usize {
-                let rep = read_i32(bytes, repeat_off + p * 4)?;
-                if rep != 0 {
-                    let mut param_id = format!("Param{p}");
-                    if id_off + (p + 1) * 64 <= bytes.len() {
-                        let id_slice = &bytes[id_off + p * 64..id_off + (p + 1) * 64];
-                        let len = id_slice.iter().position(|&c| c == 0).unwrap_or(64);
-                        if let Ok(s) = std::str::from_utf8(&id_slice[..len]) {
-                            param_id = s.to_string();
-                        }
-                    }
-                    cyclic_params.push(param_id);
-                }
-            }
-            if !cyclic_params.is_empty() {
-                unsupported_features.push(UnsupportedFeature {
-                    category: "cyclic_parameter".into(),
-                    count: cyclic_params.len(),
-                    detail: format!(
-                        "Parameter(s) with repeat enabled: {} (cyclic parameters are out of scope for this milestone)",
-                        cyclic_params.join(", ")
-                    ),
-                });
-            }
-        }
-    }
 
     if version_raw >= 4 && section_offsets.len() > 114 {
         for p in 0..counts.parameters as usize {

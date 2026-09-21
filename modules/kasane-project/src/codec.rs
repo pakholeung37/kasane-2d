@@ -418,6 +418,8 @@ struct DocumentWire {
     deformation_links: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     organization_links: Option<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offscreens: Option<serde_json::Value>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -666,7 +668,7 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
 
     let project = ProjectWire {
         format: "kasane-directory-project".to_string(),
-        format_version: 3,
+        format_version: 4,
         document: DocumentWire {
             id: document.id().to_string(),
             canvas: [c.width, c.height],
@@ -688,6 +690,7 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             deformers: None,
             deformation_links: None,
             organization_links: None,
+            offscreens: None,
         },
     };
 
@@ -733,7 +736,7 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if !(1..=3).contains(&root.format_version) {
+    if !(1..=4).contains(&root.format_version) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -744,6 +747,18 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
     }
 
     let doc = root.document;
+
+    // Reject unimplemented non-empty collections
+    if let Some(offscreens) = &doc.offscreens {
+        if let Some(arr) = offscreens.as_array() {
+            if !arr.is_empty() {
+                return Err(Status::error(
+                    "UNSUPPORTED_FEATURE",
+                    "Offscreen collection is not yet supported in project v4",
+                ));
+            }
+        }
+    }
 
     // Check prototype relationships
     for val in [

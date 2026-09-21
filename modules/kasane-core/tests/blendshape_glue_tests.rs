@@ -75,6 +75,7 @@ fn create_base_document() -> Document {
             default_value: 0.0,
             decimal_places: 2,
             kind: ParameterKind::Normal,
+            repeat: false,
         })
         .status
         .is_ok());
@@ -89,6 +90,7 @@ fn create_base_document() -> Document {
             default_value: 0.0,
             decimal_places: 2,
             kind: ParameterKind::BlendShape,
+            repeat: false,
         })
         .status
         .is_ok());
@@ -264,6 +266,7 @@ fn test_blendshape_evaluation() {
             default_value: 0.0,
             decimal_places: 2,
             kind: ParameterKind::BlendShape,
+            repeat: false,
         })
         .status
         .is_ok());
