@@ -206,7 +206,7 @@ func refresh_document(_change: Dictionary = {}) -> void:
 func show_selection() -> void:
 	var summary: Dictionary = workspace.document.get_document_summary()
 	var value: Dictionary = {}
-	for group in [summary.get("parts", []), summary.get("meshes", []), summary.get("transforms", []), summary.get("blend_key_tables", []), summary.get("blend_constraints", []), summary.get("blend_bindings", []), summary.get("glues", []), summary.get("parameters", [])]:
+	for group in [summary.get("parts", []), summary.get("meshes", []), summary.get("transforms", []), summary.get("blend_key_tables", []), summary.get("blend_constraints", []), summary.get("blend_bindings", []), summary.get("glues", []), summary.get("offscreens", []), summary.get("parameters", [])]:
 		for entry in group:
 			if entry.get("id") == selected_id:
 				value = entry

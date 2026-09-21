@@ -158,6 +158,12 @@ func observe(path: String, object_id: String = "") -> Dictionary:
 				result.size_after = actual.image_size
 				break
 			var state: Dictionary = preview.get_observation_state()
+			# macOS can suspend automatic draws for an occluded application while
+			# process_frame keeps running. Capture still needs real GPU submissions;
+			# force the normal renderer and let its pre/post-draw signals certify them.
+			if state.ok and not state.ready:
+				RenderingServer.force_draw(false)
+				state = preview.get_observation_state()
 			result.renderer = state
 			result.expected_revision = expected.revision
 			result.viewport_size = [viewport.size.x, viewport.size.y]

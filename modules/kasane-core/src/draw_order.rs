@@ -154,3 +154,27 @@ pub fn descendant_counts(groups: &[DrawOrderGroup]) -> HashMap<&str, usize> {
     }
     totals
 }
+
+pub fn descendant_counts_with_offscreens<'a>(
+    doc: &'a Document,
+    groups: &'a [DrawOrderGroup],
+) -> HashMap<&'a str, usize> {
+    let mut totals = HashMap::new();
+    for group in groups.iter().rev() {
+        let count = group
+            .items
+            .iter()
+            .map(|id| {
+                let base = totals.get(id.as_str()).copied().unwrap_or(1);
+                let os_count = if doc.offscreen_for_part(id).is_some() {
+                    1
+                } else {
+                    0
+                };
+                base + os_count
+            })
+            .sum();
+        totals.insert(group.owner.as_str(), count);
+    }
+    totals
+}

@@ -46,7 +46,7 @@ Root geometry is original-canvas pixels: X right, Y down. Runtime X = `(source.x
 | `initialize(id, canvas_size, origin=Vector2.ZERO, pixels_per_unit=1.0)` | First initialization only; ID String, size/origin Vector2, ppu float |
 | `new_project(id, canvas_size, origin=Vector2.ZERO, pixels_per_unit=1.0)` | Validates before replacing Document/session; clears path and preview, increments generation. Failure preserves old project. |
 | `get_document_state()` | Lightweight `{ok,id,initialized,generation,revision,modified,transaction_active,path,canvas_size,canvas_origin,pixels_per_unit}` |
-| `get_document_summary()` | State fields plus schema_version, asset_count, assets, meshes, deformers, parts, parameters, transforms, bindings, scene_bindings. Mesh entries are ID/name/counts; use mesh snapshot for geometry. Full keyform copies can be large. |
+| `get_document_summary()` | State fields plus schema_version, asset_count, assets, meshes, deformers, parts, parameters, transforms, bindings, scene_bindings, offscreens. Mesh entries are ID/name/counts; use mesh snapshot for geometry. Full keyform copies can be large. |
 | `add_image_asset(id,name,source,width,height)` | Strings and positive uint32-size ints; metadata only. Prefer PNG import to decode dimensions. |
 | `get_asset_snapshot(id)` | `{ok,id,name,source,width,height,revision}` |
 | `create_mesh(description)` / `replace_mesh(description)` | Complete geometry Dictionary; replacement preserves previous runtime_id/properties when omitted. With bindings, topology changes require the atomic method below. |
@@ -57,6 +57,8 @@ Root geometry is original-canvas pixels: X right, Y down. Runtime X = `(source.x
 | `rename_mesh(id,name)` | Structured name update |
 | `set_mesh_properties(id,properties)` | Full properties Dictionary from current snapshot, with desired fields modified |
 | `write_part(description,replace=false)` | Create/replace Part |
+| `write_offscreen(description,replace=false)` | Create/replace a complete Offscreen atomically; supports workspace Undo/Redo, project persistence and v6 export. |
+| `get_offscreen_snapshot(id)` | Full Offscreen description; invalid IDs return structured failure. Query document state for the revision. |
 | `write_transform(description,replace=false)` | Create/replace full Rotation or Warp |
 | `create_rotation(id,name,center: Vector2,angle: float)` | Convenience root Rotation; unique runtime ID, scale=1 |
 | `create_warp(id,name,origin: Vector2,size: Vector2,columns: int,rows: int)` | Convenience regular root grid, 1–16 cells/axis; unique runtime ID. Full `write_transform` supports core limits (1–1024). |
@@ -82,9 +84,10 @@ Signals: `changed(change: Dictionary)` after document changes; `preview_changed(
 ## Dictionary schemas
 
 - **Mesh**: required `id,name,texture_asset_id: String`, `vertex_ids: PackedInt64Array`, `base_positions,uvs: PackedVector2Array`, `triangles: PackedInt64Array` (flat triples of stable vertex IDs, not array offsets). Optional `runtime_id: String`, `properties: Dictionary`. IDs fit uint32; positions and UV counts match, triangles reference distinct existing vertices. Packed arrays must have the declared element types.
-- **Mesh properties**: `part_id,deformer_id: String`; `blend_mode: int` (0 normal, 1 additive, 2 multiplicative); `enabled,double_sided,inverted_mask: bool`; `appearance`; `masks: Array[String]`; optional `draw_order: float` in [-32768,32767]. Use the full snapshot properties, not a partial patch. Mesh name and texture are changed through full mesh replacement.
+- **Mesh properties**: `part_id,deformer_id: String`; `blend_mode: int` (0 normal, 1 additive, 2 multiplicative); `enabled,double_sided,inverted_mask: bool`; `appearance`; `masks: Array[String]`; optional `draw_order: float` in [-32768,32767], `raw_blend_mode: int or null`. Raw mode is the v6 packed Color/Alpha value (`color | alpha << 8`); null uses legacy `blend_mode`, omission preserves an existing raw mode. Use the full snapshot properties, not a partial patch. Mesh name and texture are changed through full mesh replacement.
 - **Appearance**: `{opacity: float, multiply: Array[float] of length 3, screen: Array[float] of length 3}`. Values are finite. Opacity need not be artificially clamped to 1, to preserve imported authoring values.
 - **Part**: `{id,runtime_id,name,parent_id: String, enabled: bool, draw_order: float}`.
+- **Offscreen**: `{id,runtime_id,name,part_id: String, blend_mode: uint32, flags: uint8, masks: Array[String], part_keyform_indices: Array[int32], keyforms: Array[{opacity: float,multiply: Array[float] of length 3,screen: Array[float] of length 3}]}`. `blend_mode` uses packed Color/Alpha; `flags & 8` enables inverse masking. Preserve imported flags. The owner Part determines the parent surface; mask IDs refer to meshes. Copy the full snapshot before editing. See [S6 mode table and resource contract](../../docs/S6-offscreen-composition-fix.md).
 - **Parameter**: `{id,runtime_id,name: String, minimum,maximum,default_value: float, decimal_places: int=6}`. Minimum <= default <= maximum; decimal_places 0–9.
 - **RotationPose**: `{origin: [x,y], angle: float, scale: float>=0, reflect_x,reflect_y: bool}`.
 - **Transform**: `{id,runtime_id,name,part_id,parent_id: String, kind: int (0 Warp / 1 Rotation), base_angle: float, rows,columns: int, quad,enabled: bool, points: Array[[x,y]], rotation: RotationPose, appearance}`. Warp point count is `(rows+1)*(columns+1)` in row-major order. Rotation uses rows=columns=0 and empty points.

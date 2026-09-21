@@ -4,8 +4,8 @@ use std::collections::{HashMap, HashSet};
 use crate::geometry::{validate_positions, validate_render_mesh};
 use crate::types::{
     Appearance, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind,
-    Canvas, ChangeKind, ChangeSet, DeltaKeyforms, EditResult, Glue, ImageAsset, Mesh,
-    MeshBinding, MeshKeyform, Offscreen, Parameter, ParameterKind, Part, RotationPose, SceneBinding,
+    Canvas, ChangeKind, ChangeSet, DeltaKeyforms, EditResult, Glue, ImageAsset, Mesh, MeshBinding,
+    MeshKeyform, Offscreen, Parameter, ParameterKind, Part, RotationPose, SceneBinding,
     SceneKeyform, Status, Transform, TransformKind, Vec2, VertexId, VertexPositionUpdate,
 };
 
@@ -808,7 +808,10 @@ impl Document {
                         if !new_vids.contains(&pair.vertex_a) {
                             return self.failed(Status::error(
                                 "GLUE_CONFLICT",
-                                format!("{}: vertex {} used in glue {} is missing from updated mesh", mesh.id, pair.vertex_a, g.id),
+                                format!(
+                                    "{}: vertex {} used in glue {} is missing from updated mesh",
+                                    mesh.id, pair.vertex_a, g.id
+                                ),
                             ));
                         }
                     }
@@ -818,7 +821,10 @@ impl Document {
                         if !new_vids.contains(&pair.vertex_b) {
                             return self.failed(Status::error(
                                 "GLUE_CONFLICT",
-                                format!("{}: vertex {} used in glue {} is missing from updated mesh", mesh.id, pair.vertex_b, g.id),
+                                format!(
+                                    "{}: vertex {} used in glue {} is missing from updated mesh",
+                                    mesh.id, pair.vertex_b, g.id
+                                ),
                             ));
                         }
                     }
@@ -885,27 +891,43 @@ impl Document {
     /// Replace bound topology and its complete keyform set as one validated edit.
     pub fn replace_mesh_with_keyforms(&mut self, mesh: Mesh, binding: MeshBinding) -> EditResult {
         if self.mutation_blocked() {
-            return self.failed(Status::error("TRANSACTION_ACTIVE", "Commit or cancel first"));
+            return self.failed(Status::error(
+                "TRANSACTION_ACTIVE",
+                "Commit or cancel first",
+            ));
         }
         let Some(old_binding) = self.binding_for_mesh(&mesh.id) else {
             return self.failed(Status::error("MISSING_BINDING", &mesh.id));
         };
         if binding.id != old_binding.id || binding.mesh_id != mesh.id {
-            return self.failed(Status::error("INVALID_BINDING", "Preserve the binding and mesh IDs"));
+            return self.failed(Status::error(
+                "INVALID_BINDING",
+                "Preserve the binding and mesh IDs",
+            ));
         }
         let mesh_id = mesh.id.clone();
         let binding_id = binding.id.clone();
         let mut candidate = self.clone();
         let removed = candidate.erase_object(&binding_id);
-        if !removed.status.is_ok() { return self.failed(removed.status); }
+        if !removed.status.is_ok() {
+            return self.failed(removed.status);
+        }
         let replaced = candidate.replace_mesh(mesh);
-        if !replaced.status.is_ok() { return self.failed(replaced.status); }
+        if !replaced.status.is_ok() {
+            return self.failed(replaced.status);
+        }
         let rebound = candidate.create_binding(binding);
-        if !rebound.status.is_ok() { return self.failed(rebound.status); }
+        if !rebound.status.is_ok() {
+            return self.failed(rebound.status);
+        }
         self.meshes = candidate.meshes;
         self.vertex_slots = candidate.vertex_slots;
         self.bindings = candidate.bindings;
-        self.changed(ChangeKind::Structure, vec![mesh_id.clone()], vec![mesh_id, binding_id])
+        self.changed(
+            ChangeKind::Structure,
+            vec![mesh_id.clone()],
+            vec![mesh_id, binding_id],
+        )
     }
 
     /// Replace a mesh and every geometry dependency in one revision. Stable object
@@ -1354,20 +1376,34 @@ impl Document {
             }
         }
         for glue in self.glues.values() {
-            if glue.binding.as_ref().is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == p.id)) {
+            if glue
+                .binding
+                .as_ref()
+                .is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == p.id))
+            {
                 let status = candidate.validate_glue(glue);
-                if !status.is_ok() { return self.failed(status); }
+                if !status.is_ok() {
+                    return self.failed(status);
+                }
                 meshes = self.mesh_order.clone();
             }
         }
-        for table in self.blend_key_tables.values().filter(|t| t.parameter_id == p.id) {
+        for table in self
+            .blend_key_tables
+            .values()
+            .filter(|t| t.parameter_id == p.id)
+        {
             let status = candidate.validate_blend_key_table(table);
             if !status.is_ok() {
                 return self.failed(status);
             }
             meshes = self.mesh_order.clone();
         }
-        for constraint in self.blend_constraints.values().filter(|c| c.parameter_id == p.id) {
+        for constraint in self
+            .blend_constraints
+            .values()
+            .filter(|c| c.parameter_id == p.id)
+        {
             let status = candidate.validate_blend_constraint(constraint);
             if !status.is_ok() {
                 return self.failed(status);
@@ -1926,7 +1962,12 @@ impl Document {
                 "Constraint keys and weights must have matching non-zero lengths",
             );
         }
-        for (i, (&k, &w)) in constraint.keys.iter().zip(constraint.weights.iter()).enumerate() {
+        for (i, (&k, &w)) in constraint
+            .keys
+            .iter()
+            .zip(constraint.weights.iter())
+            .enumerate()
+        {
             if !k.is_finite()
                 || k < param.minimum
                 || k > param.maximum
@@ -2462,6 +2503,37 @@ impl Document {
         self.offscreens.values().find(|os| os.part_id == part_id)
     }
 
+    pub fn is_part_ancestor(&self, ancestor_id: &str, part_id: &str) -> bool {
+        if ancestor_id == part_id {
+            return true;
+        }
+        let mut cur = part_id;
+        while let Some(part) = self.get_part(cur) {
+            if part.parent_id.is_empty() {
+                break;
+            }
+            if part.parent_id == ancestor_id {
+                return true;
+            }
+            cur = &part.parent_id;
+        }
+        false
+    }
+
+    pub fn parent_offscreen_for_part(&self, part_id: &str) -> Option<&Offscreen> {
+        let mut cur = part_id;
+        while let Some(part) = self.get_part(cur) {
+            if part.parent_id.is_empty() {
+                break;
+            }
+            if let Some(os) = self.offscreen_for_part(&part.parent_id) {
+                return Some(os);
+            }
+            cur = &part.parent_id;
+        }
+        None
+    }
+
     pub fn validate_offscreen(&self, os: &Offscreen) -> Status {
         if !valid_uuid(&os.id) {
             return Status::error("INVALID_ID", format!("{}: invalid UUID", os.id));
@@ -2498,14 +2570,20 @@ impl Document {
             if let Some(m) = kf.multiply {
                 for c in m {
                     if !c.is_finite() {
-                        return Status::error("INVALID_COLOR", format!("{}: non-finite color", os.id));
+                        return Status::error(
+                            "INVALID_COLOR",
+                            format!("{}: non-finite color", os.id),
+                        );
                     }
                 }
             }
             if let Some(s) = kf.screen {
                 for c in s {
                     if !c.is_finite() {
-                        return Status::error("INVALID_COLOR", format!("{}: non-finite color", os.id));
+                        return Status::error(
+                            "INVALID_COLOR",
+                            format!("{}: non-finite color", os.id),
+                        );
                     }
                 }
             }
@@ -2658,7 +2736,12 @@ impl Document {
             }
         }
         for (key, g) in &self.glues {
-            if g.mesh_a_id == id || g.mesh_b_id == id || g.binding.as_ref().is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == id)) {
+            if g.mesh_a_id == id
+                || g.mesh_b_id == id
+                || g.binding
+                    .as_ref()
+                    .is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == id))
+            {
                 refs.push(key.clone());
             }
         }

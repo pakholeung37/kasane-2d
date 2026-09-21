@@ -1978,6 +1978,12 @@ fn test_v6_export_and_preflight() {
     assert_eq!(purism.part_count(), 51);
     assert_eq!(purism.drawable_count(), 198);
 
+    // Render order must include Offscreens in group descendant totals. Missing
+    // them creates colliding orders and loses meshes in the official renderer.
+    let defaults: Vec<f32> = doc.parameter_order().iter()
+        .map(|id| doc.get_parameter(id).unwrap().default_value).collect();
+    assert_runtime_matches(doc, &exported.bytes, &[defaults]);
+
     // 5. Test auto on a document without 5.3 features exports v5
     let v5_source = fs::read(root.join("tests/fixtures/external_v50/model.moc3")).unwrap();
     let v5_doc = import_from_bare_moc3(&v5_source, &HashMap::new()).unwrap().document;

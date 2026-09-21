@@ -15,6 +15,8 @@ pub type PreviewValues = HashMap<String, f32>;
 pub struct Drawable {
     pub id: String,
     pub runtime_id: String,
+    pub part_id: String,
+    pub raw_blend_mode: Option<u32>,
     pub texture_asset_id: String,
     pub texture_slot: i32,
     pub positions: Vec<Vec2>,
@@ -38,6 +40,8 @@ impl Default for Drawable {
         Self {
             id: String::new(),
             runtime_id: String::new(),
+            part_id: String::new(),
+            raw_blend_mode: None,
             texture_asset_id: String::new(),
             texture_slot: 0,
             positions: Vec::new(),
@@ -66,11 +70,20 @@ pub struct EvaluatedParameter {
     pub clamped: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum RenderCommand {
+    BeginOffscreen { offscreen_id: String },
+    DrawMesh { mesh_id: String },
+    EndOffscreen { offscreen_id: String },
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct OffscreenFrame {
     pub id: String,
     pub runtime_id: String,
     pub owner_part_id: String,
+    pub parent_offscreen_id: Option<String>,
+    pub render_order: i32,
     pub opacity: f32,
     pub enabled: bool,
     pub blend_mode: u32,
@@ -87,6 +100,7 @@ pub struct DrawableFrame {
     pub parameters: Vec<EvaluatedParameter>,
     pub drawables: Vec<Drawable>,
     pub offscreens: Vec<OffscreenFrame>,
+    pub render_plan: Vec<RenderCommand>,
 }
 
 pub fn to_parent_positions(
@@ -432,6 +446,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         parameters: Vec::with_capacity(doc.parameter_order().len()),
         drawables: Vec::with_capacity(doc.mesh_order().len()),
         offscreens: Vec::with_capacity(doc.offscreen_order().len()),
+        render_plan: Vec::new(),
     };
 
     let mut values = HashMap::new();
@@ -581,8 +596,10 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     match (&bs.keyforms, t.kind) {
                         (DeltaKeyforms::Warp(ref forms), TransformKind::Warp) => {
                             let selection = evaluate_blend_binding(doc, &values, bs);
-                            let has_multiply = selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
-                            let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
+                            let has_multiply =
+                                selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
+                            let has_screen =
+                                selection.iter().all(|(i, _)| forms[*i].screen.is_some());
                             for (kf_idx, eff_w) in selection {
                                 if kf_idx < forms.len() {
                                     let f = &forms[kf_idx];
@@ -614,8 +631,10 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                         }
                         (DeltaKeyforms::Rotation(ref forms), TransformKind::Rotation) => {
                             let selection = evaluate_blend_binding(doc, &values, bs);
-                            let has_multiply = selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
-                            let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
+                            let has_multiply =
+                                selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
+                            let has_screen =
+                                selection.iter().all(|(i, _)| forms[*i].screen.is_some());
                             for (kf_idx, eff_w) in selection {
                                 if kf_idx < forms.len() {
                                     let f = &forms[kf_idx];
@@ -713,6 +732,8 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         let mut d = Drawable {
             id: id.clone(),
             runtime_id: mesh.runtime_id.clone(),
+            part_id: mesh.part_id.clone(),
+            raw_blend_mode: mesh.raw_blend_mode,
             texture_asset_id: mesh.texture_asset_id.clone(),
             blend_mode: mesh.blend_mode,
             double_sided: mesh.double_sided,
@@ -806,7 +827,8 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 for bs in bs_list {
                     if let DeltaKeyforms::Mesh(ref forms) = bs.keyforms {
                         let selection = evaluate_blend_binding(doc, &values, bs);
-                        let has_multiply = selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
+                        let has_multiply =
+                            selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
                         let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
                         for (kf_idx, eff_w) in selection {
                             if kf_idx < forms.len() {
@@ -888,9 +910,15 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
             if let Some(glue) = doc.get_glue(gid) {
                 let mut intensity = if let Some(binding) = &glue.binding {
                     let selection = select(doc, &values, &binding.axes);
-                    selection.indices.iter().zip(&selection.weights)
-                        .map(|(&i, &w)| binding.keyforms[i].intensity * w).sum()
-                } else { glue.intensity };
+                    selection
+                        .indices
+                        .iter()
+                        .zip(&selection.weights)
+                        .map(|(&i, &w)| binding.keyforms[i].intensity * w)
+                        .sum()
+                } else {
+                    glue.intensity
+                };
 
                 let bs_list = doc.blend_bindings_for_target(gid);
                 if !bs_list.is_empty() {
@@ -941,18 +969,26 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                         let p0 = frame.drawables[slot_a].positions[idx_a];
                         let p1 = frame.drawables[slot_a].positions[idx_b];
                         let d = Vec2::new(p1.x - p0.x, p1.y - p0.y);
-                        frame.drawables[slot_a].positions[idx_a].x += d.x * (intensity * pair.weight_a);
-                        frame.drawables[slot_a].positions[idx_a].y += d.y * (intensity * pair.weight_a);
-                        frame.drawables[slot_a].positions[idx_b].x -= d.x * (intensity * pair.weight_b);
-                        frame.drawables[slot_a].positions[idx_b].y -= d.y * (intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_a].x +=
+                            d.x * (intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_a].y +=
+                            d.y * (intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_b].x -=
+                            d.x * (intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_b].y -=
+                            d.y * (intensity * pair.weight_b);
                     } else {
                         let p0 = frame.drawables[slot_a].positions[idx_a];
                         let p1 = frame.drawables[slot_b].positions[idx_b];
                         let d = Vec2::new(p1.x - p0.x, p1.y - p0.y);
-                        frame.drawables[slot_a].positions[idx_a].x += d.x * (intensity * pair.weight_a);
-                        frame.drawables[slot_a].positions[idx_a].y += d.y * (intensity * pair.weight_a);
-                        frame.drawables[slot_b].positions[idx_b].x -= d.x * (intensity * pair.weight_b);
-                        frame.drawables[slot_b].positions[idx_b].y -= d.y * (intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_a].x +=
+                            d.x * (intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_a].y +=
+                            d.y * (intensity * pair.weight_a);
+                        frame.drawables[slot_b].positions[idx_b].x -=
+                            d.x * (intensity * pair.weight_b);
+                        frame.drawables[slot_b].positions[idx_b].y -=
+                            d.y * (intensity * pair.weight_b);
                     }
                 }
             }
@@ -975,7 +1011,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
     }
 
     let groups = crate::draw_order::resolved_groups(doc);
-    let totals = crate::draw_order::descendant_counts(&groups);
+    let totals = crate::draw_order::descendant_counts_with_offscreens(doc, &groups);
     let slots: HashMap<&str, usize> = frame
         .drawables
         .iter()
@@ -983,6 +1019,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         .map(|(i, d)| (d.id.as_str(), i))
         .collect();
     let mut orders = HashMap::new();
+    let mut offscreen_orders = HashMap::new();
     for group in &groups {
         let mut items: Vec<(&str, i32)> = group
             .items
@@ -1007,6 +1044,10 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         items.sort_by_key(|item| item.1);
         let mut rank = orders.get(group.owner.as_str()).copied().unwrap_or(0);
         for (id, _) in items {
+            if let Some(os) = doc.offscreen_for_part(id) {
+                offscreen_orders.insert(os.id.as_str(), rank);
+                rank += 1;
+            }
             orders.insert(id, rank);
             rank += totals.get(id).copied().unwrap_or(1) as i32;
         }
@@ -1105,10 +1146,17 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 opacity = opacity.clamp(0.0, 1.0);
             }
 
+            let ro = offscreen_orders.get(os.id.as_str()).copied().unwrap_or(0);
+            let parent_os_id = doc
+                .parent_offscreen_for_part(&os.part_id)
+                .map(|p| p.id.clone());
+
             frame.offscreens.push(OffscreenFrame {
                 id: os.id.clone(),
                 runtime_id: os.runtime_id.clone(),
                 owner_part_id: os.part_id.clone(),
+                parent_offscreen_id: parent_os_id,
+                render_order: ro,
                 opacity,
                 enabled: owner_enabled,
                 blend_mode: os.blend_mode,
@@ -1118,6 +1166,84 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 screen_color: scr_color,
             });
         }
+    }
+
+    // Build render_plan: sort all drawables and offscreens by render_order
+    #[derive(Copy, Clone)]
+    enum PlanItem<'a> {
+        Mesh {
+            id: &'a str,
+            part_id: &'a str,
+            render_order: i32,
+        },
+        Offscreen {
+            id: &'a str,
+            owner_part_id: &'a str,
+            render_order: i32,
+        },
+    }
+
+    let mut plan_items: Vec<PlanItem> =
+        Vec::with_capacity(frame.drawables.len() + frame.offscreens.len());
+    for d in &frame.drawables {
+        plan_items.push(PlanItem::Mesh {
+            id: d.id.as_str(),
+            part_id: d.part_id.as_str(),
+            render_order: d.render_order,
+        });
+    }
+    for os in &frame.offscreens {
+        plan_items.push(PlanItem::Offscreen {
+            id: os.id.as_str(),
+            owner_part_id: os.owner_part_id.as_str(),
+            render_order: os.render_order,
+        });
+    }
+    plan_items.sort_by_key(|item| match item {
+        PlanItem::Mesh { render_order, .. } => *render_order,
+        PlanItem::Offscreen { render_order, .. } => *render_order,
+    });
+
+    let mut active_offscreens: Vec<(&str, &str)> = Vec::new(); // (offscreen_id, owner_part_id)
+    for item in plan_items {
+        match item {
+            PlanItem::Offscreen {
+                id, owner_part_id, ..
+            } => {
+                while let Some(&(top_os, top_owner)) = active_offscreens.last() {
+                    if doc.is_part_ancestor(top_owner, owner_part_id) {
+                        break;
+                    }
+                    active_offscreens.pop();
+                    frame.render_plan.push(RenderCommand::EndOffscreen {
+                        offscreen_id: top_os.to_string(),
+                    });
+                }
+                active_offscreens.push((id, owner_part_id));
+                frame.render_plan.push(RenderCommand::BeginOffscreen {
+                    offscreen_id: id.to_string(),
+                });
+            }
+            PlanItem::Mesh { id, part_id, .. } => {
+                while let Some(&(top_os, top_owner)) = active_offscreens.last() {
+                    if doc.is_part_ancestor(top_owner, part_id) {
+                        break;
+                    }
+                    active_offscreens.pop();
+                    frame.render_plan.push(RenderCommand::EndOffscreen {
+                        offscreen_id: top_os.to_string(),
+                    });
+                }
+                frame.render_plan.push(RenderCommand::DrawMesh {
+                    mesh_id: id.to_string(),
+                });
+            }
+        }
+    }
+    while let Some((top_os, _)) = active_offscreens.pop() {
+        frame.render_plan.push(RenderCommand::EndOffscreen {
+            offscreen_id: top_os.to_string(),
+        });
     }
 
     *out = frame;

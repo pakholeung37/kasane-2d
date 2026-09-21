@@ -429,6 +429,11 @@ pub fn mesh_properties_from_dict(d: &Dictionary, m: &mut Mesh) -> Result<(), Sta
         2 => BlendMode::Multiplicative,
         _ => return Err(fail()),
     };
+    if let Some(raw) = d.get("raw_blend_mode") {
+        m.raw_blend_mode = if raw.get_type() == VariantType::NIL { None } else {
+            Some(raw.try_to::<u32>().map_err(|_| fail())?)
+        };
+    }
     m.enabled = get_bool(d, "enabled")?;
     m.double_sided = get_bool(d, "double_sided")?;
     m.inverted_mask = get_bool(d, "inverted_mask")?;
@@ -470,6 +475,7 @@ pub fn dict_from_mesh_properties(m: &Mesh) -> Dictionary {
         BlendMode::Multiplicative => 2,
     };
     d.set("blend_mode", blend_int);
+    d.set("raw_blend_mode", &m.raw_blend_mode.map(|v| v.to_variant()).unwrap_or_else(Variant::nil));
     d.set("enabled", m.enabled);
     d.set("double_sided", m.double_sided);
     d.set("inverted_mask", m.inverted_mask);

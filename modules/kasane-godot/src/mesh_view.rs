@@ -59,6 +59,10 @@ impl KasaneMeshView {
 
         if dense.is_empty() {
             self.surface = None;
+            // Mask consumers read the base MeshInstance2D, not this cache.
+            // A topology edit to zero faces must clear its previous GPU mesh.
+            self.base_mut()
+                .set_mesh(Gd::<godot::classes::Mesh>::null_arg());
             self.positions = next;
             self.base_mut().set_visible(false);
             self.update_bounds();

@@ -89,9 +89,9 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 
 后续扩展：导入器现也接受 `csmMocVersion_40`（文件头版本值 3，Cubism 4.0–4.1）的小端文件。使用仓库内 Rice 模型验证 `model3.json` 导入、纹理映射，以及默认值和参数边界的 Document／原 MOC3／再导出 MOC3 求值一致性；导出版本仍为 5.0。
 
-上述 Rice 证据仅覆盖该样本，不能代表所有 version 3 模型；Hiyori 的零三角形 ArtMesh 仍触发当前几何校验拒绝。后续按 [M3C：MOC3 版本 2–6 整体设计](milestones/M3C-moc3-version-coverage.md) 和 [S0–S7 实施计划](milestones/M3C-implementation-plan.md)，依次补齐无面网格、4.2 字段、循环参数、BlendShape Glue、5.3 Offscreen 与扩展混合，以及工程保存和 5.0/5.3 导出。**M3C 当前仅完成设计，尚未实施或验收**；以下旧阶段范围与验收记录不因新计划而扩大。
+早期 Rice 证据仅覆盖该样本，后续扩展按 [M3C：MOC3 版本 2–6 整体设计](M3C-moc3-version-coverage.md) 和 [S0–S7 实施计划](M3C-implementation-plan.md) 逐项验收。2026-09-21，S6 的 Ren 分层 Offscreen、扩展 Color/Alpha 混合、正式源码 Editor 闭环和资源预算已通过全部 9 项门禁，见 [S6 验收记录](S6-offscreen-composition-fix.md)。**M3C 整体仍未完成**：S2 的真实外部 4.2 样本及 S7 全版本矩阵、独立应用发布门禁仍保留未完成状态；不能用 S6 通过代替这些证据。
 
-本轮不交付 BlendShape、Glue、Offscreen、参数循环、动作/表情/物理文件创作、Cubism `.cmo3` 工程互通、PSD 导入、自动网格生成和完整人工工具集。导入器遇到范围外语义必须报告并拒绝创建“可完整编辑”的工程；不得丢弃后返回成功。现有播放器对这些特性的能力不因编辑器范围而删除。
+M1–M5 最初未交付 BlendShape、Glue、Offscreen、参数循环、动作/表情/物理文件创作、Cubism `.cmo3` 工程互通、PSD 导入、自动网格生成和完整人工工具集。导入器遇到范围外语义必须报告并拒绝创建“可完整编辑”的工程；不得丢弃后返回成功。现有播放器对这些特性的能力不因编辑器范围而删除。
 
 以上为 M1–M5 已验收的基础范围。2026-09-20 起新增 [M3B：Mao 完整可编辑导入](milestones/M3B-mao-editable-import.md) 实施设计，以本地原始 Mao 为第一验收模型，扩展 Mesh/Warp/Part/Rotation BlendShape、约束与普通 Glue，以及相应编辑、工程持久化和 5.0 再导出。2026-09-21 已完成审查修复、完整编辑入口、动画 Glue、联合拓扑编辑及严格验收；3,505 组双 Core 数值、独立打包应用与 GPU 检查通过，见 [实施与验收记录](milestones/M3B-COMPLETION.md)。循环参数、未列出的其他文件版本、BlendShape Glue、Offscreen 和运行附件创作仍不在该阶段范围内。
 

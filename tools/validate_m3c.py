@@ -1007,8 +1007,18 @@ def main():
         if args.stage == "S5":
             return 0 if s5_report["gate"]["passed"] else 1
 
-    # Later stages (S6-S7)
-    stages = ["S6", "S7"] if args.stage == "all" else [args.stage]
+    if args.stage in ("S6", "all"):
+        from validate_s6 import acceptance, GODOT
+        report_path = args.output / "s6_report.json"
+        report_path.write_text(json.dumps({"stage": "S6", "status": "not_run"}) + "\n")
+        report = acceptance((args.output / "s6").resolve(), args.sdk.resolve(), GODOT)
+        report_path.write_text(json.dumps(report, indent=2) + "\n")
+        if report["status"] != "passed" or args.stage == "S6":
+            print(f"S6 {report['status']}: {report_path}")
+            return 0 if report["status"] == "passed" else 1
+
+    # Release closure remains a separate S7 gate.
+    stages = ["S7"] if args.stage == "all" else [args.stage]
     incomplete_stages = []
     for st in stages:
         stage_report_file = args.output / f"{st.lower()}_report.json"

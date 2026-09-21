@@ -166,8 +166,12 @@ impl KasaneDocumentBridge {
         let mut next = DocumentSession::new();
         let status = next.document_mut().initialize(
             id.to_string(),
-            Canvas::new(canvas_size.x, canvas_size.y,
-                Vec2::new(origin.x, origin.y), pixels_per_unit as f32),
+            Canvas::new(
+                canvas_size.x,
+                canvas_size.y,
+                Vec2::new(origin.x, origin.y),
+                pixels_per_unit as f32,
+            ),
         );
         if !status.is_ok() {
             return status_to_dict(&status);
@@ -213,7 +217,12 @@ impl KasaneDocumentBridge {
         self.apply(edit)
     }
 
-    fn write_mesh_internal(&mut self, d: Dictionary, replace: bool, binding: Option<Dictionary>) -> Dictionary {
+    fn write_mesh_internal(
+        &mut self,
+        d: Dictionary,
+        replace: bool,
+        binding: Option<Dictionary>,
+    ) -> Dictionary {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document bridge requires the main thread.");
         }
@@ -241,7 +250,10 @@ impl KasaneDocumentBridge {
             ("triangles", VariantType::PACKED_INT64_ARRAY),
         ] {
             if d.get(key).unwrap().get_type() != expected {
-                return error_dict("INVALID_FIELD", &format!("{key} requires its declared Packed array type"));
+                return error_dict(
+                    "INVALID_FIELD",
+                    &format!("{key} requires its declared Packed array type"),
+                );
             }
         }
         let Ok(id) = d.get("id").unwrap().try_to::<GString>() else {
@@ -300,6 +312,7 @@ impl KasaneDocumentBridge {
                 mesh.part_id = old.part_id.clone();
                 mesh.deformer_id = old.deformer_id.clone();
                 mesh.blend_mode = old.blend_mode;
+                mesh.raw_blend_mode = old.raw_blend_mode;
                 mesh.enabled = old.enabled;
                 mesh.double_sided = old.double_sided;
                 mesh.inverted_mask = old.inverted_mask;
@@ -334,7 +347,9 @@ impl KasaneDocumentBridge {
                 Ok(binding) => binding,
                 Err(status) => return status_to_dict(&status),
             };
-            self.session.document_mut().replace_mesh_with_keyforms(mesh, binding)
+            self.session
+                .document_mut()
+                .replace_mesh_with_keyforms(mesh, binding)
         } else if replace {
             self.session.document_mut().replace_mesh(mesh)
         } else {
@@ -354,7 +369,11 @@ impl KasaneDocumentBridge {
     }
 
     #[func]
-    pub fn replace_mesh_with_keyforms(&mut self, description: Dictionary, binding: Dictionary) -> Dictionary {
+    pub fn replace_mesh_with_keyforms(
+        &mut self,
+        description: Dictionary,
+        binding: Dictionary,
+    ) -> Dictionary {
         self.write_mesh_internal(description, true, Some(binding))
     }
 
@@ -421,8 +440,13 @@ impl KasaneDocumentBridge {
             return error_dict("MISSING_OBJECT", &id.to_string());
         }
         let mut out = status_to_dict(&Status::ok());
-        let refs = PackedStringArray::from_iter(self.session.document()
-            .references_to(&id.to_string()).iter().map(GString::from));
+        let refs = PackedStringArray::from_iter(
+            self.session
+                .document()
+                .references_to(&id.to_string())
+                .iter()
+                .map(GString::from),
+        );
         out.set("referrers", &refs);
         out
     }
@@ -586,6 +610,40 @@ impl KasaneDocumentBridge {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
         match self.session.document().get_glue(&id.to_string()) {
+            Some(value) => crate::conversions::structured_to_dict(value),
+            None => error_dict("MISSING_OBJECT", &id.to_string()),
+        }
+    }
+
+    #[func]
+    pub fn write_offscreen(
+        &mut self,
+        description: Dictionary,
+        #[opt(default = false)] replace: bool,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let value = match crate::conversions::structured_from_dict::<kasane_core::types::Offscreen>(
+            &description,
+        ) {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let edit = if replace {
+            self.session.document_mut().replace_offscreen(value)
+        } else {
+            self.session.document_mut().create_offscreen(value)
+        };
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn get_offscreen_snapshot(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        match self.session.document().get_offscreen(&id.to_string()) {
             Some(value) => crate::conversions::structured_to_dict(value),
             None => error_dict("MISSING_OBJECT", &id.to_string()),
         }
@@ -980,11 +1038,22 @@ impl KasaneDocumentBridge {
         }
         out.set("revision", frame.source_revision as i64);
         out.set("coordinate_units", "runtime");
+        let mut canvas = Dictionary::new();
+        canvas.set("width", frame.canvas.width);
+        canvas.set("height", frame.canvas.height);
+        canvas.set(
+            "origin",
+            Vector2::new(frame.canvas.origin.x, frame.canvas.origin.y),
+        );
+        canvas.set("pixels_per_unit", frame.canvas.pixels_per_unit);
+        canvas.set("flag", i64::from(frame.canvas.flag));
+        out.set("canvas", &canvas);
         let mut drawables = Array::new();
         for d in &frame.drawables {
             let mut item = Dictionary::new();
             item.set("id", d.id.as_str());
             item.set("runtime_id", d.runtime_id.as_str());
+            item.set("part_id", d.part_id.as_str());
             let positions = vectors_to_packed(&d.positions);
             let uvs = vectors_to_packed(&d.uvs);
             let indices = ids_to_packed(&d.indices);
@@ -1006,6 +1075,10 @@ impl KasaneDocumentBridge {
                 BlendMode::Multiplicative => 2,
             };
             item.set("blend_mode", blend_int);
+            item.set(
+                "raw_blend_mode",
+                d.raw_blend_mode.map(i64::from).unwrap_or(-1),
+            );
             let mut masks = PackedStringArray::new();
             for m in &d.masks {
                 masks.push(&GString::from(m.as_str()));
@@ -1031,6 +1104,65 @@ impl KasaneDocumentBridge {
             );
             drawables.push(&item);
         }
+        let mut offscreens = Array::new();
+        for offscreen in &frame.offscreens {
+            let mut item = Dictionary::new();
+            item.set("id", offscreen.id.as_str());
+            item.set("runtime_id", offscreen.runtime_id.as_str());
+            item.set("owner_part_id", offscreen.owner_part_id.as_str());
+            item.set(
+                "parent_offscreen_id",
+                offscreen.parent_offscreen_id.as_deref().unwrap_or(""),
+            );
+            item.set("render_order", offscreen.render_order);
+            item.set("opacity", offscreen.opacity);
+            item.set("enabled", offscreen.enabled);
+            item.set("blend_mode", i64::from(offscreen.blend_mode));
+            item.set("inverted_mask", offscreen.flags & 8 != 0);
+            let mut masks = PackedStringArray::new();
+            for mask in &offscreen.masks {
+                masks.push(&GString::from(mask.as_str()));
+            }
+            item.set("masks", &masks);
+            item.set(
+                "multiply_color",
+                Color::from_rgba(
+                    offscreen.multiply_color[0],
+                    offscreen.multiply_color[1],
+                    offscreen.multiply_color[2],
+                    offscreen.multiply_color[3],
+                ),
+            );
+            item.set(
+                "screen_color",
+                Color::from_rgba(
+                    offscreen.screen_color[0],
+                    offscreen.screen_color[1],
+                    offscreen.screen_color[2],
+                    offscreen.screen_color[3],
+                ),
+            );
+            offscreens.push(&item);
+        }
+        let mut render_plan = Array::new();
+        for command in &frame.render_plan {
+            let mut item = Dictionary::new();
+            match command {
+                kasane_core::evaluation::RenderCommand::BeginOffscreen { offscreen_id } => {
+                    item.set("command", "begin_offscreen");
+                    item.set("id", offscreen_id.as_str());
+                }
+                kasane_core::evaluation::RenderCommand::DrawMesh { mesh_id } => {
+                    item.set("command", "draw_mesh");
+                    item.set("id", mesh_id.as_str());
+                }
+                kasane_core::evaluation::RenderCommand::EndOffscreen { offscreen_id } => {
+                    item.set("command", "end_offscreen");
+                    item.set("id", offscreen_id.as_str());
+                }
+            }
+            render_plan.push(&item);
+        }
         let mut parameters = Array::new();
         for p in &frame.parameters {
             let mut value = Dictionary::new();
@@ -1041,6 +1173,8 @@ impl KasaneDocumentBridge {
             parameters.push(&value);
         }
         out.set("drawables", &drawables);
+        out.set("offscreens", &offscreens);
+        out.set("render_plan", &render_plan);
         out.set("parameters", &parameters);
         out
     }
@@ -1372,8 +1506,14 @@ impl KasaneDocumentBridge {
         out.set("modified", doc.modified());
         out.set("transaction_active", doc.transaction_active());
         out.set("path", self.session.manifest().to_string_lossy().as_ref());
-        out.set("canvas_size", Vector2::new(doc.canvas().width, doc.canvas().height));
-        out.set("canvas_origin", Vector2::new(doc.canvas().origin.x, doc.canvas().origin.y));
+        out.set(
+            "canvas_size",
+            Vector2::new(doc.canvas().width, doc.canvas().height),
+        );
+        out.set(
+            "canvas_origin",
+            Vector2::new(doc.canvas().origin.x, doc.canvas().origin.y),
+        );
         out.set("pixels_per_unit", doc.canvas().pixels_per_unit as f64);
         out
     }
@@ -1464,25 +1604,37 @@ impl KasaneDocumentBridge {
         out.set("scene_bindings", &scene_bindings);
         let mut items = Array::new();
         for id in doc.blend_key_table_order() {
-            items.push(&crate::conversions::structured_to_dict(doc.get_blend_key_table(id).unwrap()));
+            items.push(&crate::conversions::structured_to_dict(
+                doc.get_blend_key_table(id).unwrap(),
+            ));
         }
         out.set("blend_key_tables", &items);
         let mut items = Array::new();
         for id in doc.blend_constraint_order() {
-            items.push(&crate::conversions::structured_to_dict(doc.get_blend_constraint(id).unwrap()));
+            items.push(&crate::conversions::structured_to_dict(
+                doc.get_blend_constraint(id).unwrap(),
+            ));
         }
         out.set("blend_constraints", &items);
         let mut items = Array::new();
         for id in doc.blend_binding_order() {
-            items.push(&crate::conversions::structured_to_dict(doc.get_blend_binding(id).unwrap()));
+            items.push(&crate::conversions::structured_to_dict(
+                doc.get_blend_binding(id).unwrap(),
+            ));
         }
         out.set("blend_bindings", &items);
         let mut items = Array::new();
         for id in doc.glue_order() {
-            items.push(&crate::conversions::structured_to_dict(doc.get_glue(id).unwrap()));
+            items.push(&crate::conversions::structured_to_dict(
+                doc.get_glue(id).unwrap(),
+            ));
         }
         out.set("glues", &items);
-
+        let mut items = Array::new();
+        for id in doc.offscreen_order() {
+            items.push(&crate::conversions::structured_to_dict(doc.get_offscreen(id).unwrap()));
+        }
+        out.set("offscreens", &items);
 
         out.set(
             "canvas_origin",
@@ -1530,8 +1682,13 @@ impl KasaneDocumentBridge {
             );
         }
         let doc = self.session.document();
-        let removed: Vec<String> = doc.mesh_order().iter().chain(doc.transform_order())
-            .filter(|id| !b.document.contains_id(id)).cloned().collect();
+        let removed: Vec<String> = doc
+            .mesh_order()
+            .iter()
+            .chain(doc.transform_order())
+            .filter(|id| !b.document.contains_id(id))
+            .cloned()
+            .collect();
         for id in removed {
             *self.object_epochs.entry(id).or_default() += 1;
         }

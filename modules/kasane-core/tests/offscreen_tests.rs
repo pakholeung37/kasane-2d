@@ -53,8 +53,16 @@ fn create_base_doc() -> Document {
         texture_asset_id: id(2),
         part_id: id(3),
         vertex_ids: vec![1, 2, 3],
-        base_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(0.0, 10.0)],
-        uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0)],
+        base_positions: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(0.0, 10.0),
+        ],
+        uvs: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+        ],
         triangles: vec![[1, 2, 3]],
         ..Default::default()
     };
@@ -279,4 +287,181 @@ fn test_offscreen_evaluation_and_blendshapes() {
     let os_f = &frame.offscreens[0];
     assert_eq!(os_f.opacity, 0.0);
     assert!(!os_f.enabled);
+}
+
+#[test]
+fn test_offscreen_render_orders_and_hierarchical_render_plan() {
+    use kasane_core::evaluation::RenderCommand;
+
+    let mut doc = create_base_doc();
+    // doc has PartRoot(id(3)), MeshA(id(4))
+
+    // Part 10 (Child of PartRoot), has Offscreen 100, Mesh 101
+    let p10 = Part {
+        id: id(10),
+        runtime_id: "Part10".to_string(),
+        name: "Part 10".to_string(),
+        parent_id: id(3),
+        enabled: true,
+        draw_order: 1.0,
+    };
+    assert!(doc.create_part(p10).status.is_ok());
+
+    let m101 = Mesh {
+        id: id(101),
+        runtime_id: "Mesh101".to_string(),
+        name: "Mesh 101".to_string(),
+        texture_asset_id: id(2),
+        part_id: id(10),
+        vertex_ids: vec![1, 2, 3],
+        base_positions: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(5.0, 0.0),
+            Vec2::new(0.0, 5.0),
+        ],
+        uvs: vec![Vec2::new(0.0, 0.0); 3],
+        triangles: vec![[1, 2, 3]],
+        ..Default::default()
+    };
+    assert!(doc.create_mesh(m101).status.is_ok());
+
+    let os100 = Offscreen {
+        id: id(100),
+        runtime_id: "Offscreen100".to_string(),
+        name: "Offscreen 100".to_string(),
+        part_id: id(10),
+        blend_mode: 0,
+        flags: 0,
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(os100).status.is_ok());
+
+    // Part 20 (Child of Part 10 - nested!), has Offscreen 200, Mesh 201
+    let p20 = Part {
+        id: id(20),
+        runtime_id: "Part20".to_string(),
+        name: "Part 20".to_string(),
+        parent_id: id(10),
+        enabled: true,
+        draw_order: 2.0,
+    };
+    assert!(doc.create_part(p20).status.is_ok());
+
+    let m201 = Mesh {
+        id: id(201),
+        runtime_id: "Mesh201".to_string(),
+        name: "Mesh 201".to_string(),
+        texture_asset_id: id(2),
+        part_id: id(20),
+        vertex_ids: vec![1, 2, 3],
+        base_positions: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(5.0, 0.0),
+            Vec2::new(0.0, 5.0),
+        ],
+        uvs: vec![Vec2::new(0.0, 0.0); 3],
+        triangles: vec![[1, 2, 3]],
+        ..Default::default()
+    };
+    assert!(doc.create_mesh(m201).status.is_ok());
+
+    let os200 = Offscreen {
+        id: id(200),
+        runtime_id: "Offscreen200".to_string(),
+        name: "Offscreen 200".to_string(),
+        part_id: id(20),
+        blend_mode: 0,
+        flags: 0,
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(os200).status.is_ok());
+
+    // Part 30 (Sibling of Part 10, child of PartRoot), has Offscreen 300, Mesh 301
+    let p30 = Part {
+        id: id(30),
+        runtime_id: "Part30".to_string(),
+        name: "Part 30".to_string(),
+        parent_id: id(3),
+        enabled: true,
+        draw_order: 3.0,
+    };
+    assert!(doc.create_part(p30).status.is_ok());
+
+    let m301 = Mesh {
+        id: id(301),
+        runtime_id: "Mesh301".to_string(),
+        name: "Mesh 301".to_string(),
+        texture_asset_id: id(2),
+        part_id: id(30),
+        vertex_ids: vec![1, 2, 3],
+        base_positions: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(5.0, 0.0),
+            Vec2::new(0.0, 5.0),
+        ],
+        uvs: vec![Vec2::new(0.0, 0.0); 3],
+        triangles: vec![[1, 2, 3]],
+        ..Default::default()
+    };
+    assert!(doc.create_mesh(m301).status.is_ok());
+
+    let os300 = Offscreen {
+        id: id(300),
+        runtime_id: "Offscreen300".to_string(),
+        name: "Offscreen 300".to_string(),
+        part_id: id(30),
+        blend_mode: 0,
+        flags: 0,
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(os300).status.is_ok());
+
+    let mut frame = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+
+    // Check offscreens
+    assert_eq!(frame.offscreens.len(), 3);
+    let os_map: HashMap<&str, &kasane_core::evaluation::OffscreenFrame> = frame
+        .offscreens
+        .iter()
+        .map(|os| (os.id.as_str(), os))
+        .collect();
+
+    assert_eq!(os_map[id(100).as_str()].parent_offscreen_id, None);
+    assert_eq!(os_map[id(200).as_str()].parent_offscreen_id, Some(id(100)));
+    assert_eq!(os_map[id(300).as_str()].parent_offscreen_id, None);
+
+    // Verify render plan:
+    // MeshA is in PartRoot -> DrawMesh(id(4))
+    // Then Part 10 starts: BeginOffscreen(100), DrawMesh(101)
+    // Then Part 20 starts: BeginOffscreen(200), DrawMesh(201), EndOffscreen(200)
+    // Then Part 10 ends: EndOffscreen(100)
+    // Then Part 30 starts: BeginOffscreen(300), DrawMesh(301), EndOffscreen(300)
+    assert_eq!(
+        frame.render_plan,
+        vec![
+            RenderCommand::DrawMesh { mesh_id: id(4) },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: id(100)
+            },
+            RenderCommand::DrawMesh { mesh_id: id(101) },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: id(200)
+            },
+            RenderCommand::DrawMesh { mesh_id: id(201) },
+            RenderCommand::EndOffscreen {
+                offscreen_id: id(200)
+            },
+            RenderCommand::EndOffscreen {
+                offscreen_id: id(100)
+            },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: id(300)
+            },
+            RenderCommand::DrawMesh { mesh_id: id(301) },
+            RenderCommand::EndOffscreen {
+                offscreen_id: id(300)
+            },
+        ]
+    );
 }

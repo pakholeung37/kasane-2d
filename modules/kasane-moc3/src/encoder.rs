@@ -706,7 +706,11 @@ pub fn encode_moc3_with_version(
     }
 
     let groups = kasane_core::draw_order::resolved_groups(doc);
-    let totals = kasane_core::draw_order::descendant_counts(&groups);
+    let totals = if export_version >= 6 {
+        kasane_core::draw_order::descendant_counts_with_offscreens(doc, &groups)
+    } else {
+        kasane_core::draw_order::descendant_counts(&groups)
+    };
     let group_slots: HashMap<&str, usize> = groups
         .iter()
         .enumerate()
