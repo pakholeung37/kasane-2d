@@ -12,7 +12,7 @@ use godot::classes::{
 use godot::prelude::*;
 use std::collections::HashMap;
 
-use kasane_core::evaluation::{DrawableFrame, FrameEvaluator, RenderCommand};
+use kasane_core::evaluation::{DrawableFrame, RenderCommand};
 use kasane_core::types::{BlendMode, Status, Vec2};
 
 use crate::conversions::{error_dict, status_to_dict, Array, Dictionary};
@@ -91,8 +91,6 @@ pub struct KasaneDocumentPreview {
     drawing_submission: Option<(u64, Rid)>,
     pending_draws: i32,
     runtime_frame: Option<DrawableFrame>,
-    evaluated_frame: DrawableFrame,
-    evaluator: FrameEvaluator,
     verified_assets: HashMap<String, kasane_core::ImageAsset>,
     verified_manifest: String,
     runtime_textures: HashMap<String, Gd<Texture2D>>,
@@ -399,13 +397,6 @@ impl KasaneDocumentPreview {
     }
 
     fn refresh_inner(&mut self, reload_assets: bool) -> Dictionary {
-        let mut frame = std::mem::take(&mut self.evaluated_frame);
-        let result = self.refresh_with_frame(reload_assets, &mut frame);
-        self.evaluated_frame = frame;
-        result
-    }
-
-    fn refresh_with_frame(&mut self, reload_assets: bool, frame: &mut DrawableFrame) -> Dictionary {
         let Some(doc) = self.document.clone() else {
             self.clear_views();
             let res = error_dict("MISSING_DOCUMENT", "Attach a Document.");
@@ -413,13 +404,15 @@ impl KasaneDocumentPreview {
             return res;
         };
 
-        let status = doc.bind().evaluate_reusing(&mut self.evaluator, frame);
-        if !status.is_ok() {
-            self.clear_views();
-            let out = status_to_dict(&status);
-            self.last_result = out.clone();
-            return out;
-        }
+        let frame = match doc.bind().evaluated_frame() {
+            Ok(frame) => frame,
+            Err(status) => {
+                self.clear_views();
+                let out = status_to_dict(&status);
+                self.last_result = out.clone();
+                return out;
+            }
+        };
 
         let Some(mut textures) = self.textures.clone() else {
             self.clear_views();

@@ -2,7 +2,10 @@ use godot::prelude::*;
 use std::collections::HashMap;
 
 use kasane_core::document::Document;
-use kasane_core::evaluation::{evaluate_frame, DrawableFrame, FrameEvaluator};
+use kasane_core::evaluation::DrawableFrame;
+use kasane_core::preview::PreviewState;
+use std::cell::RefCell;
+use std::sync::Arc;
 use kasane_core::types::{
     BlendMode, Canvas, ChangeKind, EditResult, ImageAsset, Mesh, RotationPose, Status, Transform,
     TransformKind, Vec2, VertexPositionUpdate,
@@ -34,7 +37,7 @@ pub struct KasaneDocumentBridge {
     base: Base<RefCounted>,
     session: DocumentSession,
     generation: u64,
-    preview_values: HashMap<String, f32>,
+    preview: RefCell<PreviewState>,
     object_epochs: HashMap<String, u64>,
 }
 
@@ -45,7 +48,7 @@ impl IRefCounted for KasaneDocumentBridge {
             base,
             session: DocumentSession::new(),
             generation: 1,
-            preview_values: HashMap::new(),
+            preview: RefCell::new(PreviewState::default()),
             object_epochs: HashMap::new(),
         }
     }
@@ -65,6 +68,7 @@ impl KasaneDocumentBridge {
 
     pub fn increment_generation(&mut self) {
         self.generation += 1;
+        self.preview.get_mut().reset();
         self.object_epochs.clear();
     }
 
@@ -77,23 +81,14 @@ impl KasaneDocumentBridge {
     }
 
     pub fn session_mut(&mut self) -> &mut DocumentSession {
+        self.preview.get_mut().invalidate();
         &mut self.session
     }
 
-    pub fn preview_values_mut(&mut self) -> &mut HashMap<String, f32> {
-        &mut self.preview_values
-    }
-
-    pub fn evaluate(&self, out: &mut DrawableFrame) -> Status {
-        evaluate_frame(self.session.document(), &self.preview_values, out)
-    }
-
-    pub fn evaluate_reusing(
-        &self,
-        evaluator: &mut FrameEvaluator,
-        out: &mut DrawableFrame,
-    ) -> Status {
-        evaluator.evaluate(self.session.document(), &self.preview_values, out)
+    pub fn evaluated_frame(&self) -> Result<Arc<DrawableFrame>, Status> {
+        self.preview
+            .borrow_mut()
+            .frame(self.session.document(), self.generation)
     }
 
     pub fn apply(&mut self, edit: EditResult) -> Dictionary {
@@ -126,8 +121,7 @@ impl KasaneDocumentBridge {
             return out;
         }
 
-        self.preview_values
-            .retain(|k, _| self.session.document().get_parameter(k).is_some());
+        self.preview.get_mut().retain_parameters(self.session.document());
 
         if edit.changes.kind != ChangeKind::None {
             self.base_mut().emit_signal("changed", &[out.to_variant()]);
@@ -156,6 +150,9 @@ impl KasaneDocumentBridge {
             .session
             .document_mut()
             .initialize(id.to_string(), canvas);
+        if status.is_ok() {
+            self.preview.get_mut().invalidate();
+        }
         status_to_dict(&status)
     }
 
@@ -186,7 +183,6 @@ impl KasaneDocumentBridge {
         }
         self.session = next;
         self.increment_generation();
-        self.preview_values.clear();
         let mut out = status_to_dict(&status);
         out.set("generation", self.generation as i64);
         out.set("revision", self.session.document().revision() as i64);
@@ -1007,11 +1003,10 @@ impl KasaneDocumentBridge {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        let mut frame = DrawableFrame::default();
-        let status = self.evaluate(&mut frame);
-        if !status.is_ok() {
-            return status_to_dict(&status);
-        }
+        let frame = match self.evaluated_frame() {
+            Ok(frame) => frame,
+            Err(status) => return status_to_dict(&status),
+        };
         let id_str = id.to_string();
         for d in &frame.drawables {
             if d.id == id_str {
@@ -1038,12 +1033,11 @@ impl KasaneDocumentBridge {
         if !is_main_thread() {
             return error_dict("WRONG_THREAD", "Document requires the main thread.");
         }
-        let mut frame = DrawableFrame::default();
-        let status = self.evaluate(&mut frame);
-        let mut out = status_to_dict(&status);
-        if !status.is_ok() {
-            return out;
-        }
+        let frame = match self.evaluated_frame() {
+            Ok(frame) => frame,
+            Err(status) => return status_to_dict(&status),
+        };
+        let mut out = status_to_dict(&Status::ok());
         out.set("revision", frame.source_revision as i64);
         out.set("coordinate_units", "runtime");
         let mut canvas = Dictionary::new();
@@ -1218,14 +1212,73 @@ impl KasaneDocumentBridge {
             }
             next.insert(k_str.to_string(), val);
         }
-        let mut frame = DrawableFrame::default();
-        let status = evaluate_frame(self.session.document(), &next, &mut frame);
-        if !status.is_ok() {
+        if let Err(status) = self.commit_preview(next) {
             return status_to_dict(&status);
         }
-        self.preview_values = next;
-        self.base_mut().emit_signal("preview_changed", &[]);
         self.get_frame()
+    }
+
+    fn commit_preview(&mut self, next: HashMap<String, f32>) -> Result<(), Status> {
+        let changed = self.preview.get_mut().replace(
+            self.session.document(),
+            self.generation,
+            next,
+        )?;
+        if changed {
+            self.base_mut().emit_signal("preview_changed", &[]);
+        }
+        Ok(())
+    }
+
+    #[func]
+    pub fn set_preview_parameter(&mut self, id: GString, value: f64) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let mut next = self.preview.borrow().values().clone();
+        next.insert(id.to_string(), value as f32);
+        match self.commit_preview(next) {
+            Ok(()) => self.get_parameter_samples(),
+            Err(status) => status_to_dict(&status),
+        }
+    }
+
+    #[func]
+    pub fn reset_preview_values(&mut self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        match self.commit_preview(HashMap::new()) {
+            Ok(()) => self.get_parameter_samples(),
+            Err(status) => status_to_dict(&status),
+        }
+    }
+
+    #[func]
+    pub fn get_parameter_samples(&self) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let frame = match self.evaluated_frame() {
+            Ok(frame) => frame,
+            Err(status) => return status_to_dict(&status),
+        };
+        let mut out = status_to_dict(&Status::ok());
+        let mut parameters = Array::new();
+        for p in &frame.parameters {
+            let mut sample = Dictionary::new();
+            sample.set("id", p.id.as_str());
+            sample.set("requested", p.requested);
+            sample.set("value", p.value);
+            sample.set("clamped", p.clamped);
+            parameters.push(&sample);
+        }
+        out.set("parameters", &parameters);
+        out.set("generation", self.generation as i64);
+        out.set("revision", frame.source_revision as i64);
+        out.set("preview_revision", self.preview.borrow().revision() as i64);
+        out.set("evaluation_count", self.preview.borrow().evaluation_count() as i64);
+        out
     }
 
     #[func]
@@ -1732,7 +1785,7 @@ impl KasaneDocumentBridge {
         }
         self.session.document_mut().restore_from(&b.document);
         drop(b);
-        self.preview_values.clear();
+        self.preview.get_mut().reset();
         let mut out = status_to_dict(&Status::ok());
         out.set("revision", self.session.document().revision() as i64);
         self.base_mut().emit_signal("changed", &[out.to_variant()]);

@@ -5,6 +5,7 @@ pub mod evaluation;
 pub mod geometry;
 pub mod image;
 pub mod keyforms;
+pub mod preview;
 pub mod types;
 
 pub use document::Document;

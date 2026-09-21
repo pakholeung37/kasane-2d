@@ -143,7 +143,7 @@ func update_values() -> void:
 	var ws: RefCounted = workspace_ref.get_ref() if workspace_ref != null else null
 	if ws == null or ws.document == null:
 		return
-	var frame: Dictionary = ws.document.get_frame()
+	var frame: Dictionary = ws.document.get_parameter_samples()
 	if frame.get("ok", false):
 		for sample in frame.get("parameters", []):
 			var pid: String = sample.get("id", "")
@@ -154,13 +154,7 @@ func _on_row_value_committed(param_id: String, new_val: float) -> void:
 	var ws: RefCounted = workspace_ref.get_ref() if workspace_ref != null else null
 	if ws == null or ws.document == null:
 		return
-	var values := {}
-	var frame: Dictionary = ws.document.get_frame()
-	for sample in frame.get("parameters", []):
-		values[sample.get("id")] = sample.get("value")
-	values[param_id] = new_val
-
-	var res: Dictionary = ws.document.set_preview_values(values)
+	var res: Dictionary = ws.document.set_preview_parameter(param_id, new_val)
 	if not res.get("ok", false):
 		report_requested.emit(JSON.stringify(res))
 
@@ -168,5 +162,5 @@ func _on_reset_all_pressed() -> void:
 	var ws: RefCounted = workspace_ref.get_ref() if workspace_ref != null else null
 	if ws == null or ws.document == null:
 		return
-	ws.document.set_preview_values({})
+	ws.document.reset_preview_values()
 	update_values()

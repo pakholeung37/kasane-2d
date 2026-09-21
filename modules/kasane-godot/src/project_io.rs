@@ -72,7 +72,6 @@ impl KasaneProjectIO {
         let mut out = project_result_dict(&opened);
         if opened.status.is_ok() {
             doc.bind_mut().increment_generation();
-            doc.bind_mut().preview_values_mut().clear();
             let manifest_str = doc
                 .bind()
                 .session()
@@ -175,7 +174,6 @@ impl KasaneProjectIO {
         let mut out = project_result_dict(&imported);
         if imported.status.is_ok() {
             doc.bind_mut().increment_generation();
-            doc.bind_mut().preview_values_mut().clear();
             let rev = doc.bind().session().document().revision() as i64;
             out.set("revision", rev);
             if let Some(rep) = report {
@@ -234,7 +232,6 @@ impl KasaneProjectIO {
         let mut out = project_result_dict(&imported);
         if imported.status.is_ok() {
             doc.bind_mut().increment_generation();
-            doc.bind_mut().preview_values_mut().clear();
             let rev = doc.bind().session().document().revision() as i64;
             out.set("revision", rev);
             if let Some(rep) = report {
