@@ -1081,6 +1081,78 @@ fn test_project_detachment_lifecycle() {
 }
 
 #[test]
+fn test_v42_project_lifecycle_detachment_and_export() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let src_fixture = root.join("tests/fixtures/external_v42");
+
+    let tmp = TestDirectory::new();
+    let source_dir = tmp.0.join("v42_external_source");
+    fs::create_dir_all(&source_dir).unwrap();
+
+    let src_model3 = source_dir.join("model.model3.json");
+    fs::copy(src_fixture.join("model.model3.json"), &src_model3).unwrap();
+    fs::copy(
+        src_fixture.join("model.moc3"),
+        source_dir.join("model.moc3"),
+    )
+    .unwrap();
+    fs::copy(
+        src_fixture.join("texture_00.png"),
+        source_dir.join("texture_00.png"),
+    )
+    .unwrap();
+
+    // Import into session
+    let mut session = DocumentSession::new();
+    let (imp_res, report) = session.import_model3(&src_model3);
+    assert!(imp_res.status.is_ok(), "{:?}", imp_res);
+    let rep = report.expect("Report should exist");
+    assert_eq!(rep.moc_version, 4);
+
+    // Verify V42 properties
+    assert_eq!(session.document().blend_binding_order().len(), 2);
+    assert_eq!(session.document().blend_constraint_order().len(), 1);
+
+    // Save as project.kasane
+    let project_path = tmp.0.join("v42_detached_project");
+    let save_res = session.save(&project_path);
+    assert!(save_res.status.is_ok(), "{:?}", save_res);
+
+    // Detach: remove original files
+    fs::remove_dir_all(&source_dir).unwrap();
+    assert!(!source_dir.exists());
+
+    // Reopen without original files
+    let mut reopened_session = DocumentSession::new();
+    let open_res = reopened_session.open(&project_path);
+    assert!(open_res.status.is_ok(), "{:?}", open_res);
+    assert!(open_res.resources_complete());
+
+    // Verify document contents preserved
+    let doc = reopened_session.document();
+    assert_eq!(doc.blend_binding_order().len(), 2);
+    assert_eq!(doc.blend_constraint_order().len(), 1);
+    assert_eq!(doc.mesh_order().len(), 1);
+
+    // Export upgraded 5.0 package
+    let export_dir = tmp.0.join("v42_exported_package");
+    let exp_res = reopened_session.export_package(&export_dir);
+    assert!(exp_res.status.is_ok(), "{:?}", exp_res);
+
+    let exported_moc3 = export_dir.join("model.moc3");
+    assert!(exported_moc3.exists());
+    let moc3_bytes = fs::read(&exported_moc3).unwrap();
+    let inspection = kasane_moc3::inspect_moc3(&moc3_bytes).expect("Exported MOC3 inspect failed");
+    assert_eq!(inspection.version, kasane_moc3::Moc3Version::Version50);
+    assert_eq!(inspection.counts.blend_bindings, 2);
+    assert_eq!(inspection.counts.bs_constraints, 1);
+}
+
+#[test]
 fn import_rejects_cycles_without_replacing_session() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

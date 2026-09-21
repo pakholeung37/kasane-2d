@@ -213,7 +213,7 @@ python3 tools/validate_m3c.py --manifest <local-manifest.json> --stage all --out
 |---|---|---|---|---|
 | S0 | passed | tools/probes/project_runtime_probe.cpp, tools/validate_m3c.py | [s0_baseline_report.json](../target/kasane/m3c/s0_baseline_report.json), [baseline_manifest.json](../target/kasane/m3c/baseline_manifest.json) | 真实 4.2、循环参数及 BlendShape Glue 外部资产待后续接入 |
 | S1 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, tools/validate_m3c.py | [s1_report.json](../target/kasane/m3c/s1_report.json) | 无；Hiyori 4 个无面网格及 Glue 引用完整保留，Rice/Hiyori/Mark 导入与求值通过，v4/v6 安全门禁已建立 |
-| S2 | not_run | — | — | 4.2 字段与真实样本 |
+| S2 | passed | modules/kasane-moc3, modules/kasane-project, tools/create_v42_external_fixture.py, tools/validate_m3c.py | [s2_report.json](../target/kasane/m3c/s2_report.json) | 代码及构造用例交付完成；真实外部 4.2 样本验收保持 not_run |
 | S3 | not_run | — | — | 循环与工程 v4 |
 | S4 | not_run | — | — | Glue 增量 |
 | S5 | not_run | — | — | 5.3 数值及导出 |

@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 
 use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
 use kasane_core::types::{
-    Appearance, BindingAxis, BlendMode, Canvas, ImageAsset, Mesh, MeshBinding, MeshKeyform,
-    Parameter, Transform, TransformKind, Vec2,
+    Appearance, BindingAxis, BlendMode, Canvas, DeltaKeyforms, ImageAsset, Mesh, MeshBinding,
+    MeshKeyform, Parameter, ParameterKind, Transform, TransformKind, Vec2,
 };
 use kasane_core::Document;
 use kasane_moc3::{
@@ -1632,14 +1632,14 @@ fn test_s1_layout_safety_and_version_gating() {
     let doc = create_m1_fixture_doc();
     let encoded = encode_moc3(&doc).unwrap();
 
-    // 1. Version 4 MOC3: inspect_moc3_safety succeeds, but inspect_moc3 reports UNSUPPORTED_FEATURE
+    // 1. Version 4 MOC3: inspect_moc3_safety succeeds and inspect_moc3 succeeds (enabled in S2)
     let mut v4_bytes = encoded.bytes.clone();
     v4_bytes[4] = 4;
     let safe_v4 = kasane_moc3::inspect_moc3_safety(&v4_bytes).expect("safety should pass");
     assert_eq!(safe_v4.version, Moc3Version::Version42);
-    assert_eq!(safe_v4.unsupported_features[0].category, "version_4_moc42");
-    let err_v4 = kasane_moc3::inspect_moc3(&v4_bytes).unwrap_err();
-    assert_eq!(err_v4.code, "UNSUPPORTED_FEATURE");
+    assert!(!safe_v4.unsupported_features.iter().any(|u| u.category == "version_4_moc42"));
+    let ins_v4 = kasane_moc3::inspect_moc3(&v4_bytes).expect("v4 inspection should succeed in S2");
+    assert_eq!(ins_v4.version, Moc3Version::Version42);
 
     // 2. Version 6 MOC3 with 480 offsets header
     let root = workspace_root();
@@ -1671,5 +1671,163 @@ fn test_s1_layout_safety_and_version_gating() {
     let mut v7_bytes = encoded.bytes.clone();
     v7_bytes[4] = 7;
     assert_eq!(kasane_moc3::inspect_moc3_safety(&v7_bytes).unwrap_err().code, "UNSUPPORTED_VERSION");
+}
+
+#[test]
+fn test_import_external_v42() {
+    let root = workspace_root();
+    let model3_path = root.join("tests/fixtures/external_v42/model.model3.json");
+    let moc3_path = root.join("tests/fixtures/external_v42/model.moc3");
+    let bytes = fs::read(&moc3_path).expect("Failed to read external v42 moc3");
+
+    // 1. Inspect
+    let inspection = inspect_moc3(&bytes).expect("Inspection of v42 must succeed in S2");
+    assert_eq!(inspection.version, Moc3Version::Version42);
+    assert_eq!(inspection.counts.parts, 1);
+    assert_eq!(inspection.counts.warps, 1);
+    assert_eq!(inspection.counts.rotations, 1);
+    assert_eq!(inspection.counts.art_meshes, 1);
+    assert_eq!(inspection.counts.parameters, 3);
+    assert_eq!(inspection.counts.keyform_mul_colors, 7);
+    assert_eq!(inspection.counts.keyform_scr_colors, 7);
+    assert_eq!(inspection.counts.blend_key_tables, 1);
+    assert_eq!(inspection.counts.blend_bindings, 2);
+    assert_eq!(inspection.counts.bs_warps, 1);
+    assert_eq!(inspection.counts.bs_art_meshes, 1);
+    assert_eq!(inspection.counts.bs_constraints, 1);
+
+    // 2. Import
+    let res = import_from_model3_file(&model3_path).expect("Import external v42 failed");
+    let doc = &res.document;
+
+    // Verify elements
+    assert_eq!(doc.parameter_order().len(), 3);
+    assert_eq!(doc.sorted_transforms().len(), 2);
+    assert_eq!(doc.mesh_order().len(), 1);
+    assert_eq!(doc.blend_key_table_order().len(), 1);
+    assert_eq!(doc.blend_constraint_order().len(), 1);
+    assert_eq!(doc.blend_binding_order().len(), 2);
+
+    // Verify ParamBS is BlendShape
+    let p_bs_id = doc.parameter_order().iter().find(|id| {
+        doc.get_parameter(id).unwrap().runtime_id == "ParamBS"
+    }).expect("ParamBS exists");
+    let p_bs = doc.get_parameter(p_bs_id).unwrap();
+    assert_eq!(p_bs.kind, ParameterKind::BlendShape);
+
+    // Verify shared constraint
+    let bsc_id = &doc.blend_constraint_order()[0];
+    let bsc = doc.get_blend_constraint(bsc_id).unwrap();
+    assert_eq!(bsc.parameter_id, *p_bs_id);
+    assert_eq!(bsc.keys, vec![-1.0, 0.0, 1.0]);
+    assert_eq!(bsc.weights, vec![1.0, 0.0, 1.0]);
+
+    // Verify base_key_idx on key table is intermediate (1)
+    let bkt_id = &doc.blend_key_table_order()[0];
+    let bkt = doc.get_blend_key_table(bkt_id).unwrap();
+    assert_eq!(bkt.base_key_idx, 1);
+    assert_eq!(bkt.keys, vec![-1.0, 0.0, 1.0]);
+
+    // Verify normal colors imported into document
+    let warp_id = &doc.sorted_transforms()[0];
+    let warp = doc.get_transform(warp_id).unwrap();
+    near(warp.appearance.multiply[0], 0.9, 100.0);
+    near(warp.appearance.screen[0], 0.05, 100.0);
+
+    let mesh_id = &doc.mesh_order()[0];
+    let binding = doc.binding_for_mesh(mesh_id).unwrap();
+    assert_eq!(binding.keyforms.len(), 6);
+    near(binding.keyforms[0].appearance.multiply[0], 0.5, 100.0);
+    near(binding.keyforms[5].appearance.multiply[0], 0.9, 100.0);
+
+    // 3. Runtime parity against PurismCore (and 5.0 re-export) across parameter space
+    let samples: Vec<Vec<f32>> = vec![
+        vec![0.0, 0.0, 0.0],
+        vec![0.5, -0.5, 1.0],
+        vec![-0.5, 0.5, -1.0],
+        vec![0.8, 0.3, 0.5],
+    ];
+    assert_runtime_matches(doc, &bytes, &samples);
+}
+
+#[test]
+fn test_v42_without_blendshapes() {
+    let root = workspace_root();
+    let moc3_path = root.join("tests/fixtures/external_v42/model.moc3");
+    let mut bytes = fs::read(&moc3_path).expect("Read v42 moc3");
+
+    // Zero out blendshape counts in count_info:
+    // counts[25..=31] are blend_key_tables, blend_bindings, bs_warps, bs_art_meshes, bs_constraint_idx, bs_constraints, bs_constraint_vals
+    let counts_off = u32::from_le_bytes(bytes[64..68].try_into().unwrap()) as usize;
+    for f in 25..=31 {
+        bytes[counts_off + f * 4..counts_off + f * 4 + 4].copy_from_slice(&0i32.to_le_bytes());
+    }
+    // Also clear param_src.blend_key_table_len (section 116) and param_src.type (section 114)
+    let sec_114_off = u32::from_le_bytes(bytes[64 + 114 * 4..64 + 114 * 4 + 4].try_into().unwrap()) as usize;
+    let sec_116_off = u32::from_le_bytes(bytes[64 + 116 * 4..64 + 116 * 4 + 4].try_into().unwrap()) as usize;
+    for p in 0..3 {
+        bytes[sec_114_off + p * 4..sec_114_off + p * 4 + 4].copy_from_slice(&0i32.to_le_bytes());
+        bytes[sec_116_off + p * 4..sec_116_off + p * 4 + 4].copy_from_slice(&0i32.to_le_bytes());
+    }
+
+    let inspection = inspect_moc3(&bytes).expect("Inspection should succeed for v42 without BS");
+    assert_eq!(inspection.counts.blend_bindings, 0);
+    assert_eq!(inspection.counts.blend_key_tables, 0);
+
+    let res = import_from_bare_moc3(&bytes, &HashMap::new()).expect("Import without BS should succeed");
+    assert_eq!(res.document.blend_binding_order().len(), 0);
+    assert_eq!(res.document.blend_key_table_order().len(), 0);
+
+    let re_export = encode_moc3(&res.document).expect("Re-export to v50 should succeed");
+    assert!(!re_export.bytes.is_empty());
+}
+
+#[test]
+fn test_v42_corrupt_color_index_rejected() {
+    let root = workspace_root();
+    let moc3_path = root.join("tests/fixtures/external_v42/model.moc3");
+    let mut bytes = fs::read(&moc3_path).expect("Read v42 moc3");
+
+    // Section 107 is art_mesh_src.key_color_off
+    // Corrupt it to point to 999 (outside keyform_mul_colors which is 7)
+    let sec_107_off = u32::from_le_bytes(bytes[64 + 107 * 4..64 + 107 * 4 + 4].try_into().unwrap()) as usize;
+    bytes[sec_107_off..sec_107_off + 4].copy_from_slice(&999i32.to_le_bytes());
+
+    let err = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap_err();
+    assert!(
+        matches!(err.code.as_str(), "INVALID_COLOR_REFERENCE" | "FILE_CORRUPT"),
+        "Expected color reference error, got: {:?}",
+        err
+    );
+}
+
+#[test]
+fn test_v42_does_not_access_v50_fields() {
+    let root = workspace_root();
+    let moc3_path = root.join("tests/fixtures/external_v42/model.moc3");
+    let bytes = fs::read(&moc3_path).expect("Read v42 moc3");
+
+    let inspection = inspect_moc3(&bytes).expect("Inspect v42");
+    assert_eq!(inspection.version, Moc3Version::Version42);
+
+    let res = import_from_bare_moc3(&bytes, &HashMap::new()).expect("Import v42");
+    for bb_id in res.document.blend_binding_order() {
+        let bb = res.document.get_blend_binding(bb_id).unwrap();
+        match &bb.keyforms {
+            DeltaKeyforms::Warp(forms) => {
+                for f in forms {
+                    assert!(f.multiply.is_none());
+                    assert!(f.screen.is_none());
+                }
+            }
+            DeltaKeyforms::Mesh(forms) => {
+                for f in forms {
+                    assert!(f.multiply.is_none());
+                    assert!(f.screen.is_none());
+                }
+            }
+            _ => {}
+        }
+    }
 }
 

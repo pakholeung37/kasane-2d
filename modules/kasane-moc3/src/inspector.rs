@@ -387,14 +387,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     // Collect all unsupported features in a single pass without failing on the first one
     let mut unsupported_features = Vec::new();
 
-    // S1 import gate: versions 4 and 6 are structurally recognized but import is gated
-    if version_raw == 4 {
-        unsupported_features.push(UnsupportedFeature {
-            category: "version_4_moc42".into(),
-            count: 1,
-            detail: "MOC3 version 4 (Cubism 4.2) import is not yet enabled (scheduled for S2)".into(),
-        });
-    }
+    // S2: Version 4 is supported; version 6 remains gated until S5
     if version_raw == 6 {
         unsupported_features.push(UnsupportedFeature {
             category: "version_6_moc53".into(),
@@ -462,7 +455,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         }
     }
 
-    if version_raw >= 5 && section_offsets.len() > 114 {
+    if version_raw >= 4 && section_offsets.len() > 114 {
         for p in 0..counts.parameters as usize {
             let kind = read_i32(bytes, section_offsets[114] as usize + p * 4)?;
             if kind != 0 && kind != 1 {

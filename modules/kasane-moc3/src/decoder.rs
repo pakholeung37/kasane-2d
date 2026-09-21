@@ -285,13 +285,15 @@ pub fn decode_moc3(
     // Per-keyform color offsets belong to BlendShape data, which we reject.
     let get_colors = |section: usize, object: usize, key: usize| -> Result<Appearance, Status> {
         let mut appearance = Appearance::default();
-        if ver < 5 || (counts.keyform_mul_colors == 0 && counts.keyform_scr_colors == 0) {
+        if ver < 4 || (counts.keyform_mul_colors == 0 && counts.keyform_scr_colors == 0) {
             return Ok(appearance);
         }
         let base = read_i32(bytes, offsets[section] as usize + object * 4)?;
+        if base < 0 {
+            return Ok(appearance);
+        }
         let index = (base as i64) + key as i64;
-        if base < 0
-            || index >= counts.keyform_mul_colors as i64
+        if index >= counts.keyform_mul_colors as i64
             || index >= counts.keyform_scr_colors as i64
         {
             return Err(Status::error("INVALID_COLOR_REFERENCE", format!("section {section} object[{object}] keyform[{key}]: color index {index} is outside the color pools")));
@@ -371,7 +373,7 @@ pub fn decode_moc3(
         let min = read_f32(bytes, offsets[52] as usize + p * 4)?;
         let default_val = read_f32(bytes, offsets[53] as usize + p * 4)?;
         let dec_places = read_i32(bytes, offsets[55] as usize + p * 4)?;
-        let param_type = if offsets.len() > 114 && offsets[114] > 0 {
+        let param_type = if ver >= 4 && offsets.len() > 114 && offsets[114] > 0 {
             read_i32(bytes, offsets[114] as usize + p * 4)?
         } else {
             0
@@ -1065,20 +1067,22 @@ pub fn decode_moc3(
             register_group(&target_id, BlendShapeTargetKind::Warp, b_off, b_len)?;
         }
 
-        for i in 0..counts.bs_rotations as usize {
-            let target_local = read_i32(bytes, offsets[146] as usize + i * 4)? as usize;
-            let target_id = rotation_by_local_idx[target_local].clone();
-            let b_off = read_i32(bytes, offsets[147] as usize + i * 4)? as usize;
-            let b_len = read_i32(bytes, offsets[148] as usize + i * 4)? as usize;
-            register_group(&target_id, BlendShapeTargetKind::Rotation, b_off, b_len)?;
-        }
+        if ver >= 5 {
+            for i in 0..counts.bs_rotations as usize {
+                let target_local = read_i32(bytes, offsets[146] as usize + i * 4)? as usize;
+                let target_id = rotation_by_local_idx[target_local].clone();
+                let b_off = read_i32(bytes, offsets[147] as usize + i * 4)? as usize;
+                let b_len = read_i32(bytes, offsets[148] as usize + i * 4)? as usize;
+                register_group(&target_id, BlendShapeTargetKind::Rotation, b_off, b_len)?;
+            }
 
-        for i in 0..counts.bs_parts as usize {
-            let target_part = read_i32(bytes, offsets[143] as usize + i * 4)? as usize;
-            let target_id = mapping.part_by_index[target_part].clone();
-            let b_off = read_i32(bytes, offsets[144] as usize + i * 4)? as usize;
-            let b_len = read_i32(bytes, offsets[145] as usize + i * 4)? as usize;
-            register_group(&target_id, BlendShapeTargetKind::Part, b_off, b_len)?;
+            for i in 0..counts.bs_parts as usize {
+                let target_part = read_i32(bytes, offsets[143] as usize + i * 4)? as usize;
+                let target_id = mapping.part_by_index[target_part].clone();
+                let b_off = read_i32(bytes, offsets[144] as usize + i * 4)? as usize;
+                let b_len = read_i32(bytes, offsets[145] as usize + i * 4)? as usize;
+                register_group(&target_id, BlendShapeTargetKind::Part, b_off, b_len)?;
+            }
         }
 
         for i in 0..counts.bs_art_meshes as usize {
@@ -1090,6 +1094,9 @@ pub fn decode_moc3(
         }
 
         let get_bs_colors = |sec_mul: usize, sec_scr: usize, key_idx: usize| -> Result<(Option<[f32; 3]>, Option<[f32; 3]>), Status> {
+            if ver < 5 {
+                return Ok((None, None));
+            }
             let mul = if offsets.len() > sec_mul && offsets[sec_mul] > 0 {
                 let idx = read_i32(bytes, offsets[sec_mul] as usize + key_idx * 4)?;
                 if idx >= 0 {
