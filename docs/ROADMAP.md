@@ -89,7 +89,7 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 
 本轮不交付 BlendShape、Glue、Offscreen、参数循环、动作/表情/物理文件创作、Cubism `.cmo3` 工程互通、PSD 导入、自动网格生成和完整人工工具集。导入器遇到范围外语义必须报告并拒绝创建“可完整编辑”的工程；不得丢弃后返回成功。现有播放器对这些特性的能力不因编辑器范围而删除。
 
-以上为 M1–M5 已验收的基础范围。2026-09-20 起新增 [M3B：Mao 完整可编辑导入](milestones/M3B-mao-editable-import.md) 实施设计，以本地原始 Mao 为第一验收模型，扩展 Mesh/Warp/Part/Rotation BlendShape、约束与普通 Glue，以及相应编辑、工程持久化和 5.0 再导出。M3B 当前未实现、未验收；循环参数、其他文件版本、BlendShape Glue、Offscreen 和运行附件创作仍不在该阶段范围内。不能将基础范围的历史验收视为 Mao 已可导入。
+以上为 M1–M5 已验收的基础范围。2026-09-20 起新增 [M3B：Mao 完整可编辑导入](milestones/M3B-mao-editable-import.md) 实施设计，以本地原始 Mao 为第一验收模型，扩展 Mesh/Warp/Part/Rotation BlendShape、约束与普通 Glue，以及相应编辑、工程持久化和 5.0 再导出。2026-09-21 审查确认 M3B 已有核心导入和往返实现，但完整编辑入口、动画 Glue、联合拓扑编辑和严格验收仍未完成，见 [审查记录](milestones/M3B-REVIEW.md)。循环参数、其他文件版本、BlendShape Glue、Offscreen 和运行附件创作仍不在该阶段范围内。
 
 不假定 MOC3 包含原 Cubism 工程的全部编辑元数据。导入目标是文件中受支持模型语义的可编辑重建，不承诺恢复原始工程文件。范围扩展必须新增明确的字段、读写映射和回归用例，不能用“持续制作”“完善兼容”作为验收项。
 
@@ -104,7 +104,7 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 | [M3 MOC3 导入与再编辑](milestones/M3-moc3-import.md) | **已验收**：导入外部模型，编辑源结构，保存重开，再导出 | M1、M2 |
 | [M4 Rust Godot renderer](milestones/M4-shared-renderer.md) | **已通过本机验收**：Editor 的 Rust 绘制核心、资源复用、遮罩与 GPU 对照；预留 M6 运行帧输入，见 [验收记录](milestones/M4-ACCEPTANCE.md) | M1 求值输出 |
 | [M5 Agent-first editor](milestones/M5-agent-editor.md) | 正式 Godot 应用内用 GDScript 完成建模、检查、保存、导入导出 | M1–M4 |
-| [M3B Mao 完整可编辑导入](milestones/M3B-mao-editable-import.md) | **实施设计，未实现、未验收**：真实 Mao 的 BlendShape / 约束 / Glue 可编辑重建、保存与再导出 | M1–M5；下一实施阶段 |
+| [M3B Mao 完整可编辑导入](milestones/M3B-mao-editable-import.md) | **部分实现，未通过完整验收**：核心导入/往返已有实现；剩余编辑能力与数值门禁见 [审查记录](milestones/M3B-REVIEW.md) | M1–M5；当前实施阶段 |
 | [M6 MOC3 viewer](milestones/M6-viewer.md) | 独立 Godot 浏览应用，不加载编辑器数据与编辑设施 | M4、现有运行时；安排在 M5 后 |
 
 M1 的最小导出应早于完整对象体系完成：先写出静态网格，再加入参数和变形，尽早验证模型设计能够生成有效 MOC3。不要等 UI 完成后才验证文件输出。

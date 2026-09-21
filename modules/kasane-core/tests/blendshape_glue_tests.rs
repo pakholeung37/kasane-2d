@@ -417,3 +417,97 @@ fn test_glue_evaluation() {
     assert_eq!(mesh_b.positions[0], Vec2::new(7.5, -15.0));
 }
 
+
+#[test]
+fn parameter_edits_validate_blend_dependents_atomically() {
+    let mut doc = create_base_document();
+    assert!(doc
+        .create_blend_key_table(BlendShapeKeyTable {
+            id: KEY_TABLE.into(),
+            parameter_id: PARAM_BS.into(),
+            keys: vec![0.0, 1.0],
+            base_key_idx: 0,
+        })
+        .status
+        .is_ok());
+    let before = doc.clone();
+    let mut p = doc.get_parameter(PARAM_BS).unwrap().clone();
+    p.maximum = 0.5;
+    assert!(!doc.replace_parameter(p).status.is_ok());
+    assert!(doc.same_content(&before));
+    let mut p = doc.get_parameter(PARAM_BS).unwrap().clone();
+    p.kind = ParameterKind::Normal;
+    assert!(!doc.replace_parameter(p).status.is_ok());
+    assert!(doc.same_content(&before));
+
+    // Constraints may reference normal parameters, as the Core does.
+    assert!(doc
+        .create_blend_constraint(BlendShapeConstraint {
+            id: CONSTRAINT.into(),
+            parameter_id: PARAM_NORM.into(),
+            keys: vec![-1.0, 1.0],
+            weights: vec![1.0, 0.0],
+        })
+        .status
+        .is_ok());
+    let before = doc.clone();
+    let mut p = doc.get_parameter(PARAM_NORM).unwrap().clone();
+    p.minimum = 0.0;
+    assert!(!doc.replace_parameter(p).status.is_ok());
+    assert!(doc.same_content(&before));
+}
+
+#[test]
+fn warp_grid_edits_validate_blend_dependents_atomically() {
+    use kasane_core::types::{DeltaWarpKeyform, Transform, TransformKind};
+    let mut doc = create_base_document();
+    let warp_id = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    assert!(doc
+        .create_transform(Transform {
+            id: warp_id.into(),
+            runtime_id: "Warp".into(),
+            kind: TransformKind::Warp,
+            rows: 1,
+            columns: 1,
+            points: vec![Vec2::default(); 4],
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_blend_key_table(BlendShapeKeyTable {
+            id: KEY_TABLE.into(),
+            parameter_id: PARAM_BS.into(),
+            keys: vec![0.0, 1.0],
+            base_key_idx: 0,
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_blend_binding(BlendShapeBinding {
+            id: BINDING_BS.into(),
+            target_id: warp_id.into(),
+            target_kind: BlendShapeTargetKind::Warp,
+            key_table_id: KEY_TABLE.into(),
+            constraint_ids: vec![],
+            keyforms: DeltaKeyforms::Warp(vec![
+                DeltaWarpKeyform {
+                    points: vec![Vec2::default(); 4],
+                    ..Default::default()
+                };
+                2
+            ]),
+        })
+        .status
+        .is_ok());
+    let before = doc.clone();
+    let mut warp = doc.get_transform(warp_id).unwrap().clone();
+    warp.rows = 2;
+    warp.points = vec![Vec2::default(); 6];
+    assert!(!doc.replace_transform(warp).status.is_ok());
+    assert!(doc.same_content(&before));
+    let mut warp = doc.get_transform(warp_id).unwrap().clone();
+    warp.kind = TransformKind::Rotation;
+    assert!(!doc.replace_transform(warp).status.is_ok());
+    assert!(doc.same_content(&before));
+}

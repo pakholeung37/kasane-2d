@@ -36,6 +36,9 @@ fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> u16 {
 }
 
 fn write_id(l: &mut Layout, field: &str, value: &str) -> Result<(), Status> {
+    if !is_representable(value) {
+        return Err(Status::error("UNREPRESENTABLE_ID", format!("{field}: requires 1..63 printable ASCII bytes")));
+    }
     let bytes = l.field(field)?;
     let start = bytes.len();
     bytes.extend_from_slice(value.as_bytes());
@@ -67,8 +70,8 @@ fn write_bs_colors(
     let mul = multiply.unwrap_or([0.0, 0.0, 0.0]);
     let scr = screen.unwrap_or([0.0, 0.0, 0.0]);
     let offset = checked(l.field("keyform_mul_color_src.r")?.len() / 4, "colors")?;
-    l.integer(&format!("{prefix}.key_mul_color_off"), offset)?;
-    l.integer(&format!("{prefix}.key_scr_color_off"), offset)?;
+    l.integer(&format!("{prefix}.key_mul_color_off"), if multiply.is_some() { offset } else { -1 })?;
+    l.integer(&format!("{prefix}.key_scr_color_off"), if screen.is_some() { offset } else { -1 })?;
     let channels = ["r", "g", "b"];
     for c in 0..3 {
         l.scalar(&format!("keyform_mul_color_src.{}", channels[c]), mul[c])?;

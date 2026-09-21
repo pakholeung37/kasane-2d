@@ -255,7 +255,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     }
 
     // Verify deformer arithmetic
-    if counts.warps + counts.rotations != counts.deformers {
+    if i64::from(counts.warps) + i64::from(counts.rotations) != i64::from(counts.deformers) {
         return Err(Status::error(
             "FILE_CORRUPT",
             format!(
@@ -304,7 +304,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     }
 
     // 2. Offscreen (offscreens, offscreen_keyforms, bs_offscreens)
-    let offscreen_total = counts.offscreens + counts.offscreen_keyforms + counts.bs_offscreens;
+    let offscreen_total = i64::from(counts.offscreens) + i64::from(counts.offscreen_keyforms) + i64::from(counts.bs_offscreens);
     if offscreen_total > 0 {
         unsupported_features.push(UnsupportedFeature {
             category: "offscreen".into(),
@@ -351,7 +351,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     }
 
     #[cfg(has_purism_core)]
-    if unsupported_features.is_empty() {
+    {
         let mut buffer_copy = bytes.to_vec();
         let r = unsafe {
             csmHasMocConsistency(
@@ -364,6 +364,36 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
                 "FILE_CORRUPT",
                 "PurismCore consistency check failed (moc3 is corrupt or inconsistent)",
             ));
+        }
+    }
+
+    // Feature checks that traverse references run only after consistency validation.
+    for g in 0..counts.glues as usize {
+        let binding = read_i32(bytes, section_offsets[91] as usize + g * 4)?;
+        if binding < 0 || binding >= counts.bindings {
+            return Err(Status::error("FILE_CORRUPT", format!("Glue {g}: invalid binding")));
+        }
+        let axes = read_i32(bytes, section_offsets[74] as usize + binding as usize * 4)?;
+        if axes != 0 {
+            let id_start = section_offsets[90] as usize + g * 64;
+            let id_bytes = bytes.get(id_start..id_start + 64)
+                .ok_or_else(|| Status::error("FILE_CORRUPT", "Glue ID out of bounds"))?;
+            let end = id_bytes.iter().position(|&b| b == 0).unwrap_or(64);
+            unsupported_features.push(UnsupportedFeature {
+                category: "animated_glue".into(), count: 1,
+                detail: format!("Glue '{}': animated intensity is not yet supported", String::from_utf8_lossy(&id_bytes[..end])),
+            });
+        }
+    }
+    if version_raw >= 5 {
+        for p in 0..counts.parameters as usize {
+            let kind = read_i32(bytes, section_offsets[114] as usize + p * 4)?;
+            if kind != 0 && kind != 1 {
+                unsupported_features.push(UnsupportedFeature {
+                    category: "parameter_type".into(), count: 1,
+                    detail: format!("Parameter {p}: unknown type {kind}"),
+                });
+            }
         }
     }
 

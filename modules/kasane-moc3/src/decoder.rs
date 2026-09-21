@@ -372,14 +372,14 @@ pub fn decode_moc3(
         let default_val = read_f32(bytes, offsets[53] as usize + p * 4)?;
         let dec_places = read_i32(bytes, offsets[55] as usize + p * 4)?;
         let param_type = if offsets.len() > 114 && offsets[114] > 0 {
-            read_i32(bytes, offsets[114] as usize + p * 4).unwrap_or(0)
+            read_i32(bytes, offsets[114] as usize + p * 4)?
         } else {
             0
         };
-        let kind = if param_type != 0 {
-            ParameterKind::BlendShape
-        } else {
-            ParameterKind::Normal
+        let kind = match param_type {
+            0 => ParameterKind::Normal,
+            1 => ParameterKind::BlendShape,
+            _ => return Err(Status::error("UNSUPPORTED_FEATURE", format!("Parameter {p}: unknown type {param_type}"))),
         };
 
         check_status!(
@@ -1023,15 +1023,28 @@ pub fn decode_moc3(
 
     if counts.blend_bindings > 0 {
         let mut binding_targets: HashMap<usize, (String, BlendShapeTargetKind)> = HashMap::new();
+        // The current Document represents one ordered BlendShape group per target.
+        // Do not silently flatten repeated groups (Core clamps between groups),
+        // or overwrite bindings shared by multiple targets.
+        let mut target_groups = std::collections::HashSet::new();
+        let mut register_group = |target_id: &str, kind, start, len| -> Result<(), Status> {
+            if !target_groups.insert(target_id.to_owned()) {
+                return Err(Status::error("UNSUPPORTED_FEATURE", format!("{target_id}: multiple BlendShape target groups are not yet representable")));
+            }
+            for binding in start..start + len {
+                if binding_targets.insert(binding, (target_id.to_owned(), kind)).is_some() {
+                    return Err(Status::error("UNSUPPORTED_FEATURE", format!("Blend binding {binding}: shared target windows are not yet representable")));
+                }
+            }
+            Ok(())
+        };
 
         for i in 0..counts.bs_warps as usize {
             let target_local = read_i32(bytes, offsets[125] as usize + i * 4)? as usize;
             let target_id = warp_by_local_idx[target_local].clone();
             let b_off = read_i32(bytes, offsets[126] as usize + i * 4)? as usize;
             let b_len = read_i32(bytes, offsets[127] as usize + i * 4)? as usize;
-            for b in b_off..b_off + b_len {
-                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Warp));
-            }
+            register_group(&target_id, BlendShapeTargetKind::Warp, b_off, b_len)?;
         }
 
         for i in 0..counts.bs_rotations as usize {
@@ -1039,9 +1052,7 @@ pub fn decode_moc3(
             let target_id = rotation_by_local_idx[target_local].clone();
             let b_off = read_i32(bytes, offsets[147] as usize + i * 4)? as usize;
             let b_len = read_i32(bytes, offsets[148] as usize + i * 4)? as usize;
-            for b in b_off..b_off + b_len {
-                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Rotation));
-            }
+            register_group(&target_id, BlendShapeTargetKind::Rotation, b_off, b_len)?;
         }
 
         for i in 0..counts.bs_parts as usize {
@@ -1049,9 +1060,7 @@ pub fn decode_moc3(
             let target_id = mapping.part_by_index[target_part].clone();
             let b_off = read_i32(bytes, offsets[144] as usize + i * 4)? as usize;
             let b_len = read_i32(bytes, offsets[145] as usize + i * 4)? as usize;
-            for b in b_off..b_off + b_len {
-                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Part));
-            }
+            register_group(&target_id, BlendShapeTargetKind::Part, b_off, b_len)?;
         }
 
         for i in 0..counts.bs_art_meshes as usize {
@@ -1059,9 +1068,7 @@ pub fn decode_moc3(
             let target_id = mapping.mesh_by_index[target_mesh].clone();
             let b_off = read_i32(bytes, offsets[129] as usize + i * 4)? as usize;
             let b_len = read_i32(bytes, offsets[130] as usize + i * 4)? as usize;
-            for b in b_off..b_off + b_len {
-                binding_targets.insert(b, (target_id.clone(), BlendShapeTargetKind::Mesh));
-            }
+            register_group(&target_id, BlendShapeTargetKind::Mesh, b_off, b_len)?;
         }
 
         let get_bs_colors = |sec_mul: usize, sec_scr: usize, key_idx: usize| -> Result<(Option<[f32; 3]>, Option<[f32; 3]>), Status> {
@@ -1314,7 +1321,13 @@ pub fn decode_moc3(
         seen_glue_ids.insert(runtime_id.clone());
         let id = stable_id(&doc_id, "glue", g_idx, &runtime_id);
 
-        let _binding_idx = read_i32(bytes, offsets[91] as usize + g_idx * 4)?;
+        let binding_idx = read_i32(bytes, offsets[91] as usize + g_idx * 4)?;
+        if !get_binding_axes(binding_idx)?.is_empty() {
+            return Err(Status::error(
+                "UNSUPPORTED_FEATURE",
+                format!("Glue '{runtime_id}': animated intensity is not yet supported; import would lose its binding"),
+            ));
+        }
         let keyform_off = read_i32(bytes, offsets[92] as usize + g_idx * 4)?;
         let key_len = read_i32(bytes, offsets[93] as usize + g_idx * 4)?;
         let mesh_idx_a = read_i32(bytes, offsets[94] as usize + g_idx * 4)?;

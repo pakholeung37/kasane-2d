@@ -700,33 +700,15 @@ fn test_unsupported_features_rejected() {
     assert_eq!(err.code, "UNSUPPORTED_FEATURE");
     assert!(err.message.contains("repeat") || err.message.contains("cyclic"));
 
-    // 4. BlendShape Glue rejection (bs_glues > 0)
-    let mut bs_glue_bytes = encoded.bytes.clone();
-    bs_glue_bytes.resize(bs_glue_bytes.len() + 2048, 0);
-    bs_glue_bytes[counts_off + 34 * 4] = 1;
-    let err = inspect_moc3(&bs_glue_bytes).expect_err("BlendShape Glue must be rejected");
-    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-    assert!(err.message.contains("BlendShape Glue"));
-
-    // 5. Offscreen rejection (offscreens > 0)
-    let mut offscreen_bytes = encoded.bytes.clone();
-    offscreen_bytes.resize(offscreen_bytes.len() + 2048, 0);
-    offscreen_bytes[counts_off + 35 * 4] = 1;
-    let err = inspect_moc3(&offscreen_bytes).expect_err("Offscreen must be rejected");
-    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-    assert!(err.message.contains("Offscreen"));
-
-    // 6. Multiple unsupported features reported together (F01 requirement)
-    let mut multi_bytes = encoded.bytes.clone();
-    multi_bytes.resize(multi_bytes.len() + 2048, 0);
-    multi_bytes[rep_off] = 1;
-    multi_bytes[counts_off + 34 * 4] = 2;
-    multi_bytes[counts_off + 35 * 4] = 3;
-    let err = inspect_moc3(&multi_bytes).expect_err("All unsupported features must be reported");
-    assert_eq!(err.code, "UNSUPPORTED_FEATURE");
-    assert!(err.message.contains("cyclic") || err.message.contains("repeat"));
-    assert!(err.message.contains("BlendShape Glue"));
-    assert!(err.message.contains("Offscreen"));
+    // Fabricated extension counts have no matching data tables. Safety must
+    // reject corruption even when the same file advertises unsupported features.
+    for (field, count) in [(34, 1), (35, 1)] {
+        let mut corrupt = encoded.bytes.clone();
+        corrupt[counts_off + field * 4..counts_off + field * 4 + 4]
+            .copy_from_slice(&i32::to_le_bytes(count));
+        import_cases::set_i32(&mut corrupt, 40, 0, i32::MAX);
+        assert_eq!(kasane_moc3::inspect_moc3_safety(&corrupt).unwrap_err().code, "FILE_CORRUPT");
+    }
 }
 
 #[test]
@@ -1127,3 +1109,198 @@ fn test_mao_roundtrip_export_and_detached_reopening() {
     assert_eq!(reimported_doc.blend_constraint_order().len(), 7);
 }
 
+
+#[test]
+fn blend_colors_and_fractional_orders_match_core_and_roundtrip() {
+    use kasane_core::types::*;
+    let mut doc = create_m1_fixture_doc();
+    let mesh_id = doc.mesh_order()[0].clone();
+    let binding_id = doc.binding_for_mesh(&mesh_id).unwrap().id.clone();
+    assert!(doc.erase_object(&binding_id).status.is_ok());
+    let mut mesh = doc.get_mesh(&mesh_id).unwrap().clone();
+    mesh.draw_order = Some(10.75);
+    mesh.appearance.multiply = [0.5; 3];
+    mesh.appearance.screen = [0.1; 3];
+    assert!(doc.replace_mesh(mesh.clone()).status.is_ok());
+    assert!(doc
+        .create_parameter(Parameter {
+            id: id(400),
+            runtime_id: "ReviewBlend".into(),
+            minimum: 0.0,
+            maximum: 2.0,
+            default_value: 0.0,
+            kind: ParameterKind::BlendShape,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_blend_key_table(BlendShapeKeyTable {
+            id: id(401),
+            parameter_id: id(400),
+            keys: vec![0.0, 1.0, 2.0],
+            base_key_idx: 0,
+        })
+        .status
+        .is_ok());
+    let base = DeltaMeshKeyform {
+        positions: vec![Vec2::default(); mesh.vertex_ids.len()],
+        ..Default::default()
+    };
+    let mut left = base.clone();
+    left.multiply = Some([0.2; 3]);
+    left.draw_order = Some(0.5);
+    let mut right = base.clone();
+    right.screen = Some([0.4; 3]);
+    right.draw_order = Some(0.5);
+    assert!(doc
+        .create_blend_binding(BlendShapeBinding {
+            id: id(402),
+            target_id: mesh_id.clone(),
+            target_kind: BlendShapeTargetKind::Mesh,
+            key_table_id: id(401),
+            constraint_ids: vec![],
+            keyforms: DeltaKeyforms::Mesh(vec![base, left, right]),
+        })
+        .status
+        .is_ok());
+    let encoded = encode_moc3(&doc).unwrap();
+    let imported = import_from_bare_moc3(&encoded.bytes, &HashMap::new())
+        .unwrap()
+        .document;
+    let forms = &imported
+        .get_blend_binding(&imported.blend_binding_order()[0])
+        .unwrap()
+        .keyforms;
+    let DeltaKeyforms::Mesh(forms) = forms else {
+        panic!("wrong target");
+    };
+    assert!(forms[1].screen.is_none());
+    assert!(forms[2].multiply.is_none());
+    let mut runtime = PurismModelInstance::new(&encoded.bytes);
+    for value in [0.0, 1.0, 1.5, 2.0, 1.5, 0.0] {
+        runtime.set_parameter("ReviewBlend", value);
+        runtime.update();
+        let expected = runtime.get_drawable(&mesh.runtime_id).unwrap();
+        let mut frame = DrawableFrame::default();
+        assert!(evaluate_frame(&doc, &HashMap::from([(id(400), value)]), &mut frame).is_ok());
+        let actual = frame.drawables.iter().find(|d| d.id == mesh_id).unwrap();
+        assert_eq!(actual.draw_order, expected.draw_order, "value={value}");
+        for channel in 0..3 {
+            near(
+                actual.multiply_color[channel],
+                expected.multiply_color[channel],
+                1.0,
+            );
+            near(
+                actual.screen_color[channel],
+                expected.screen_color[channel],
+                1.0,
+            );
+        }
+    }
+}
+
+#[test]
+fn animated_glue_import_is_rejected_instead_of_flattened() {
+    use kasane_core::types::{Glue, GlueVertexPair};
+    let mut doc = create_m1_fixture_doc();
+    let mesh_id = doc.mesh_order()[0].clone();
+    let vertices = doc.get_mesh(&mesh_id).unwrap().vertex_ids.clone();
+    assert!(doc
+        .create_glue(Glue {
+            id: id(410),
+            runtime_id: "ReviewGlue".into(),
+            name: "ReviewGlue".into(),
+            mesh_a_id: mesh_id.clone(),
+            mesh_b_id: mesh_id,
+            pairs: vec![GlueVertexPair {
+                vertex_a: vertices[0],
+                vertex_b: vertices[1],
+                weight_a: 0.2,
+                weight_b: 0.8
+            }],
+            intensity: 1.0,
+            binding_id: None,
+        })
+        .status
+        .is_ok());
+    let mut bytes = encode_moc3(&doc).unwrap().bytes;
+    let report = inspect_moc3(&bytes).unwrap();
+    let ordinary_binding = i32::from_le_bytes(
+        bytes[report.section_offsets[34] as usize..][..4]
+            .try_into()
+            .unwrap(),
+    );
+    // Supply a valid three-key intensity window and point the Glue at the mesh's normal binding.
+    let count_off = report.section_offsets[0] as usize + 22 * 4;
+    bytes[count_off..count_off + 4].copy_from_slice(&3i32.to_le_bytes());
+    import_cases::set_i32(&mut bytes, 91, 0, ordinary_binding);
+    import_cases::set_i32(&mut bytes, 93, 0, 3);
+    let data_off = report.section_offsets[100] as usize;
+    assert!(report.section_offsets[101] as usize >= data_off + 12);
+    for (i, v) in [0.0f32, 0.5, 1.0].iter().enumerate() {
+        bytes[data_off + i * 4..data_off + (i + 1) * 4].copy_from_slice(&v.to_le_bytes());
+    }
+    let inspection = kasane_moc3::inspect_moc3_safety(&bytes).unwrap();
+    assert!(inspection
+        .unsupported_features
+        .iter()
+        .any(|f| f.category == "animated_glue"));
+    let error = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_FEATURE");
+    assert!(error.message.contains("ReviewGlue"));
+    let mut glue = doc.get_glue(&id(410)).unwrap().clone();
+    glue.runtime_id = "x".repeat(64);
+    assert!(doc.replace_glue(glue).status.is_ok());
+    assert_eq!(encode_moc3(&doc).unwrap_err().code, "UNREPRESENTABLE_ID");
+}
+
+#[test]
+fn safety_inspection_does_not_skip_corruption_for_unsupported_features() {
+    let mut bytes = encode_moc3(&create_m1_fixture_doc()).unwrap().bytes;
+    import_cases::set_i32(&mut bytes, 54, 0, 1);
+    // Corrupt mesh parent reference while a cyclic parameter is present.
+    import_cases::set_i32(&mut bytes, 40, 0, i32::MAX);
+    assert_eq!(
+        kasane_moc3::inspect_moc3_safety(&bytes).unwrap_err().code,
+        "FILE_CORRUPT"
+    );
+}
+
+#[test]
+fn repeated_blend_target_groups_are_not_silently_merged() {
+    use kasane_core::types::*;
+    let mut doc = create_m1_fixture_doc();
+    assert!(doc.create_parameter(Parameter {
+        id: id(420), runtime_id: "SharedBlend".into(), minimum: 0.0,
+        maximum: 1.0, default_value: 0.0, kind: ParameterKind::BlendShape,
+        ..Default::default()
+    }).status.is_ok());
+    assert!(doc.create_blend_key_table(BlendShapeKeyTable {
+        id: id(421), parameter_id: id(420), keys: vec![0.0, 1.0], base_key_idx: 0,
+    }).status.is_ok());
+    let original = doc.get_mesh(&doc.mesh_order()[0]).unwrap().clone();
+    let mut other = original.clone();
+    other.id = id(422);
+    other.runtime_id = "SecondBlendTarget".into();
+    assert!(doc.create_mesh(other.clone()).status.is_ok());
+    for (n, mesh) in [original, other].iter().enumerate() {
+        assert!(doc.create_blend_binding(BlendShapeBinding {
+            id: id(423 + n as i32), target_id: mesh.id.clone(), target_kind: BlendShapeTargetKind::Mesh,
+            key_table_id: id(421), constraint_ids: vec![],
+            keyforms: DeltaKeyforms::Mesh(vec![DeltaMeshKeyform {
+                positions: vec![Vec2::default(); mesh.vertex_ids.len()], ..Default::default()
+            }; 2]),
+        }).status.is_ok());
+    }
+    let mut bytes = encode_moc3(&doc).unwrap().bytes;
+    let inspection = inspect_moc3(&bytes).unwrap();
+    let offset = inspection.section_offsets[128] as usize;
+    let first = i32::from_le_bytes(bytes[offset..offset + 4].try_into().unwrap());
+    import_cases::set_i32(&mut bytes, 128, 1, first);
+    assert!(inspect_moc3(&bytes).is_ok());
+    let error = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap_err();
+    assert_eq!(error.code, "UNSUPPORTED_FEATURE");
+    assert!(error.message.contains("multiple BlendShape target groups"));
+}

@@ -25,9 +25,8 @@ fn sample_parameters_mao(doc: &Document) -> Vec<Vec<f32>> {
     let make_sample = |overrides: &[(&str, f32)]| -> Vec<f32> {
         let mut s = defaults.clone();
         for &(k, v) in overrides {
-            if let Some(&idx) = param_map.get(k) {
-                s[idx] = v;
-            }
+            let idx = *param_map.get(k).unwrap_or_else(|| panic!("Unknown sample parameter: {k}"));
+            s[idx] = v.clamp(params[idx].minimum, params[idx].maximum);
         }
         s
     };
@@ -70,7 +69,7 @@ fn sample_parameters_mao(doc: &Document) -> Vec<Vec<f32>> {
     // 13: hair_front
     samples.push(make_sample(&[("ParamHairFront", 1.0)]));
     // 14: hair_back
-    samples.push(make_sample(&[("ParamHairBack", 1.0)]));
+    samples.push(make_sample(&[("ParamHairBackL", 1.0), ("ParamHairBackR", 1.0)]));
     // 15: breath
     samples.push(make_sample(&[("ParamBreath", 1.0)]));
     // 16: light_strengthen
@@ -80,6 +79,39 @@ fn sample_parameters_mao(doc: &Document) -> Vec<Vec<f32>> {
         ("ParamStrengthenLightMove", 1.0),
     ]));
 
+    // Exercise every parameter and every authored curve, not just named poses.
+    for (index, p) in params.iter().enumerate() {
+        let mut keys = vec![p.minimum, p.maximum, p.default_value];
+        for id in doc.binding_order() {
+            for axis in &doc.get_binding(id).unwrap().axes {
+                if axis.parameter_id == p.id { keys.extend(&axis.keys); }
+            }
+        }
+        for id in doc.scene_binding_order() {
+            for axis in &doc.get_scene_binding(id).unwrap().axes {
+                if axis.parameter_id == p.id { keys.extend(&axis.keys); }
+            }
+        }
+        for id in doc.blend_key_table_order() {
+            let table = doc.get_blend_key_table(id).unwrap();
+            if table.parameter_id == p.id { keys.extend(&table.keys); }
+        }
+        for id in doc.blend_constraint_order() {
+            let constraint = doc.get_blend_constraint(id).unwrap();
+            if constraint.parameter_id == p.id { keys.extend(&constraint.keys); }
+        }
+        keys.sort_by(f32::total_cmp);
+        keys.dedup();
+        let mids: Vec<_> = keys.windows(2).map(|w| w[0] + (w[1] - w[0]) * 0.5).collect();
+        keys.extend(mids);
+        for value in keys {
+            let mut sample = defaults.clone();
+            sample[index] = value;
+            samples.push(sample);
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    samples.retain(|s| seen.insert(s.iter().map(|v| v.to_bits()).collect::<Vec<_>>()));
     samples
 }
 
@@ -168,13 +200,15 @@ fn main() {
     // Deserialize to fresh, completely detached Document
     let detached_doc = kasane_project::decode_project(&project_json).expect("decode_project failed");
 
-    let case_dir = out_dir.join("case_mao_pro");
-    fs::create_dir_all(&case_dir).unwrap();
-
-    let samples = sample_parameters_mao(&detached_doc);
-
-    fs::write(case_dir.join("orig.moc3"), &mao_bytes).unwrap();
+    let all_samples = sample_parameters_mao(&detached_doc);
     let re_export_artifact = encode_moc3(&detached_doc).expect("encode_moc3 failed");
+    let mut case_names = Vec::new();
+    for (batch, samples) in all_samples.chunks(24).enumerate() {
+    let name = format!("case_mao_pro_{batch:03}");
+    let case_dir = out_dir.join(&name);
+    case_names.push(name);
+    fs::create_dir_all(&case_dir).unwrap();
+    fs::write(case_dir.join("orig.moc3"), &mao_bytes).unwrap();
     fs::write(case_dir.join("re_export.moc3"), &re_export_artifact.bytes).unwrap();
     fs::write(
         case_dir.join("samples.json"),
@@ -214,11 +248,12 @@ fn main() {
     )
     .unwrap();
 
+    }
     fs::write(
         out_dir.join("cases.json"),
-        serde_json::to_vec(&["case_mao_pro"]).unwrap(),
+        serde_json::to_vec(&case_names).unwrap(),
     )
     .unwrap();
 
-    println!("export_m3b_cases: case_mao_pro generated successfully with {} samples", samples.len());
+    println!("export_m3b_cases: {} batches generated with {} samples", case_names.len(), all_samples.len());
 }

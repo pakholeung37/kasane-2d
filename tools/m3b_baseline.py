@@ -33,26 +33,9 @@ def compute_sha256(path: Path) -> str:
 
 
 def ensure_probes(build_dir: Path, sdk_dir: Path):
-    build_dir.mkdir(parents=True, exist_ok=True)
-    official_probe = build_dir / "kasane_document_official_probe"
-    purism_probe = build_dir / "kasane_document_purism_probe"
-
-    if not official_probe.exists() or not purism_probe.exists():
-        print(f"Building Core probes in {build_dir}...")
-        subprocess.run([
-            "cmake",
-            "-S", str(ROOT / "tools/probes"),
-            "-B", str(build_dir),
-            "-DCMAKE_BUILD_TYPE=Release",
-            f"-DKASANE_CUBISM_ROOT={sdk_dir.resolve()}",
-        ], cwd=ROOT, check=True)
-        subprocess.run([
-            "cmake",
-            "--build", str(build_dir),
-            "--target", "kasane_document_official_probe", "kasane_document_purism_probe",
-            "-j4",
-        ], cwd=ROOT, check=True)
-    return official_probe, purism_probe
+    # Reconfigure/rebuild so changed Core sources cannot reuse stale evidence.
+    from validate_m3b import ensure_probes as build_probes
+    return build_probes(build_dir, sdk_dir)
 
 
 def run_probe(probe_path: Path, moc3_path: Path, samples: list[list[float]]):
@@ -84,6 +67,8 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report_file = args.output_dir / "baseline.json"
+    # Invalidate previous evidence before any operation that can fail.
+    report_file.write_text(json.dumps({"status": "failed", "reason": "Baseline run has not completed"}, indent=2) + "\n")
 
     print("=== M3B Stage A: Baseline Inventory & Conformance ===")
 
@@ -344,21 +329,24 @@ def main():
     print(f"\nOverall dual-core max position error: {max_position_error_px:.6f} px")
     print(f"Overall dual-core max float error:    {max_float_error:.8e}")
 
-    # Realistic samples must be <= 0.05 px; all_maximums stress test involves 128 maxed
-    # axes across 5 nested deformers with PPU=5800 where 1e-5 float diff equates to 0.058px.
-    for sm in sample_metrics:
-        if sm["sample"] in ("all_maximums", "all_minimums"):
-            assert sm["max_pixel_error"] <= 0.07, f"Stress sample {sm['sample']} pixel error {sm['max_pixel_error']} exceeded 0.07px"
-        else:
-            assert sm["max_pixel_error"] <= 0.05, f"Realistic sample {sm['sample']} pixel error {sm['max_pixel_error']} exceeded 0.05px"
-        # In all samples, float error must satisfy 1e-5 + 1e-5 * max(|e|, |a|)
-        assert sm["max_float_error"] <= 2.0e-5, f"Sample {sm['sample']} float error {sm['max_float_error']} exceeded float tolerance"
+    # Use the same per-scalar tolerance and 0.05-pixel limit as M3B.
+    # Stress samples do not get an undocumented relaxed threshold.
+    from validate_m3b import compare_samples, require_finite
+    require_finite(off_result)
+    require_finite(pur_result)
+    failures = []
+    for index, (name, _) in enumerate(sample_descriptors):
+        try:
+            compare_samples([off_result["samples"][index]], [pur_result["samples"][index]], ppu, name)
+        except RuntimeError as error:
+            failures.append(str(error))
 
     # Save baseline report
     baseline_report = {
         "milestone": "M3B",
         "stage": "Stage A (Baseline)",
-        "status": "passed",
+        "status": "failed" if failures else "passed",
+        "errors": failures,
         "model": {
             "name": "mao_pro",
             "moc3_path": str(MAO_MOC3),
@@ -396,7 +384,7 @@ def main():
 
     report_file.write_text(json.dumps(baseline_report, indent=2) + "\n")
     print(f"\nBaseline report successfully written to {report_file}")
-    return 0
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

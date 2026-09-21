@@ -556,12 +556,13 @@ impl Document {
         let Some(old) = self.transforms.get(&t.id) else {
             return self.failed(Status::error("MISSING_TRANSFORM", &t.id));
         };
-        if self.binding_for_scene(&t.id).is_some()
+        if (self.binding_for_scene(&t.id).is_some()
+            || !self.blend_bindings_for_target(&t.id).is_empty())
             && (old.kind != t.kind || old.rows != t.rows || old.columns != t.columns)
         {
             return self.failed(Status::error(
                 "KEYFORMS_REQUIRED",
-                "Remove the scene binding before changing transform grid/type",
+                "Remove ordinary and blend shape bindings before changing transform grid/type",
             ));
         }
         let s = self.validate_transform(&t);
@@ -1219,6 +1220,20 @@ impl Document {
                 meshes = self.mesh_order.clone();
             }
         }
+        for table in self.blend_key_tables.values().filter(|t| t.parameter_id == p.id) {
+            let status = candidate.validate_blend_key_table(table);
+            if !status.is_ok() {
+                return self.failed(status);
+            }
+            meshes = self.mesh_order.clone();
+        }
+        for constraint in self.blend_constraints.values().filter(|c| c.parameter_id == p.id) {
+            let status = candidate.validate_blend_constraint(constraint);
+            if !status.is_ok() {
+                return self.failed(status);
+            }
+            meshes = self.mesh_order.clone();
+        }
         meshes.sort();
         meshes.dedup();
         let id = p.id.clone();
@@ -1285,6 +1300,9 @@ impl Document {
             };
             if !seen.insert(p.id.clone()) {
                 return Status::error("DUPLICATE_AXIS", format!("{}.axes: {}", b.id, p.id));
+            }
+            if p.kind != ParameterKind::Normal {
+                return Status::error("INVALID_PARAMETER_KIND", &p.id);
             }
             if axis.keys.is_empty() || axis.keys.len() > (i32::MAX as usize) / total {
                 return Status::error(
@@ -1492,6 +1510,9 @@ impl Document {
             };
             if !seen.insert(a.parameter_id.clone()) {
                 return Status::error("DUPLICATE_AXIS", &b.id);
+            }
+            if param.kind != ParameterKind::Normal {
+                return Status::error("INVALID_PARAMETER_KIND", &param.id);
             }
             if a.keys.is_empty() || a.keys.len() > (i32::MAX as usize) / total {
                 return Status::error("INVALID_KEYS", &b.id);
@@ -1759,12 +1780,6 @@ impl Document {
             Some(p) => p,
             None => return Status::error("MISSING_PARAMETER", &constraint.parameter_id),
         };
-        if param.kind != ParameterKind::BlendShape {
-            return Status::error(
-                "INVALID_PARAMETER_KIND",
-                format!("{}: expected blend_shape parameter", constraint.parameter_id),
-            );
-        }
         if constraint.keys.len() != constraint.weights.len() || constraint.keys.is_empty() {
             return Status::error(
                 "INVALID_LENGTH",
@@ -2149,10 +2164,11 @@ impl Document {
                 format!("{}: intensity must be finite and non-negative", glue.id),
             );
         }
-        if let Some(b_id) = &glue.binding_id {
-            if !self.bindings.contains_key(b_id) {
-                return Status::error("MISSING_BINDING", b_id);
-            }
+        if glue.binding_id.is_some() {
+            return Status::error(
+                "UNSUPPORTED_FEATURE",
+                format!("{}: animated Glue intensity requires a dedicated Glue binding", glue.id),
+            );
         }
         Status::ok()
     }
@@ -2320,10 +2336,9 @@ impl Document {
         if self.get_mesh(id).is_some() {
             meshes.push(id.to_string());
         }
-        if let Some(b) = self.get_blend_binding(id) {
-            if b.target_kind == BlendShapeTargetKind::Mesh {
-                meshes.push(b.target_id.clone());
-            }
+        if self.get_blend_binding(id).is_some() {
+            // Deformers/Parts affect descendants, and Glue can propagate mesh changes.
+            meshes = self.mesh_order.clone();
         }
         if let Some(g) = self.get_glue(id) {
             meshes.push(g.mesh_a_id.clone());

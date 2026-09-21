@@ -237,9 +237,14 @@ pub fn parameter_from_dict(d: &Dictionary) -> Result<Parameter, Status> {
     } else {
         6
     };
-    let kind = match get_str(d, "kind").as_deref() {
-        Ok("blend_shape") => kasane_core::types::ParameterKind::BlendShape,
-        _ => kasane_core::types::ParameterKind::Normal,
+    let kind = if !d.contains_key("kind") {
+        kasane_core::types::ParameterKind::Normal
+    } else {
+        match get_str(d, "kind")?.as_str() {
+            "blend_shape" => kasane_core::types::ParameterKind::BlendShape,
+            "normal" => kasane_core::types::ParameterKind::Normal,
+            _ => return Err(Status::error("INVALID_PARAMETER_KIND", "Expected normal or blend_shape")),
+        }
     };
     Ok(Parameter {
         id,

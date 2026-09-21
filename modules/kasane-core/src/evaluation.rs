@@ -404,6 +404,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         }
         let bs_list = doc.blend_bindings_for_target(id);
         if !bs_list.is_empty() {
+            order = f32_to_i32(order + 0.001) as f32;
             for bs in bs_list {
                 if let DeltaKeyforms::Part(ref forms) = bs.keyforms {
                     for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
@@ -413,7 +414,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     }
                 }
             }
-            order = (order + 0.001).clamp(0.0, 1000.0);
+            order = f32_to_i32((order + 0.001).clamp(0.0, 1000.0)) as f32;
         }
         enabled_parts.insert(id.clone(), enabled);
         part_orders.insert(id.clone(), f32_to_i32(order + 0.001));
@@ -496,7 +497,10 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 for bs in bs_list {
                     match (&bs.keyforms, t.kind) {
                         (DeltaKeyforms::Warp(ref forms), TransformKind::Warp) => {
-                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                            let selection = evaluate_blend_binding(doc, &values, bs);
+                            let has_multiply = selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
+                            let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
+                            for (kf_idx, eff_w) in selection {
                                 if kf_idx < forms.len() {
                                     let f = &forms[kf_idx];
                                     for (p, dp) in points.iter_mut().zip(&f.points) {
@@ -512,12 +516,12 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                                     if let Some(d_op) = f.opacity {
                                         state.appearance.opacity += d_op * eff_w;
                                     }
-                                    if let Some(d_mul) = f.multiply {
+                                    if let Some(d_mul) = f.multiply.filter(|_| has_multiply) {
                                         for c in 0..3 {
                                             state.appearance.multiply[c] += d_mul[c] * eff_w;
                                         }
                                     }
-                                    if let Some(d_scr) = f.screen {
+                                    if let Some(d_scr) = f.screen.filter(|_| has_screen) {
                                         for c in 0..3 {
                                             state.appearance.screen[c] += d_scr[c] * eff_w;
                                         }
@@ -526,7 +530,10 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                             }
                         }
                         (DeltaKeyforms::Rotation(ref forms), TransformKind::Rotation) => {
-                            for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                            let selection = evaluate_blend_binding(doc, &values, bs);
+                            let has_multiply = selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
+                            let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
+                            for (kf_idx, eff_w) in selection {
                                 if kf_idx < forms.len() {
                                     let f = &forms[kf_idx];
                                     if let Some(d_orig) = f.origin {
@@ -548,12 +555,12 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                                     if let Some(d_op) = f.opacity {
                                         state.appearance.opacity += d_op * eff_w;
                                     }
-                                    if let Some(d_mul) = f.multiply {
+                                    if let Some(d_mul) = f.multiply.filter(|_| has_multiply) {
                                         for c in 0..3 {
                                             state.appearance.multiply[c] += d_mul[c] * eff_w;
                                         }
                                     }
-                                    if let Some(d_scr) = f.screen {
+                                    if let Some(d_scr) = f.screen.filter(|_| has_screen) {
                                         for c in 0..3 {
                                             state.appearance.screen[c] += d_scr[c] * eff_w;
                                         }
@@ -712,9 +719,13 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
 
             let bs_list = doc.blend_bindings_for_target(id);
             if !bs_list.is_empty() {
+                order = f32_to_i32(order + 0.001) as f32;
                 for bs in bs_list {
                     if let DeltaKeyforms::Mesh(ref forms) = bs.keyforms {
-                        for (kf_idx, eff_w) in evaluate_blend_binding(doc, &values, bs) {
+                        let selection = evaluate_blend_binding(doc, &values, bs);
+                        let has_multiply = selection.iter().all(|(i, _)| forms[*i].multiply.is_some());
+                        let has_screen = selection.iter().all(|(i, _)| forms[*i].screen.is_some());
+                        for (kf_idx, eff_w) in selection {
                             if kf_idx < forms.len() {
                                 let f = &forms[kf_idx];
                                 for (p, dp) in d.positions.iter_mut().zip(&f.positions) {
@@ -733,12 +744,12 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                                 if let Some(d_op) = f.opacity {
                                     appearance.opacity += d_op * eff_w;
                                 }
-                                if let Some(d_mul) = f.multiply {
+                                if let Some(d_mul) = f.multiply.filter(|_| has_multiply) {
                                     for c in 0..3 {
                                         appearance.multiply[c] += d_mul[c] * eff_w;
                                     }
                                 }
-                                if let Some(d_scr) = f.screen {
+                                if let Some(d_scr) = f.screen.filter(|_| has_screen) {
                                     for c in 0..3 {
                                         appearance.screen[c] += d_scr[c] * eff_w;
                                     }
@@ -748,7 +759,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     }
                 }
 
-                order = order.clamp(0.0, 1000.0);
+                order = f32_to_i32((order + 0.001).clamp(0.0, 1000.0)) as f32;
                 appearance.opacity = appearance.opacity.clamp(0.0, 1.0);
                 for c in 0..3 {
                     appearance.multiply[c] = appearance.multiply[c].clamp(0.0, 1.0);

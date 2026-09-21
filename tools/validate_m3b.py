@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Milestone 3B (M3B) Acceptance Validation Script: Mao Full Editable Import.
+"""M3B numerical regression checks; not a complete milestone acceptance.
 
 Validates:
 1. Mao 5.0 MOC3 full import:
@@ -168,6 +168,8 @@ def main():
     parser.add_argument("--sdk", type=Path, default=ROOT / "third_party/CubismSdkForNative-5-r.5")
     parser.add_argument("--probe-dir", type=Path, default=ROOT / "target/probes")
     parser.add_argument("--output-dir", type=Path, default=ROOT / "target/kasane/m3b")
+    parser.add_argument("--numerical-only", action="store_true",
+                        help="Return success for numerical checks only; milestone status remains incomplete")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report_file = args.output_dir / "report.json"
@@ -176,6 +178,13 @@ def main():
         "milestone": "M3B",
         "cases": [],
         "checks": [],
+        "numerical_failures": [],
+        "required_acceptance": {
+            "gpu_comparison": {"status": "not_run", "reason": "No GPU comparison in this runner"},
+            "packaged_editor_workflow": {"status": "not_run", "reason": "No application workflow in this runner"},
+            "detached_texture_project": {"status": "not_run", "reason": "JSON codec roundtrip does not verify asset detachment"},
+            "new_feature_edit_roundtrips": {"status": "not_run", "reason": "Unmodified Mao roundtrip does not verify all new edit operations"},
+        },
         "system": {
             "platform": platform.platform(),
             "machine": platform.machine(),
@@ -239,8 +248,12 @@ def main():
                     ("document_export", document["samples"], exported["samples"]),
                 ]:
                     label = f"{name}/{provider}/{path}"
-                    comparisons[path] = compare_samples(expected, actual, ppu, label)
-                    report["checks"].append(label)
+                    try:
+                        comparisons[path] = compare_samples(expected, actual, ppu, label)
+                        report["checks"].append(label)
+                    except RuntimeError as error:
+                        comparisons[path] = {"status": "failed", "error": str(error)}
+                        report["numerical_failures"].append(str(error))
                 report["cases"].append({
                     "case": name,
                     "provider": provider,
@@ -259,19 +272,20 @@ def main():
                     "inputs": inputs,
                     "ppu": ppu,
                     "comparisons": comparisons,
-                    "status": "passed",
+                    "status": "failed" if any(m.get("status") == "failed" for m in comparisons.values()) else "passed",
                 })
-                print(f"PASS {name}/{provider}: {len(samples)} samples, all three paths")
+                print(f"{report['cases'][-1]['status'].upper()} {name}/{provider}: {len(samples)} samples", flush=True)
 
-        report["status"] = "passed"
+        report["numerical_status"] = "failed" if report["numerical_failures"] else "passed"
+        report["status"] = "failed" if report["numerical_failures"] else "incomplete"
         report["metrics"] = {
             "total_checks": len(report["checks"]),
             "cases_verified": len(report["cases"]),
-            "max_pixel_error": max(
-                m["max_pixel_error"] for c in report["cases"] for m in c["comparisons"].values()
+            "max_pixel_error_passed_comparisons": max(
+                (m["max_pixel_error"] for c in report["cases"] for m in c["comparisons"].values() if "max_pixel_error" in m), default=None
             ),
-            "max_float_error": max(
-                m["max_float_error"] for c in report["cases"] for m in c["comparisons"].values()
+            "max_float_error_passed_comparisons": max(
+                (m["max_float_error"] for c in report["cases"] for m in c["comparisons"].values() if "max_float_error" in m), default=None
             ),
         }
     except Exception as error:
@@ -279,8 +293,8 @@ def main():
         raise
     finally:
         report_file.write_text(json.dumps(report, indent=2) + "\n")
-    print(f"M3B validation passed: {report_file}")
-    return 0
+    print(f"M3B numerical checks {report['numerical_status']}; milestone acceptance is {report['status']}: {report_file}")
+    return 0 if args.numerical_only and report["numerical_status"] == "passed" else 1
 
 
 if __name__ == "__main__":
