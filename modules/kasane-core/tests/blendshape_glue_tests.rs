@@ -359,3 +359,61 @@ fn test_blendshape_evaluation() {
     assert_eq!(mesh_a.draw_order, 0);
 }
 
+#[test]
+fn test_glue_evaluation() {
+    use kasane_core::evaluation::{evaluate_frame, DrawableFrame};
+    use std::collections::HashMap;
+
+    let mut doc = create_base_document();
+
+    let mut mesh_b_mod = doc.get_mesh(MESH_B).unwrap().clone();
+    mesh_b_mod.base_positions[0] = Vec2::new(10.0, 20.0);
+    assert!(doc.replace_mesh(mesh_b_mod).status.is_ok());
+
+    let glue = Glue {
+        id: GLUE_ID.to_string(),
+        runtime_id: "Glue0".to_string(),
+        name: "Glue 0".to_string(),
+        mesh_a_id: MESH_A.to_string(),
+        mesh_b_id: MESH_B.to_string(),
+        pairs: vec![
+            GlueVertexPair {
+                vertex_a: 1, // at (0, 0)
+                vertex_b: 10, // at (10, 20)
+                weight_a: 0.5,
+                weight_b: 0.5,
+            },
+        ],
+        intensity: 1.0,
+        binding_id: None,
+    };
+    assert!(doc.create_glue(glue).status.is_ok());
+
+    let mut frame = DrawableFrame::default();
+    let preview = HashMap::new();
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    let mesh_b = frame.drawables.iter().find(|d| d.id == MESH_B).unwrap();
+
+    // d = (10 - 0, 20 - 0) = (10, 20)
+    // p_a = (0, 0) + (10, 20) * 0.5 = (5, 10) -> canvas y inverted: (5, -10)
+    // p_b = (10, 20) - (10, 20) * 0.5 = (5, 10) -> canvas y inverted: (5, -10)
+    assert_eq!(mesh_a.positions[0], Vec2::new(5.0, -10.0));
+    assert_eq!(mesh_b.positions[0], Vec2::new(5.0, -10.0));
+
+    // Test with intensity 0.5
+    let mut glue_half = doc.get_glue(GLUE_ID).unwrap().clone();
+    glue_half.intensity = 0.5;
+    assert!(doc.replace_glue(glue_half).status.is_ok());
+
+    assert!(evaluate_frame(&doc, &preview, &mut frame).is_ok());
+    let mesh_a = frame.drawables.iter().find(|d| d.id == MESH_A).unwrap();
+    let mesh_b = frame.drawables.iter().find(|d| d.id == MESH_B).unwrap();
+
+    // p_a = (0, 0) + (10, 20) * (0.5 * 0.5) = (2.5, 5.0) -> canvas y inverted: (2.5, -5.0)
+    // p_b = (10, 20) - (10, 20) * (0.5 * 0.5) = (7.5, 15.0) -> canvas y inverted: (7.5, -15.0)
+    assert_eq!(mesh_a.positions[0], Vec2::new(2.5, -5.0));
+    assert_eq!(mesh_b.positions[0], Vec2::new(7.5, -15.0));
+}
+

@@ -1996,7 +1996,7 @@ impl Document {
                         }
                     }
                     if let Some(scale) = f.scale {
-                        if !scale.is_finite() || scale < 0.0 {
+                        if !scale.is_finite() {
                             return Status::error("INVALID_ROTATION", &b.id);
                         }
                     }

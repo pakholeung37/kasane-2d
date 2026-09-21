@@ -936,3 +936,88 @@ fn rotation_edit_rebinding_and_deletion_change_export() {
         .get_drawable("MeshQuad")
         .is_none());
 }
+
+#[test]
+fn test_import_mao_full() {
+    let mao_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3");
+    if !mao_path.exists() {
+        eprintln!("Skipping test_import_mao_full: mao_pro.moc3 not found at {:?}", mao_path);
+        return;
+    }
+
+    let bytes = std::fs::read(&mao_path).expect("failed to read mao_pro.moc3");
+    let decoded = import_from_bare_moc3(&bytes, &HashMap::new()).expect("failed to import mao_pro.moc3");
+    let doc = &decoded.document;
+
+    // Verify element counts
+    assert_eq!(doc.part_order().len(), 31, "Parts count");
+    let warps_count = doc.transform_order().iter().filter(|t| doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Warp).count();
+    let rotations_count = doc.transform_order().iter().filter(|t| doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Rotation).count();
+    assert_eq!(warps_count, 116, "Warps count");
+    assert_eq!(rotations_count, 59, "Rotations count");
+    assert_eq!(doc.mesh_order().len(), 260, "ArtMeshes count");
+    assert_eq!(doc.parameter_order().len(), 128, "Parameters count");
+
+    // M3B specific counts: BlendShapes, Constraints, Glues
+    assert_eq!(doc.blend_key_table_order().len(), 33, "BlendKeyTable count");
+    assert_eq!(doc.blend_constraint_order().len(), 7, "BlendShapeConstraint count");
+    assert_eq!(doc.blend_binding_order().len(), 124, "BlendShapeBinding count");
+    assert_eq!(doc.glue_order().len(), 7, "Glue count");
+
+    let total_glue_pairs: usize = doc.glue_order().iter().map(|g| doc.get_glue(g).unwrap().pairs.len()).sum();
+    assert_eq!(total_glue_pairs, 161, "Total Glue pairs count");
+
+    // Evaluation against PurismModelInstance
+    let mut runtime = PurismModelInstance::new(&bytes);
+    runtime.update();
+
+    let mut frame = kasane_core::evaluation::DrawableFrame::default();
+    let preview = HashMap::new();
+    assert!(kasane_core::evaluation::evaluate_frame(doc, &preview, &mut frame).is_ok());
+
+    let mut max_pos_error = 0.0f32;
+    let mut checked_meshes = 0;
+
+    for mesh_id in doc.mesh_order() {
+        let mesh = doc.get_mesh(mesh_id).unwrap();
+        if let Some(purism_drawable) = runtime.get_drawable(&mesh.runtime_id) {
+            let doc_drawable = frame.drawables.iter().find(|d| d.runtime_id == mesh.runtime_id).unwrap();
+            assert_eq!(doc_drawable.positions.len(), purism_drawable.positions.len());
+            let mut mesh_err = 0.0f32;
+            for (p_doc, p_purism) in doc_drawable.positions.iter().zip(&purism_drawable.positions) {
+                let err = ((p_doc.x - p_purism.x).powi(2) + (p_doc.y - p_purism.y).powi(2)).sqrt();
+                if err > mesh_err {
+                    mesh_err = err;
+                }
+            }
+
+            if mesh_err > 0.05 {
+                // error mesh
+            }
+            if mesh_err > max_pos_error {
+                max_pos_error = mesh_err;
+            }
+            checked_meshes += 1;
+        }
+    }
+
+    let mut mismatch_count = 0;
+    for d in &frame.drawables {
+        let p = runtime.get_drawable(&d.runtime_id).unwrap();
+        let is_ok = d.positions.iter().zip(&p.positions).all(|(a, b)| {
+            ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt() <= 0.05
+        });
+        if !is_ok {
+            mismatch_count += 1;
+        }
+    }
+    let ok_count = checked_meshes - mismatch_count;
+    println!("Matching meshes (<= 0.05px): {} / {}", ok_count, checked_meshes);
+    println!("Mismatch count: {}", mismatch_count);
+
+    assert_eq!(checked_meshes, 260, "All meshes checked");
+    println!("Max position error against PurismCore on Mao default pose: {} px", max_pos_error);
+    assert!(max_pos_error < 0.05, "Dual-core numerical parity margin exceeded: max_pos_error={}", max_pos_error);
+}
+

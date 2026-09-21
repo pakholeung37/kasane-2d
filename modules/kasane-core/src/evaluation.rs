@@ -6,7 +6,7 @@ use crate::geometry::{to_runtime_positions, validate_positions};
 use crate::keyforms::{blend_vectors, find_key_segment, key_combinations, KeyAxis};
 use crate::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, Canvas,
-    DeltaKeyforms, RotationPose, Status, Transform, TransformKind, Vec2,
+    DeltaKeyforms, Mesh, RotationPose, Status, Transform, TransformKind, Vec2, VertexId,
 };
 
 pub type PreviewValues = HashMap<String, f32>;
@@ -91,6 +91,16 @@ pub fn to_parent_positions(
         }
         Ok(positions.to_vec())
     }
+}
+
+fn find_vertex_index(mesh: &Mesh, vid: VertexId) -> Option<usize> {
+    if vid >= 1 && (vid as usize) <= mesh.vertex_ids.len() {
+        let idx = (vid - 1) as usize;
+        if mesh.vertex_ids[idx] == vid {
+            return Some(idx);
+        }
+    }
+    mesh.vertex_ids.iter().position(|&v| v == vid)
 }
 
 #[derive(Debug, Clone)]
@@ -754,18 +764,6 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     *p = Vec2::new(q.x, q.y);
                 }
             }
-
-            // MOC3 applies canvas Y reversal after the entire deformer chain.
-            if doc.canvas().flag & 1 == 0 {
-                for p in &mut d.positions {
-                    p.y = -p.y;
-                }
-            }
-
-            let s = validate_positions(&d.positions);
-            if !s.is_ok() {
-                return Status::error(s.code, format!("{}.evaluated_positions", id));
-            }
         } else {
             d.positions.resize(mesh.vertex_ids.len(), Vec2::default());
             appearance = Appearance::default();
@@ -780,6 +778,86 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
             d.screen_color[c] = appearance.screen[c];
         }
         frame.drawables.push(d);
+    }
+
+    // Apply Glues across transformed mesh positions (before canvas Y-reversal, matching PurismCore)
+    let glue_order = doc.glue_order();
+    if !glue_order.is_empty() {
+        let mesh_slots: HashMap<&str, usize> = doc
+            .mesh_order()
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+
+        for gid in glue_order {
+            if let Some(glue) = doc.get_glue(gid) {
+                if glue.intensity == 0.0 {
+                    continue;
+                }
+                let slot_a = match mesh_slots.get(glue.mesh_a_id.as_str()) {
+                    Some(&s) => s,
+                    None => continue,
+                };
+                let slot_b = match mesh_slots.get(glue.mesh_b_id.as_str()) {
+                    Some(&s) => s,
+                    None => continue,
+                };
+
+                let mesh_a = doc.get_mesh(&glue.mesh_a_id).unwrap();
+                let mesh_b = doc.get_mesh(&glue.mesh_b_id).unwrap();
+
+                for pair in &glue.pairs {
+                    let idx_a = match find_vertex_index(mesh_a, pair.vertex_a) {
+                        Some(idx) => idx,
+                        None => continue,
+                    };
+                    let idx_b = match find_vertex_index(mesh_b, pair.vertex_b) {
+                        Some(idx) => idx,
+                        None => continue,
+                    };
+
+                    let len_a = frame.drawables[slot_a].positions.len();
+                    let len_b = frame.drawables[slot_b].positions.len();
+                    if idx_a >= len_a || idx_b >= len_b {
+                        continue;
+                    }
+
+                    if slot_a == slot_b {
+                        let p0 = frame.drawables[slot_a].positions[idx_a];
+                        let p1 = frame.drawables[slot_a].positions[idx_b];
+                        let d = Vec2::new(p1.x - p0.x, p1.y - p0.y);
+                        frame.drawables[slot_a].positions[idx_a].x += d.x * (glue.intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_a].y += d.y * (glue.intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_b].x -= d.x * (glue.intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_b].y -= d.y * (glue.intensity * pair.weight_b);
+                    } else {
+                        let p0 = frame.drawables[slot_a].positions[idx_a];
+                        let p1 = frame.drawables[slot_b].positions[idx_b];
+                        let d = Vec2::new(p1.x - p0.x, p1.y - p0.y);
+                        frame.drawables[slot_a].positions[idx_a].x += d.x * (glue.intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_a].y += d.y * (glue.intensity * pair.weight_a);
+                        frame.drawables[slot_b].positions[idx_b].x -= d.x * (glue.intensity * pair.weight_b);
+                        frame.drawables[slot_b].positions[idx_b].y -= d.y * (glue.intensity * pair.weight_b);
+                    }
+                }
+            }
+        }
+    }
+
+    // Apply canvas Y reversal and validate positions
+    for d in &mut frame.drawables {
+        if d.enabled {
+            if doc.canvas().flag & 1 == 0 {
+                for p in &mut d.positions {
+                    p.y = -p.y;
+                }
+            }
+            let s = validate_positions(&d.positions);
+            if !s.is_ok() {
+                return Status::error(s.code, format!("{}.evaluated_positions", d.id));
+            }
+        }
     }
 
     let groups = crate::draw_order::resolved_groups(doc);

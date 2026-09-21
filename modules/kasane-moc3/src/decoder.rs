@@ -4,9 +4,9 @@ use std::collections::HashMap;
 use kasane_core::types::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
     BlendShapeTargetKind, Canvas, DeltaKeyforms, DeltaMeshKeyform, DeltaPartKeyform,
-    DeltaRotationKeyform, DeltaWarpKeyform, Mesh, MeshBinding, MeshKeyform, Parameter,
-    ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform, TransformKind,
-    Vec2, VertexId,
+    DeltaRotationKeyform, DeltaWarpKeyform, Glue, GlueVertexPair, Mesh, MeshBinding, MeshKeyform,
+    Parameter, ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
+    TransformKind, Vec2, VertexId,
 };
 use kasane_core::Document;
 
@@ -33,7 +33,8 @@ pub struct ImportIdMapping {
     pub parameter_by_index: Vec<String>, // index -> internal_id
     pub blend_key_table_by_index: Vec<String>, // index -> internal_id
     pub blend_constraint_by_index: Vec<String>, // index -> internal_id
-    pub blend_binding_by_index: Vec<String>, // index -> internal_id
+    pub blend_binding_by_index: Vec<String>,    // index -> internal_id
+    pub glue_by_index: Vec<String>,             // index -> internal_id
 }
 
 #[derive(Debug, Clone)]
@@ -232,6 +233,7 @@ pub fn decode_moc3(
         blend_key_table_by_index: Vec::with_capacity(counts.blend_key_tables as usize),
         blend_constraint_by_index: Vec::with_capacity(counts.bs_constraints as usize),
         blend_binding_by_index: Vec::with_capacity(counts.blend_bindings as usize),
+        glue_by_index: Vec::with_capacity(counts.glues as usize),
     };
 
     // Pre-calculate stable internal IDs
@@ -827,7 +829,10 @@ pub fn decode_moc3(
         for m_idx in 0..mask_len {
             let target_mesh_idx = read_i32(bytes, offsets[80] as usize + (mask_off + m_idx) * 4)?;
             if target_mesh_idx >= 0 && (target_mesh_idx as usize) < counts.art_meshes as usize {
-                masks.push(mapping.mesh_by_index[target_mesh_idx as usize].clone());
+                let target_id = mapping.mesh_by_index[target_mesh_idx as usize].clone();
+                if !masks.contains(&target_id) {
+                    masks.push(target_id);
+                }
             }
         }
 
@@ -1294,6 +1299,117 @@ pub fn decode_moc3(
         });
     }
     check_status!(doc.replace_draw_order_groups(groups).status);
+
+    // Decode Glues (sections 89..100)
+    let mut seen_glue_ids = std::collections::HashSet::new();
+    for g_idx in 0..counts.glues as usize {
+        let raw_id = read_string(bytes, offsets[90] as usize + g_idx * 64, 64);
+        let runtime_id = if raw_id.trim().is_empty() || seen_glue_ids.contains(&raw_id) {
+            let gen = format!("Glue_{g_idx}");
+            generated_ids.push(gen.clone());
+            gen
+        } else {
+            raw_id
+        };
+        seen_glue_ids.insert(runtime_id.clone());
+        let id = stable_id(&doc_id, "glue", g_idx, &runtime_id);
+
+        let _binding_idx = read_i32(bytes, offsets[91] as usize + g_idx * 4)?;
+        let keyform_off = read_i32(bytes, offsets[92] as usize + g_idx * 4)?;
+        let key_len = read_i32(bytes, offsets[93] as usize + g_idx * 4)?;
+        let mesh_idx_a = read_i32(bytes, offsets[94] as usize + g_idx * 4)?;
+        let mesh_idx_b = read_i32(bytes, offsets[95] as usize + g_idx * 4)?;
+        let info_off = read_i32(bytes, offsets[96] as usize + g_idx * 4)?;
+        let info_len = read_i32(bytes, offsets[97] as usize + g_idx * 4)?;
+
+        if mesh_idx_a < 0
+            || mesh_idx_a as usize >= mapping.mesh_by_index.len()
+            || mesh_idx_b < 0
+            || mesh_idx_b as usize >= mapping.mesh_by_index.len()
+        {
+            return Err(Status::error(
+                "INVALID_GLUE",
+                format!("Glue {g_idx} references invalid mesh index {mesh_idx_a} or {mesh_idx_b}"),
+            ));
+        }
+
+        let mesh_a_id = mapping.mesh_by_index[mesh_idx_a as usize].clone();
+        let mesh_b_id = mapping.mesh_by_index[mesh_idx_b as usize].clone();
+        let mesh_a = doc.get_mesh(&mesh_a_id).unwrap();
+        let mesh_b = doc.get_mesh(&mesh_b_id).unwrap();
+
+        let intensity = if key_len > 0 && offsets[100] > 0 {
+            if keyform_off < 0 || keyform_off as usize >= counts.glue_keyforms as usize {
+                return Err(Status::error(
+                    "INVALID_GLUE",
+                    format!("Glue {g_idx} keyform_off {keyform_off} out of bounds"),
+                ));
+            }
+            read_f32(bytes, offsets[100] as usize + keyform_off as usize * 4)?
+        } else {
+            1.0
+        };
+
+        if (info_len & 1) != 0 {
+            return Err(Status::error(
+                "FILE_CORRUPT",
+                format!("Glue {g_idx} has odd info_len {info_len}"),
+            ));
+        }
+        if info_off < 0
+            || info_len < 0
+            || info_off as usize + info_len as usize > counts.glue_info as usize
+        {
+            return Err(Status::error(
+                "INVALID_GLUE",
+                format!(
+                    "Glue {g_idx} info range [{info_off}, {}) out of bounds (max {})",
+                    info_off + info_len,
+                    counts.glue_info
+                ),
+            ));
+        }
+
+        let mut pairs = Vec::with_capacity(info_len as usize / 2);
+        for p in (0..info_len as usize).step_by(2) {
+            let pos_a = read_u16(bytes, offsets[99] as usize + (info_off as usize + p) * 2)? as usize;
+            let wt_a = read_f32(bytes, offsets[98] as usize + (info_off as usize + p) * 4)?;
+            let pos_b =
+                read_u16(bytes, offsets[99] as usize + (info_off as usize + p + 1) * 2)? as usize;
+            let wt_b = read_f32(bytes, offsets[98] as usize + (info_off as usize + p + 1) * 4)?;
+
+            if pos_a >= mesh_a.vertex_ids.len() || pos_b >= mesh_b.vertex_ids.len() {
+                return Err(Status::error(
+                    "FILE_CORRUPT",
+                    format!(
+                        "Glue {g_idx} pos_idx out of range for mesh (pos_a={pos_a}, vc_a={}, pos_b={pos_b}, vc_b={})",
+                        mesh_a.vertex_ids.len(),
+                        mesh_b.vertex_ids.len()
+                    ),
+                ));
+            }
+
+            pairs.push(GlueVertexPair {
+                vertex_a: mesh_a.vertex_ids[pos_a],
+                vertex_b: mesh_b.vertex_ids[pos_b],
+                weight_a: wt_a,
+                weight_b: wt_b,
+            });
+        }
+
+        let glue = Glue {
+            id: id.clone(),
+            runtime_id: runtime_id.clone(),
+            name: runtime_id.clone(),
+            mesh_a_id,
+            mesh_b_id,
+            pairs,
+            intensity,
+            binding_id: None,
+        };
+        check_status!(doc.create_glue(glue).status);
+        mapping.glue_by_index.push(id);
+    }
 
     Ok(DecodedMoc3 {
         document: doc,
