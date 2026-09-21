@@ -213,7 +213,7 @@ pub fn import_from_model3_json(
     for id in document.mesh_order() {
         if let Some(m) = document.get_mesh(id) {
             if let Some(asset) = document.get_asset(&m.texture_asset_id) {
-                if asset.source.starts_with("unmapped_slot_") {
+                if asset.source.contains("unmapped_slot_") {
                     if !diagnostics
                         .iter()
                         .any(|d| d.code == "UNMAPPED_TEXTURE_SLOT")
@@ -337,7 +337,7 @@ pub fn import_from_bare_moc3(
     for id in document.mesh_order() {
         if let Some(m) = document.get_mesh(id) {
             if let Some(asset) = document.get_asset(&m.texture_asset_id) {
-                if asset.source.starts_with("unmapped_slot_") {
+                if asset.source.contains("unmapped_slot_") {
                     if !diagnostics
                         .iter()
                         .any(|d| d.code == "UNMAPPED_TEXTURE_SLOT")

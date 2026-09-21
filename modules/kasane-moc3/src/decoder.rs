@@ -782,10 +782,10 @@ pub fn decode_moc3(
                     doc.add_asset(kasane_core::types::ImageAsset {
                         id: id.clone(),
                         name: format!("Texture {slot} (Unmapped)"),
-                        source: format!("unmapped_slot_{slot}.png"),
+                        source: format!("assets/textures/unmapped_slot_{slot}.png"),
                         width: 1,
                         height: 1,
-                        sha256: String::new(),
+                        sha256: "0".repeat(64),
                     })
                     .status
                 );

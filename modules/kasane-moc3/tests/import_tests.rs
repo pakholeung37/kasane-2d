@@ -959,14 +959,31 @@ fn test_import_mao_full() {
     assert_eq!(doc.mesh_order().len(), 260, "ArtMeshes count");
     assert_eq!(doc.parameter_order().len(), 128, "Parameters count");
 
-    // M3B specific counts: BlendShapes, Constraints, Glues
-    assert_eq!(doc.blend_key_table_order().len(), 33, "BlendKeyTable count");
+    let inspection = kasane_moc3::inspect_moc3(&bytes).expect("inspect failed");
+    println!("Counts: bs_warps={}, bs_rotations={}, bs_parts={}, bs_art_meshes={}, bs_constraints={}, blend_bindings={}, blend_key_tables={}",
+        inspection.counts.bs_warps, inspection.counts.bs_rotations, inspection.counts.bs_parts, inspection.counts.bs_art_meshes,
+        inspection.counts.bs_constraints, inspection.counts.blend_bindings, inspection.counts.blend_key_tables);
     assert_eq!(doc.blend_constraint_order().len(), 7, "BlendShapeConstraint count");
     assert_eq!(doc.blend_binding_order().len(), 124, "BlendShapeBinding count");
     assert_eq!(doc.glue_order().len(), 7, "Glue count");
 
     let total_glue_pairs: usize = doc.glue_order().iter().map(|g| doc.get_glue(g).unwrap().pairs.len()).sum();
     assert_eq!(total_glue_pairs, 161, "Total Glue pairs count");
+
+    let mut part_bb = 0;
+    let mut warp_bb = 0;
+    let mut rot_bb = 0;
+    let mut mesh_bb = 0;
+    for b_id in doc.blend_binding_order() {
+        let b = doc.get_blend_binding(b_id).unwrap();
+        match b.keyforms {
+            kasane_core::types::DeltaKeyforms::Part(_) => part_bb += 1,
+            kasane_core::types::DeltaKeyforms::Warp(_) => warp_bb += 1,
+            kasane_core::types::DeltaKeyforms::Rotation(_) => rot_bb += 1,
+            kasane_core::types::DeltaKeyforms::Mesh(_) => mesh_bb += 1,
+        }
+    }
+    println!("BlendBindings distribution: Part={}, Warp={}, Rotation={}, Mesh={}", part_bb, warp_bb, rot_bb, mesh_bb);
 
     // Evaluation against PurismModelInstance
     let mut runtime = PurismModelInstance::new(&bytes);
@@ -1019,5 +1036,94 @@ fn test_import_mao_full() {
     assert_eq!(checked_meshes, 260, "All meshes checked");
     println!("Max position error against PurismCore on Mao default pose: {} px", max_pos_error);
     assert!(max_pos_error < 0.05, "Dual-core numerical parity margin exceeded: max_pos_error={}", max_pos_error);
+}
+
+#[test]
+fn test_mao_roundtrip_export_and_detached_reopening() {
+    let candidates = [
+        "../../demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3",
+        "demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3",
+    ];
+    let path = candidates.iter().map(std::path::Path::new).find(|p| p.exists());
+    if path.is_none() {
+        eprintln!("Skipping test_mao_roundtrip_export_and_detached_reopening: mao_pro.moc3 not found");
+        return;
+    }
+    let path = path.unwrap();
+
+    let orig_bytes = std::fs::read(path).expect("failed to read mao_pro.moc3");
+    let orig_res = import_from_bare_moc3(&orig_bytes, &HashMap::new()).expect("initial import failed");
+    let orig_doc = &orig_res.document;
+
+    // 1. Serialize Document to Project v2 format
+    let project_json = kasane_project::encode_project(orig_doc)
+        .expect("encode_project failed");
+
+    // 2. Load into a fresh, completely detached Document (no orig_bytes reference)
+    let detached_doc = kasane_project::decode_project(&project_json)
+        .expect("decode_project failed");
+
+    assert_eq!(detached_doc.mesh_order().len(), 260);
+    assert_eq!(detached_doc.parameter_order().len(), 128);
+    assert_eq!(detached_doc.part_order().len(), 31);
+    assert_eq!(detached_doc.glue_order().len(), 7);
+    assert_eq!(detached_doc.blend_binding_order().len(), 124);
+    assert_eq!(detached_doc.blend_key_table_order().len(), 33);
+    assert_eq!(detached_doc.blend_constraint_order().len(), 7);
+
+    // 3. Export to 5.0 MOC3 binary
+    let exported = encode_moc3(&detached_doc).expect("encode_moc3 failed");
+    let exp_bytes = exported.bytes;
+
+    // 4. Verify csmHasMocConsistency on exported bytes
+    unsafe {
+        let mut moc_buf = exp_bytes.clone();
+        let consistent = crate::common::purism::csmHasMocConsistency(
+            moc_buf.as_mut_ptr() as *mut std::ffi::c_void,
+            moc_buf.len() as u32,
+        );
+        assert_eq!(consistent, 1, "csmHasMocConsistency failed on exported 5.0 MOC3");
+    }
+
+    // 5. Initialize Purism runtime on exported bytes
+    let mut exp_runtime = PurismModelInstance::new(&exp_bytes);
+    exp_runtime.update();
+
+    let mut orig_runtime = PurismModelInstance::new(&orig_bytes);
+    orig_runtime.update();
+
+    // 6. Verify numerical parity between original Mao and re-exported Mao in PurismCore
+    let mut max_err = 0.0f32;
+    for mesh_id in detached_doc.mesh_order() {
+        let mesh = detached_doc.get_mesh(mesh_id).unwrap();
+        let orig_d = orig_runtime.get_drawable(&mesh.runtime_id).unwrap();
+        let exp_d = exp_runtime.get_drawable(&mesh.runtime_id).unwrap();
+        assert_eq!(orig_d.positions.len(), exp_d.positions.len());
+        for (po, pe) in orig_d.positions.iter().zip(&exp_d.positions) {
+            let err = ((po.x - pe.x).powi(2) + (po.y - pe.y).powi(2)).sqrt();
+            if err > max_err {
+                max_err = err;
+            }
+        }
+    }
+    println!("Max position error between original Mao and exported Mao in PurismCore: {} px", max_err);
+    assert!(max_err < 0.05, "Dual-core numerical parity margin exceeded on exported MOC3: max_err={}", max_err);
+
+    // 7. Re-import the exported MOC3 binary into a 3rd Document and verify lossless roundtrip
+    let reimported_res = import_from_bare_moc3(&exp_bytes, &HashMap::new()).expect("re-import of exported MOC3 failed");
+    let reimported_doc = &reimported_res.document;
+    assert_eq!(reimported_doc.mesh_order().len(), 260);
+    assert_eq!(reimported_doc.parameter_order().len(), 128);
+    assert_eq!(reimported_doc.part_order().len(), 31);
+    assert_eq!(reimported_doc.glue_order().len(), 7);
+    let total_reimported_glue_pairs: usize = reimported_doc
+        .glue_order()
+        .iter()
+        .map(|g| reimported_doc.get_glue(g).unwrap().pairs.len())
+        .sum();
+    assert_eq!(total_reimported_glue_pairs, 161);
+    assert_eq!(reimported_doc.blend_binding_order().len(), 124);
+    assert_eq!(reimported_doc.blend_key_table_order().len(), 33);
+    assert_eq!(reimported_doc.blend_constraint_order().len(), 7);
 }
 

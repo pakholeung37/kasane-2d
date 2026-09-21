@@ -50,6 +50,12 @@ impl Layout {
         Ok(())
     }
 
+    pub fn short(&mut self, name: &str, v: u16) -> Result<(), Status> {
+        let buf = self.field(name)?;
+        buf.extend_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
+
     pub fn finish(&mut self) -> Result<Vec<u8>, Status> {
         // Write the 64 counts into count_info (section 0)
         self.data[0].clear();

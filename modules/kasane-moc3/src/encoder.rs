@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 
 use kasane_core::evaluation::{evaluate_frame, to_parent_positions, DrawableFrame};
-use kasane_core::types::{Appearance, BlendMode, SceneKeyform, Status, TransformKind, Vec2};
+use kasane_core::types::{
+    Appearance, BlendMode, BlendShapeBinding, BlendShapeTargetKind, DeltaKeyforms, ParameterKind,
+    SceneKeyform, Status, TransformKind, Vec2, VertexId,
+};
 use kasane_core::Document;
 
 use crate::layout::{checked, Layout};
@@ -20,6 +23,16 @@ fn index_of(ids: &[String], id: &str) -> i32 {
             .map(|i| i as i32)
             .unwrap_or(-1)
     }
+}
+
+fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> u16 {
+    if vid >= 1 && (vid as usize) <= mesh.vertex_ids.len() {
+        let idx = (vid - 1) as usize;
+        if mesh.vertex_ids[idx] == vid {
+            return idx as u16;
+        }
+    }
+    mesh.vertex_ids.iter().position(|&v| v == vid).unwrap_or(0) as u16
 }
 
 fn write_id(l: &mut Layout, field: &str, value: &str) -> Result<(), Status> {
@@ -41,6 +54,60 @@ fn write_colors(l: &mut Layout, prefix: &str, appearance: &Appearance) -> Result
             appearance.multiply[c],
         )?;
         l.scalar(&format!("keyform_scr_color_src.{ch}"), appearance.screen[c])?;
+    }
+    Ok(())
+}
+
+fn write_bs_colors(
+    l: &mut Layout,
+    prefix: &str,
+    multiply: Option<[f32; 3]>,
+    screen: Option<[f32; 3]>,
+) -> Result<(), Status> {
+    let mul = multiply.unwrap_or([0.0, 0.0, 0.0]);
+    let scr = screen.unwrap_or([0.0, 0.0, 0.0]);
+    let offset = checked(l.field("keyform_mul_color_src.r")?.len() / 4, "colors")?;
+    l.integer(&format!("{prefix}.key_mul_color_off"), offset)?;
+    l.integer(&format!("{prefix}.key_scr_color_off"), offset)?;
+    let channels = ["r", "g", "b"];
+    for c in 0..3 {
+        l.scalar(&format!("keyform_mul_color_src.{}", channels[c]), mul[c])?;
+        l.scalar(&format!("keyform_scr_color_src.{}", channels[c]), scr[c])?;
+    }
+    Ok(())
+}
+
+fn write_blend_binding(
+    l: &mut Layout,
+    b: &BlendShapeBinding,
+    key_bs_off: i32,
+    key_bs_len: i32,
+    bkt_indices: &HashMap<&str, i32>,
+    constraint_index_map: &HashMap<&str, i32>,
+) -> Result<(), Status> {
+    let kt_idx = bkt_indices
+        .get(b.key_table_id.as_str())
+        .copied()
+        .unwrap_or(0);
+    l.integer("blend_binding_src.key_table_idx", kt_idx)?;
+    l.integer("blend_binding_src.key_bs_off", key_bs_off)?;
+    l.integer("blend_binding_src.key_bs_len", key_bs_len)?;
+
+    let c_off = checked(
+        l.field("blend_constraint_idx_src.constraint_idx")?.len() / 4,
+        "c_idx_off",
+    )?;
+    l.integer("blend_binding_src.bs_constraint_idx_off", c_off)?;
+    l.integer(
+        "blend_binding_src.bs_constraint_idx_len",
+        checked(b.constraint_ids.len(), "c_idx_len")?,
+    )?;
+    for cid in &b.constraint_ids {
+        let ci = constraint_index_map
+            .get(cid.as_str())
+            .copied()
+            .unwrap_or(0);
+        l.integer("blend_constraint_idx_src.constraint_idx", ci)?;
     }
     Ok(())
 }
@@ -142,6 +209,16 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         }
     }
 
+    for id in doc.glue_order() {
+        let g = doc.get_glue(id).unwrap();
+        if !is_representable(&g.runtime_id) {
+            return Err(Status::error(
+                "UNREPRESENTABLE_ID",
+                format!("{}.runtime_id: requires 1..63 printable ASCII bytes", id),
+            ));
+        }
+    }
+
     struct BindingView<'a> {
         id: &'a str,
         axes: &'a [kasane_core::types::BindingAxis],
@@ -190,6 +267,32 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         table_indices.insert(b.id, vec![0; b.axes.len()]);
     }
 
+    let mut param_bkts: HashMap<&str, Vec<&str>> = HashMap::new();
+    for bkt_id in doc.blend_key_table_order() {
+        let bkt = doc.get_blend_key_table(bkt_id).unwrap();
+        param_bkts
+            .entry(bkt.parameter_id.as_str())
+            .or_default()
+            .push(bkt_id);
+    }
+
+    let mut ordered_bkts: Vec<&str> = Vec::new();
+    let mut bkt_indices: HashMap<&str, i32> = HashMap::new();
+    for id in doc.parameter_order() {
+        if let Some(bkts) = param_bkts.get(id.as_str()) {
+            for &bkt_id in bkts {
+                bkt_indices.insert(bkt_id, ordered_bkts.len() as i32);
+                ordered_bkts.push(bkt_id);
+            }
+        }
+    }
+    for bkt_id in doc.blend_key_table_order() {
+        if !bkt_indices.contains_key(bkt_id.as_str()) {
+            bkt_indices.insert(bkt_id, ordered_bkts.len() as i32);
+            ordered_bkts.push(bkt_id);
+        }
+    }
+
     let mut table_count: i32 = 0;
     for id in doc.parameter_order() {
         let p = doc.get_parameter(id).unwrap();
@@ -204,9 +307,19 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         l.scalar("param_src.default_value", p.default_value)?;
         l.integer("param_src.repeat", 0)?;
         l.integer("param_src.decimal_places", p.decimal_places)?;
-        l.integer("param_src.type", 0)?;
-        l.integer("param_src.blend_key_table_off", 0)?;
-        l.integer("param_src.blend_key_table_len", 0)?;
+
+        let is_bs_param = p.kind == ParameterKind::BlendShape;
+        l.integer("param_src.type", if is_bs_param { 1 } else { 0 })?;
+
+        let bkts = param_bkts.get(id.as_str());
+        if let Some(bkts) = bkts {
+            let first_bkt = bkt_indices[bkts[0]];
+            l.integer("param_src.blend_key_table_off", first_bkt)?;
+            l.integer("param_src.blend_key_table_len", bkts.len() as i32)?;
+        } else {
+            l.integer("param_src.blend_key_table_off", 0)?;
+            l.integer("param_src.blend_key_table_len", 0)?;
+        }
 
         let first = table_count;
         let mut union_keys = Vec::new();
@@ -235,6 +348,13 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             }
         }
 
+        if let Some(bkts) = bkts {
+            for &bkt_id in bkts {
+                let bkt = doc.get_blend_key_table(bkt_id).unwrap();
+                union_keys.extend_from_slice(&bkt.keys);
+            }
+        }
+
         l.integer("param_src.key_table_off", first)?;
         l.integer("param_src.key_table_len", table_count - first)?;
 
@@ -254,6 +374,21 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             l.scalar("keys_src.key", k)?;
         }
     }
+
+    for &bkt_id in &ordered_bkts {
+        let bkt = doc.get_blend_key_table(bkt_id).unwrap();
+        let keys_off = checked(l.field("keys_src.key")?.len() / 4, "bkt_keys_off")?;
+        l.integer("blend_key_table_src.keys_off", keys_off)?;
+        l.integer(
+            "blend_key_table_src.keys_len",
+            checked(bkt.keys.len(), "bkt_keys_len")?,
+        )?;
+        l.integer("blend_key_table_src.base_key_idx", bkt.base_key_idx as i32)?;
+        for &k in &bkt.keys {
+            l.scalar("keys_src.key", k)?;
+        }
+    }
+    l.counts[25] = ordered_bkts.len() as u32;
 
     l.counts[13] = table_count as u32;
     l.counts[14] = checked(l.field("keys_src.key")?.len() / 4, "keys")? as u32;
@@ -324,6 +459,9 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         l.counts[6] += stored as u32;
     }
 
+    let mut warp_local_indices: HashMap<&str, usize> = HashMap::new();
+    let mut rotation_local_indices: HashMap<&str, usize> = HashMap::new();
+
     for id in &transforms {
         let t = doc.get_transform(id).unwrap();
         let b = doc.binding_for_scene(id);
@@ -362,6 +500,11 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         let local_idx = l.counts[local_slot];
         l.counts[local_slot] += 1;
         l.integer("deformer_src.local_idx", local_idx as i32)?;
+        if warp {
+            warp_local_indices.insert(id.as_str(), local_idx as usize);
+        } else {
+            rotation_local_indices.insert(id.as_str(), local_idx as usize);
+        }
 
         l.integer(
             &format!("{prefix}_src.binding_idx"),
@@ -470,7 +613,9 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
 
     l.counts[19] = checked(l.field("draw_group_obj_src.idx")?.len() / 4, "draw_items")? as u32;
 
+    let mut mesh_indices: HashMap<&str, usize> = HashMap::new();
     for (i, d) in drawables.iter().enumerate() {
+        mesh_indices.insert(d.id.as_str(), i);
         {
             let ids = l.field("art_mesh_src.id")?;
             ids.extend_from_slice(d.runtime_id.as_bytes());
@@ -605,6 +750,237 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
     }
 
     l.counts[9] = keyform_offset as u32;
+
+    // Glues
+    l.counts[20] = checked(doc.glue_order().len(), "glues")? as u32;
+    let mut glue_info_count = 0;
+    for (g_idx, g_id) in doc.glue_order().iter().enumerate() {
+        let g = doc.get_glue(g_id).unwrap();
+        let mesh_a = doc.get_mesh(&g.mesh_a_id).unwrap();
+        let mesh_b = doc.get_mesh(&g.mesh_b_id).unwrap();
+        let ma_idx = index_of(doc.mesh_order(), &g.mesh_a_id);
+        let mb_idx = index_of(doc.mesh_order(), &g.mesh_b_id);
+        let b_idx = if let Some(ref bid) = g.binding_id {
+            binding_indices.get(bid.as_str()).copied().unwrap_or(0)
+        } else {
+            0
+        };
+        write_id(&mut l, "glue_src.id", &g.runtime_id)?;
+        l.integer("glue_src.binding_idx", b_idx)?;
+        l.integer("glue_src.keyform_off", g_idx as i32)?;
+        l.integer("glue_src.key_len", 1)?;
+        l.integer("glue_src.art_mesh_idx_a", ma_idx)?;
+        l.integer("glue_src.art_mesh_idx_b", mb_idx)?;
+        let info_off = glue_info_count;
+        let info_len = checked(g.pairs.len() * 2, "glue_info_len")?;
+        l.integer("glue_src.info_off", info_off)?;
+        l.integer("glue_src.info_len", info_len)?;
+        l.scalar("glue_key_src.intensity", g.intensity)?;
+        for pair in &g.pairs {
+            let pos_a = find_vertex_pos(mesh_a, pair.vertex_a);
+            let pos_b = find_vertex_pos(mesh_b, pair.vertex_b);
+            l.scalar("glue_info_src.weight", pair.weight_a)?;
+            l.short("glue_info_src.pos_idx", pos_a)?;
+            l.scalar("glue_info_src.weight", pair.weight_b)?;
+            l.short("glue_info_src.pos_idx", pos_b)?;
+        }
+        glue_info_count += info_len;
+    }
+    l.counts[21] = glue_info_count as u32;
+    l.counts[22] = doc.glue_order().len() as u32;
+
+    // BlendShape Constraints
+    let mut constraint_index_map: HashMap<&str, i32> = HashMap::new();
+    for (c_idx, c_id) in doc.blend_constraint_order().iter().enumerate() {
+        let c = doc.get_blend_constraint(c_id).unwrap();
+        let p_idx = index_of(doc.parameter_order(), &c.parameter_id);
+        let val_off = checked(
+            l.field("blend_constraint_val_src.key")?.len() / 4,
+            "constraint_vals",
+        )?;
+        let val_len = checked(c.keys.len(), "constraint_val_len")?;
+        l.integer("blend_constraint_src.parameter_idx", p_idx)?;
+        l.integer("blend_constraint_src.value_off", val_off)?;
+        l.integer("blend_constraint_src.value_len", val_len)?;
+        for (&k, &w) in c.keys.iter().zip(c.weights.iter()) {
+            l.scalar("blend_constraint_val_src.key", k)?;
+            l.scalar("blend_constraint_val_src.weight", w)?;
+        }
+        constraint_index_map.insert(c.id.as_str(), c_idx as i32);
+    }
+    l.counts[30] = checked(doc.blend_constraint_order().len(), "bs_constraints")? as u32;
+    l.counts[31] = checked(
+        l.field("blend_constraint_val_src.key")?.len() / 4,
+        "constraint_vals",
+    )? as u32;
+
+    // BlendShape Targets & Bindings
+    let mut warp_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut mesh_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut part_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    let mut rot_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+
+    for bid in doc.blend_binding_order() {
+        let b = doc.get_blend_binding(bid).unwrap();
+        match b.target_kind {
+            BlendShapeTargetKind::Warp => {
+                warp_targets.entry(b.target_id.as_str()).or_default().push(bid);
+            }
+            BlendShapeTargetKind::Mesh => {
+                mesh_targets.entry(b.target_id.as_str()).or_default().push(bid);
+            }
+            BlendShapeTargetKind::Part => {
+                part_targets.entry(b.target_id.as_str()).or_default().push(bid);
+            }
+            BlendShapeTargetKind::Rotation => {
+                rot_targets.entry(b.target_id.as_str()).or_default().push(bid);
+            }
+        }
+    }
+
+    let mut sorted_warp_targets: Vec<&str> = warp_targets.keys().copied().collect();
+    sorted_warp_targets.sort_by_key(|id| warp_local_indices.get(id).copied().unwrap_or(usize::MAX));
+
+    let mut sorted_mesh_targets: Vec<&str> = mesh_targets.keys().copied().collect();
+    sorted_mesh_targets.sort_by_key(|id| mesh_indices.get(id).copied().unwrap_or(usize::MAX));
+
+    let mut sorted_part_targets: Vec<&str> = part_targets.keys().copied().collect();
+    sorted_part_targets.sort_by_key(|id| index_of(&parts, id));
+
+    let mut sorted_rot_targets: Vec<&str> = rot_targets.keys().copied().collect();
+    sorted_rot_targets.sort_by_key(|id| rotation_local_indices.get(id).copied().unwrap_or(usize::MAX));
+
+    // 1. Warp BlendShapes
+    for target_id in sorted_warp_targets {
+        let target_local = warp_local_indices[target_id];
+        let binding_ids = &warp_targets[target_id];
+        let warp = doc.get_transform(target_id).unwrap();
+        let bs_b_off = l.counts[26] as i32;
+        let bs_b_len = checked(binding_ids.len(), "bs_warp_b_len")?;
+        l.integer("bs_warp_src.target_idx", target_local as i32)?;
+        l.integer("bs_warp_src.bs_binding_off", bs_b_off)?;
+        l.integer("bs_warp_src.bs_binding_len", bs_b_len)?;
+        l.counts[27] += 1;
+
+        for &bid in binding_ids {
+            let b = doc.get_blend_binding(bid).unwrap();
+            if let DeltaKeyforms::Warp(ref forms) = b.keyforms {
+                let key_bs_off = l.counts[7] as i32;
+                let key_bs_len = forms.len() as i32;
+                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                l.counts[26] += 1;
+                for f in forms {
+                    l.scalar("warp_key_src.opacity", f.opacity.unwrap_or(1.0))?;
+                    let pts = if f.points.is_empty() { &warp.points } else { &f.points };
+                    write_positions(&mut l, doc, "warp_key_src", &warp.parent_id, pts)?;
+                    write_bs_colors(&mut l, "warp_key_src", f.multiply, f.screen)?;
+                    l.counts[7] += 1;
+                }
+            }
+        }
+    }
+
+    // 2. Mesh BlendShapes
+    for target_id in sorted_mesh_targets {
+        let target_idx = mesh_indices[target_id];
+        let binding_ids = &mesh_targets[target_id];
+        let mesh = doc.get_mesh(target_id).unwrap();
+        let bs_b_off = l.counts[26] as i32;
+        let bs_b_len = checked(binding_ids.len(), "bs_mesh_b_len")?;
+        l.integer("bs_art_mesh_src.target_idx", target_idx as i32)?;
+        l.integer("bs_art_mesh_src.bs_binding_off", bs_b_off)?;
+        l.integer("bs_art_mesh_src.bs_binding_len", bs_b_len)?;
+        l.counts[28] += 1;
+
+        for &bid in binding_ids {
+            let b = doc.get_blend_binding(bid).unwrap();
+            if let DeltaKeyforms::Mesh(ref forms) = b.keyforms {
+                let key_bs_off = l.counts[9] as i32;
+                let key_bs_len = forms.len() as i32;
+                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                l.counts[26] += 1;
+                for f in forms {
+                    l.scalar("art_mesh_key_src.opacity", f.opacity.unwrap_or(1.0))?;
+                    l.scalar("art_mesh_key_src.draw_order", f.draw_order.unwrap_or(0.0))?;
+                    let pts = if f.positions.is_empty() { &mesh.base_positions } else { &f.positions };
+                    write_positions(&mut l, doc, "art_mesh_key_src", &mesh.deformer_id, pts)?;
+                    write_bs_colors(&mut l, "art_mesh_key_src", f.multiply, f.screen)?;
+                    l.counts[9] += 1;
+                }
+            }
+        }
+    }
+
+    // 3. Part BlendShapes
+    for target_id in sorted_part_targets {
+        let target_idx = index_of(&parts, target_id);
+        let binding_ids = &part_targets[target_id];
+        let bs_b_off = l.counts[26] as i32;
+        let bs_b_len = checked(binding_ids.len(), "bs_part_b_len")?;
+        l.integer("bs_part_src.target_idx", target_idx)?;
+        l.integer("bs_part_src.bs_binding_off", bs_b_off)?;
+        l.integer("bs_part_src.bs_binding_len", bs_b_len)?;
+        l.counts[32] += 1;
+
+        for &bid in binding_ids {
+            let b = doc.get_blend_binding(bid).unwrap();
+            if let DeltaKeyforms::Part(ref forms) = b.keyforms {
+                let key_bs_off = l.counts[6] as i32;
+                let key_bs_len = forms.len() as i32;
+                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                l.counts[26] += 1;
+                for f in forms {
+                    l.scalar("part_key_src.draw_order", f.draw_order)?;
+                    l.counts[6] += 1;
+                }
+            }
+        }
+    }
+
+    // 4. Rotation BlendShapes
+    for target_id in sorted_rot_targets {
+        let target_local = rotation_local_indices[target_id];
+        let binding_ids = &rot_targets[target_id];
+        let rot = doc.get_transform(target_id).unwrap();
+        let bs_b_off = l.counts[26] as i32;
+        let bs_b_len = checked(binding_ids.len(), "bs_rot_b_len")?;
+        l.integer("bs_rotation_src.target_idx", target_local as i32)?;
+        l.integer("bs_rotation_src.bs_binding_off", bs_b_off)?;
+        l.integer("bs_rotation_src.bs_binding_len", bs_b_len)?;
+        l.counts[33] += 1;
+
+        for &bid in binding_ids {
+            let b = doc.get_blend_binding(bid).unwrap();
+            if let DeltaKeyforms::Rotation(ref forms) = b.keyforms {
+                let key_bs_off = l.counts[8] as i32;
+                let key_bs_len = forms.len() as i32;
+                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                l.counts[26] += 1;
+                for f in forms {
+                    l.scalar("rotation_key_src.opacity", f.opacity.unwrap_or(0.0))?;
+                    l.scalar("rotation_key_src.angle", f.angle.unwrap_or(0.0))?;
+                    let origin = if let Some(o) = f.origin {
+                        to_parent_positions(doc, &rot.parent_id, &[o])?[0]
+                    } else {
+                        Vec2::default()
+                    };
+                    l.scalar("rotation_key_src.origin_x", origin.x)?;
+                    l.scalar("rotation_key_src.origin_y", origin.y)?;
+                    l.scalar("rotation_key_src.scale", f.scale.unwrap_or(0.0))?;
+                    l.integer("rotation_key_src.reflect_x", 0)?;
+                    l.integer("rotation_key_src.reflect_y", 0)?;
+                    write_bs_colors(&mut l, "rotation_key_src", f.multiply, f.screen)?;
+                    l.counts[8] += 1;
+                }
+            }
+        }
+    }
+
+    l.counts[29] = checked(
+        l.field("blend_constraint_idx_src.constraint_idx")?.len() / 4,
+        "bs_constraint_idx",
+    )? as u32;
+
     let colors_count = checked(l.field("keyform_mul_color_src.r")?.len() / 4, "colors")? as u32;
     l.counts[23] = colors_count;
     l.counts[24] = colors_count;
