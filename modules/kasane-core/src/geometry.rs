@@ -10,18 +10,10 @@ pub fn validate_positions(positions: &[Vec2]) -> Status {
 }
 
 pub fn validate_render_mesh(positions: &[Vec2], uvs: &[Vec2], indices: &[u32]) -> Status {
-    if positions.len() < 3 || positions.len() > (i32::MAX as usize) || positions.len() != uvs.len()
-    {
+    if positions.len() > (i32::MAX as usize) || positions.len() != uvs.len() {
         return Status::error(
             "INVALID_LENGTH",
-            "A mesh needs matching positions/UVs and at least three vertices.",
-        );
-    }
-    if indices.is_empty() || !indices.len().is_multiple_of(3) || indices.len() > (i32::MAX as usize)
-    {
-        return Status::error(
-            "INVALID_LENGTH",
-            "Triangle indices must be a non-empty multiple of three.",
+            "A mesh needs matching positions and UVs within 32-bit limits.",
         );
     }
     let s = validate_positions(positions);
@@ -31,6 +23,22 @@ pub fn validate_render_mesh(positions: &[Vec2], uvs: &[Vec2], indices: &[u32]) -
     let s = validate_positions(uvs);
     if !s.is_ok() {
         return s;
+    }
+    // Zero-triangle mesh: indices are empty; valid geometry without rasterized triangles
+    if indices.is_empty() {
+        return Status::ok();
+    }
+    if !indices.len().is_multiple_of(3) || indices.len() > (i32::MAX as usize) {
+        return Status::error(
+            "INVALID_LENGTH",
+            "Triangle indices must be a multiple of three.",
+        );
+    }
+    if positions.len() < 3 {
+        return Status::error(
+            "INVALID_LENGTH",
+            "A mesh with triangles needs at least three vertices.",
+        );
     }
     for &chunk in indices.as_chunks::<3>().0 {
         let (a, b, c) = (chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
@@ -48,6 +56,10 @@ pub fn validate_render_mesh(positions: &[Vec2], uvs: &[Vec2], indices: &[u32]) -
         }
     }
     Status::ok()
+}
+
+pub fn is_renderable_mesh(positions: &[Vec2], indices: &[u32]) -> bool {
+    !indices.is_empty() && positions.len() >= 3 && indices.len().is_multiple_of(3)
 }
 
 pub fn to_runtime_positions(canvas: Canvas, positions: &[Vec2]) -> Result<Vec<Vec2>, Status> {

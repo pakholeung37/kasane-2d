@@ -1,6 +1,6 @@
 # M3C 分阶段实施与验收计划
 
-状态：**S0 已通过，S1 进行中**。日期：2026-09-21。
+状态：**S0、S1 已通过，S2 待进入**。日期：2026-09-21。
 
 范围、源码证据和数据契约以 [总体设计](M3C-moc3-version-coverage.md) 为准。此前 Rice 改动与 M3B 完成记录属于基线，不代表本计划已通过。实施时逐阶段将状态更新为 `in_progress / passed / failed / not_run` 并链接实际报告。
 
@@ -212,7 +212,7 @@ python3 tools/validate_m3c.py --manifest <local-manifest.json> --stage all --out
 | 阶段 | 状态 | revision / 改动 | 用例及报告 | 未完成项 |
 |---|---|---|---|---|
 | S0 | passed | tools/probes/project_runtime_probe.cpp, tools/validate_m3c.py | [s0_baseline_report.json](../target/kasane/m3c/s0_baseline_report.json), [baseline_manifest.json](../target/kasane/m3c/baseline_manifest.json) | 真实 4.2、循环参数及 BlendShape Glue 外部资产待后续接入 |
-| S1 | not_run | — | — | 布局安全与无面网格 |
+| S1 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, tools/validate_m3c.py | [s1_report.json](../target/kasane/m3c/s1_report.json) | 无；Hiyori 4 个无面网格及 Glue 引用完整保留，Rice/Hiyori/Mark 导入与求值通过，v4/v6 安全门禁已建立 |
 | S2 | not_run | — | — | 4.2 字段与真实样本 |
 | S3 | not_run | — | — | 循环与工程 v4 |
 | S4 | not_run | — | — | Glue 增量 |

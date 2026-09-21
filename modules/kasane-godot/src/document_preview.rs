@@ -490,7 +490,7 @@ impl KasaneDocumentPreview {
                     },
                 );
             }
-            view.set_visible(d.visible && d.opacity > 0.0);
+            view.set_visible(d.visible && d.opacity > 0.0 && !d.indices.is_empty());
             view.set_texture_filter(TextureFilter::LINEAR_WITH_MIPMAPS);
             if !self.views.contains_key(&d.id) {
                 self.model_root.as_mut().unwrap().add_child(&view);

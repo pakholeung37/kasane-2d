@@ -57,6 +57,15 @@ impl KasaneMeshView {
             return status_to_dict(&status);
         }
 
+        if dense.is_empty() {
+            self.surface = None;
+            self.positions = next;
+            self.base_mut().set_visible(false);
+            self.update_bounds();
+            self.creations += 1;
+            return status_to_dict(&kasane_core::types::Status::ok());
+        }
+
         let mut next_surface = ArrayMesh::new_gd();
         let mut gpu_positions = PackedVector3Array::new();
         gpu_positions.resize(next.len());
@@ -83,6 +92,7 @@ impl KasaneMeshView {
         self.base_mut().set_texture(&tex);
         self.base_mut().set_texture_filter(TextureFilter::NEAREST);
         self.base_mut().set_texture_repeat(TextureRepeat::DISABLED);
+        self.base_mut().set_visible(true);
         self.update_bounds();
         self.creations += 1;
         status_to_dict(&kasane_core::types::Status::ok())
@@ -94,6 +104,16 @@ impl KasaneMeshView {
             return error_dict("WRONG_THREAD", "Rendering calls require the main thread.");
         }
         if self.surface.is_none() {
+            if self.positions.len() == positions.len() {
+                let next = packed_to_vectors(&positions);
+                let status = validate_positions(&next);
+                if !status.is_ok() {
+                    return status_to_dict(&status);
+                }
+                self.positions = next;
+                self.update_bounds();
+                return status_to_dict(&kasane_core::types::Status::ok());
+            }
             return error_dict("NOT_INITIALIZED", "Initialize the mesh first.");
         }
         if positions.len() != self.positions.len() {

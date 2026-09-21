@@ -813,15 +813,33 @@ pub fn decode_moc3(
         let vertex_ids: Vec<VertexId> = (1..=vc as u32).collect();
 
         // Read triangles (inverting winding by swapping 1 and 2)
+        if !idx_len.is_multiple_of(3) {
+            return Err(Status::error(
+                "INVALID_LENGTH",
+                format!("Mesh {m} has index count {idx_len} not divisible by 3"),
+            ));
+        }
         let mut triangles = Vec::with_capacity(idx_len / 3);
         for t in 0..(idx_len / 3) {
             let i0 = read_u16(bytes, offsets[79] as usize + (idx_off + t * 3) * 2)? as usize;
             let i1 = read_u16(bytes, offsets[79] as usize + (idx_off + t * 3 + 1) * 2)? as usize;
             let i2 = read_u16(bytes, offsets[79] as usize + (idx_off + t * 3 + 2) * 2)? as usize;
-            if i0 < vc && i1 < vc && i2 < vc {
-                // Invert winding swap (render swapped 1 and 2, so swapping 1 and 2 restores source)
-                triangles.push([vertex_ids[i0], vertex_ids[i2], vertex_ids[i1]]);
+            if i0 >= vc || i1 >= vc || i2 >= vc {
+                return Err(Status::error(
+                    "INVALID_INDEX",
+                    format!(
+                        "Mesh {m} triangle {t} index out of bounds: ({i0}, {i1}, {i2}) with vertex count {vc}"
+                    ),
+                ));
             }
+            if i0 == i1 || i1 == i2 || i0 == i2 {
+                return Err(Status::error(
+                    "REPEATED_VERTEX",
+                    format!("Mesh {m} triangle {t} contains duplicate vertices: ({i0}, {i1}, {i2})"),
+                ));
+            }
+            // Invert winding swap (render swapped 1 and 2, so swapping 1 and 2 restores source)
+            triangles.push([vertex_ids[i0], vertex_ids[i2], vertex_ids[i1]]);
         }
 
         // Masks

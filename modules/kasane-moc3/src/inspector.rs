@@ -8,24 +8,36 @@ extern "C" {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Moc3Version {
+    Version30,
     Version33,
+    Version40,
+    Version42,
     Version50,
+    Version53,
     Other(u8),
 }
 
 impl Moc3Version {
     pub fn from_u8(v: u8) -> Self {
         match v {
+            1 => Moc3Version::Version30,
             2 => Moc3Version::Version33,
+            3 => Moc3Version::Version40,
+            4 => Moc3Version::Version42,
             5 => Moc3Version::Version50,
+            6 => Moc3Version::Version53,
             other => Moc3Version::Other(other),
         }
     }
 
     pub fn to_u8(self) -> u8 {
         match self {
+            Moc3Version::Version30 => 1,
             Moc3Version::Version33 => 2,
+            Moc3Version::Version40 => 3,
+            Moc3Version::Version42 => 4,
             Moc3Version::Version50 => 5,
+            Moc3Version::Version53 => 6,
             Moc3Version::Other(v) => v,
         }
     }
@@ -131,6 +143,36 @@ fn read_f32(buf: &[u8], offset: usize) -> Result<f32, Status> {
     Ok(f32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()))
 }
 
+use crate::schema::{SectionSchema, SCHEMA};
+
+const V53_SECTIONS: &[SectionSchema] = &[
+    SectionSchema { name: "part_src.offscreen_idx", width: 4, count_index: 0 },
+    SectionSchema { name: "art_mesh_src.blend_mode", width: 4, count_index: 4 },
+    SectionSchema { name: "offscreen_src.drawable_mask_runtime", width: 8, count_index: 35 },
+    SectionSchema { name: "offscreen_src.owner_idx", width: 4, count_index: 35 },
+    SectionSchema { name: "offscreen_src.drawable_flag", width: 1, count_index: 35 },
+    SectionSchema { name: "offscreen_src.blend_mode", width: 4, count_index: 35 },
+    SectionSchema { name: "offscreen_src.mask_off", width: 4, count_index: 35 },
+    SectionSchema { name: "offscreen_src.mask_len", width: 4, count_index: 35 },
+    SectionSchema { name: "part_key_src.key_idx", width: 4, count_index: 6 },
+    SectionSchema { name: "offscreen_key_src.opacity", width: 4, count_index: 36 },
+    SectionSchema { name: "offscreen_key_src.key_mul_color_off", width: 4, count_index: 36 },
+    SectionSchema { name: "offscreen_key_src.key_scr_color_off", width: 4, count_index: 36 },
+    SectionSchema { name: "bs_offscreen_src.target_idx", width: 4, count_index: 37 },
+    SectionSchema { name: "bs_offscreen_src.bs_binding_off", width: 4, count_index: 37 },
+    SectionSchema { name: "bs_offscreen_src.bs_binding_len", width: 4, count_index: 37 },
+];
+
+fn get_section_schema(i: usize) -> Option<&'static SectionSchema> {
+    if i < SCHEMA.len() {
+        Some(&SCHEMA[i])
+    } else if i - SCHEMA.len() < V53_SECTIONS.len() {
+        Some(&V53_SECTIONS[i - SCHEMA.len()])
+    } else {
+        None
+    }
+}
+
 fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     if bytes.len() < 64 {
         return Err(Status::error(
@@ -157,26 +199,24 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     }
 
     match version_raw {
-        2 | 5 => {}
+        1..=6 => {}
         other => {
             return Err(Status::error(
                 "UNSUPPORTED_VERSION",
-                format!(
-                    "MOC3 version {other} is not supported (only csmMocVersion_33 [2] and csmMocVersion_50 [5] are accepted)"
-                ),
+                format!("MOC3 version {other} is not supported (accepted versions: 1 to 6)"),
             ));
         }
     }
 
     let version = Moc3Version::from_u8(version_raw);
 
-    let offset_count = 160;
+    let offset_count = if version_raw >= 6 { 480 } else { 160 };
     let header_size = 64 + offset_count * 4;
     if bytes.len() < header_size {
         return Err(Status::error(
             "BUFFER_TOO_SMALL",
             format!(
-                "MOC3 buffer size {} too small for header and 160 offsets ({header_size})",
+                "MOC3 buffer size {} too small for header and {offset_count} offsets ({header_size})",
                 bytes.len()
             ),
         ));
@@ -265,15 +305,53 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         ));
     }
 
-    // Read canvas info (section 1) before feature checking
-    let canvas_off = section_offsets[1] as usize;
-    if canvas_off + 24 > bytes.len() {
-        return Err(Status::error(
-            "SECTION_OOB",
-            format!("canvas_info section at {canvas_off} exceeds buffer size {}", bytes.len()),
-        ));
+    // Section bounds and 8-byte alignment verification across all valid sections of this version
+    let valid_section_count = match version_raw {
+        1 => 101,
+        2 | 3 => 102,
+        4 => 137,
+        5 => 152,
+        6 => 167,
+        _ => 101,
+    };
+
+    for i in 0..valid_section_count {
+        let off = section_offsets[i] as usize;
+        if (off & 7) != 0 {
+            return Err(Status::error(
+                "FILE_CORRUPT",
+                format!("Section {i} offset {off} is not 8-byte aligned"),
+            ));
+        }
+        let size = if i == 0 {
+            count_bytes
+        } else if i == 1 {
+            24
+        } else if let Some(schema) = get_section_schema(i) {
+            let count = if schema.count_index < 0 {
+                1
+            } else if (schema.count_index as usize) < counts_raw.len() {
+                counts_raw[schema.count_index as usize] as usize
+            } else {
+                0
+            };
+            count * schema.width
+        } else {
+            0
+        };
+        if off > bytes.len() || bytes.len() - off < size {
+            return Err(Status::error(
+                "FILE_CORRUPT",
+                format!(
+                    "Section {i} out of bounds: offset={off}, size={size}, total={}",
+                    bytes.len()
+                ),
+            ));
+        }
     }
 
+    // Read canvas info (section 1) before feature checking
+    let canvas_off = section_offsets[1] as usize;
     let ppu = read_f32(bytes, canvas_off)?;
     let ox = read_f32(bytes, canvas_off + 4)?;
     let oy = read_f32(bytes, canvas_off + 8)?;
@@ -288,10 +366,44 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         ));
     }
 
+    // PurismCore consistency check (when available)
+    #[cfg(has_purism_core)]
+    {
+        let mut buffer_copy = bytes.to_vec();
+        let r = unsafe {
+            csmHasMocConsistency(
+                buffer_copy.as_mut_ptr() as *mut c_void,
+                buffer_copy.len() as c_uint,
+            )
+        };
+        if r != 1 {
+            return Err(Status::error(
+                "FILE_CORRUPT",
+                "PurismCore consistency check failed (moc3 is corrupt or inconsistent)",
+            ));
+        }
+    }
+
     // Collect all unsupported features in a single pass without failing on the first one
     let mut unsupported_features = Vec::new();
 
-    // 1. BlendShape Glue (Mao has 0; out of scope for M3B)
+    // S1 import gate: versions 4 and 6 are structurally recognized but import is gated
+    if version_raw == 4 {
+        unsupported_features.push(UnsupportedFeature {
+            category: "version_4_moc42".into(),
+            count: 1,
+            detail: "MOC3 version 4 (Cubism 4.2) import is not yet enabled (scheduled for S2)".into(),
+        });
+    }
+    if version_raw == 6 {
+        unsupported_features.push(UnsupportedFeature {
+            category: "version_6_moc53".into(),
+            count: 1,
+            detail: "MOC3 version 6 (Cubism 5.3) import is not yet enabled (scheduled for S5)".into(),
+        });
+    }
+
+    // 1. BlendShape Glue (Mao has 0; out of scope for S1-S3)
     if counts.bs_glues > 0 {
         unsupported_features.push(UnsupportedFeature {
             category: "blend_shape_glue".into(),
@@ -350,25 +462,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         }
     }
 
-    #[cfg(has_purism_core)]
-    {
-        let mut buffer_copy = bytes.to_vec();
-        let r = unsafe {
-            csmHasMocConsistency(
-                buffer_copy.as_mut_ptr() as *mut c_void,
-                buffer_copy.len() as c_uint,
-            )
-        };
-        if r != 1 {
-            return Err(Status::error(
-                "FILE_CORRUPT",
-                "PurismCore consistency check failed (moc3 is corrupt or inconsistent)",
-            ));
-        }
-    }
-
-    // Feature checks that traverse references run only after consistency validation.
-    if version_raw >= 5 {
+    if version_raw >= 5 && section_offsets.len() > 114 {
         for p in 0..counts.parameters as usize {
             let kind = read_i32(bytes, section_offsets[114] as usize + p * 4)?;
             if kind != 0 && kind != 1 {

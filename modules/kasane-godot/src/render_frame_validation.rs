@@ -88,11 +88,15 @@ mod tests {
     }
 
     #[test]
-    fn rejects_incomplete_triangles_before_conversion() {
-        for indices in [vec![], vec![0], vec![0, 1], vec![0, 1, 2, 0]] {
-            let mut frame = frame();
-            frame.drawables[0].indices = indices;
-            assert!(!validate_frame(&frame).is_ok());
+    fn allows_zero_triangles_and_rejects_incomplete_triangles() {
+        let mut f = frame();
+        f.drawables[0].indices = vec![];
+        assert!(validate_frame(&f).is_ok());
+
+        for indices in [vec![0], vec![0, 1], vec![0, 1, 2, 0]] {
+            let mut f = frame();
+            f.drawables[0].indices = indices;
+            assert!(!validate_frame(&f).is_ok());
         }
     }
 

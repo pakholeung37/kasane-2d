@@ -1402,3 +1402,274 @@ fn repeated_blend_target_groups_are_not_silently_merged() {
     assert_eq!(error.code, "UNSUPPORTED_FEATURE");
     assert!(error.message.contains("multiple BlendShape target groups"));
 }
+
+#[test]
+fn test_import_hiyori_zero_triangle_meshes_and_glue() {
+    let root = workspace_root();
+    let moc_path = root.join("third_party/CubismSdkForNative-5-r.5/Samples/Resources/Hiyori/Hiyori.moc3");
+    if !moc_path.exists() {
+        eprintln!("Skipping test_import_hiyori_zero_triangle_meshes_and_glue: Hiyori.moc3 not found");
+        return;
+    }
+    let bytes = fs::read(&moc_path).expect("failed to read Hiyori.moc3");
+    let inspection = inspect_moc3(&bytes).expect("Hiyori inspection failed");
+    assert_eq!(inspection.version, Moc3Version::Version40);
+    assert_eq!(inspection.version_number, 3);
+    assert_eq!(inspection.counts.art_meshes, 134);
+    assert_eq!(inspection.counts.glues, 26);
+
+    let decoded = import_from_bare_moc3(&bytes, &HashMap::new()).expect("failed to import Hiyori.moc3");
+    let doc = &decoded.document;
+
+    // Verify the 4 zero-triangle meshes exist in Document
+    let zero_triangle_rids = ["ArtMesh116", "ArtMesh123", "ArtMesh130", "ArtMesh137"];
+    let mut zero_mesh_ids = Vec::new();
+    for rid in &zero_triangle_rids {
+        let m_id = decoded.report.id_mapping.meshes.get(*rid).expect("mesh mapping found");
+        let mesh = doc.get_mesh(m_id).expect("mesh exists in document");
+        assert!(mesh.triangles.is_empty(), "Mesh {} must have zero triangles", rid);
+        assert!(!mesh.vertex_ids.is_empty(), "Mesh {} must retain its vertices", rid);
+        zero_mesh_ids.push(m_id.clone());
+    }
+
+    // Verify Glues 7, 13, 19, 25 connect these zero-triangle meshes
+    let glues = doc.glue_order();
+    assert_eq!(glues.len(), 26);
+    let mut zero_mesh_glues = 0;
+    for g_id in glues {
+        let g = doc.get_glue(g_id).unwrap();
+        if zero_mesh_ids.contains(&g.mesh_a_id) || zero_mesh_ids.contains(&g.mesh_b_id) {
+            zero_mesh_glues += 1;
+            assert!(!g.pairs.is_empty(), "Glue with zero-triangle endpoint must have vertex pairs");
+        }
+    }
+    assert_eq!(zero_mesh_glues, 4, "All 4 zero-triangle meshes must be bound to glues");
+
+    // Evaluate against PurismCore
+    let mut runtime = PurismModelInstance::new(&bytes);
+    runtime.update();
+
+    let mut frame = DrawableFrame::default();
+    let preview = HashMap::new();
+    assert!(evaluate_frame(doc, &preview, &mut frame).is_ok());
+
+    // Compare positions for all non-empty meshes
+    let mut max_pos_error = 0.0f32;
+    for d in &frame.drawables {
+        if let Some(core_d) = runtime.get_drawable(&d.runtime_id) {
+            assert_eq!(d.positions.len(), core_d.positions.len());
+            for p in 0..d.positions.len() {
+                let dx = (d.positions[p].x - core_d.positions[p].x).abs();
+                let dy = (d.positions[p].y - core_d.positions[p].y).abs();
+                max_pos_error = max_pos_error.max(dx).max(dy);
+            }
+        }
+    }
+    assert!(max_pos_error < 1e-3, "Hiyori max position error {max_pos_error} too high");
+
+    // Export to MOC3 v5 and verify roundtrip
+    let encoded = encode_moc3(doc).expect("failed to encode Hiyori");
+    let reimport = import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("failed to reimport Hiyori");
+    assert_eq!(reimport.document.mesh_order().len(), 134);
+    assert_eq!(reimport.document.glue_order().len(), 26);
+
+    // Verify zero-triangle meshes are still zero-triangle in reimported doc
+    for rid in &zero_triangle_rids {
+        let m_id = reimport.report.id_mapping.meshes.get(*rid).expect("mesh mapping in reimport");
+        let mesh = reimport.document.get_mesh(m_id).expect("mesh in reimport");
+        assert!(mesh.triangles.is_empty());
+    }
+}
+
+#[test]
+fn test_import_rice_and_mark_v3() {
+    let root = workspace_root();
+    for (name, rel_path, expected_meshes, expected_glues) in [
+        ("Rice", "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Rice/Rice.moc3", 178, 33),
+        ("Mark", "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Mark/Mark.moc3", 30, 0),
+    ] {
+        let moc_path = root.join(rel_path);
+        if !moc_path.exists() {
+            eprintln!("Skipping {name}: not found at {:?}", moc_path);
+            continue;
+        }
+        let bytes = fs::read(&moc_path).expect("failed to read moc3");
+        let inspection = inspect_moc3(&bytes).expect("inspect failed");
+        assert_eq!(inspection.version, Moc3Version::Version40);
+        assert_eq!(inspection.version_number, 3);
+        assert_eq!(inspection.counts.art_meshes as usize, expected_meshes);
+        assert_eq!(inspection.counts.glues as usize, expected_glues);
+
+        let decoded = import_from_bare_moc3(&bytes, &HashMap::new()).expect("import failed");
+        let doc = &decoded.document;
+        assert_eq!(doc.mesh_order().len(), expected_meshes);
+        assert_eq!(doc.glue_order().len(), expected_glues);
+
+        // Evaluate against PurismCore
+        let mut runtime = PurismModelInstance::new(&bytes);
+        runtime.update();
+
+        let mut frame = DrawableFrame::default();
+        let preview = HashMap::new();
+        assert!(evaluate_frame(doc, &preview, &mut frame).is_ok());
+
+        let mut max_pos_error = 0.0f32;
+        for d in &frame.drawables {
+            if let Some(core_d) = runtime.get_drawable(&d.runtime_id) {
+                assert_eq!(d.positions.len(), core_d.positions.len());
+                for p in 0..d.positions.len() {
+                    let dx = (d.positions[p].x - core_d.positions[p].x).abs();
+                    let dy = (d.positions[p].y - core_d.positions[p].y).abs();
+                    max_pos_error = max_pos_error.max(dx).max(dy);
+                }
+            }
+        }
+        assert!(max_pos_error < 1e-3, "{name} max position error {max_pos_error} too high");
+
+        // Encode and roundtrip
+        let encoded = encode_moc3(doc).expect("encode failed");
+        let reimport = import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("reimport failed");
+        assert_eq!(reimport.document.mesh_order().len(), expected_meshes);
+        assert_eq!(reimport.document.glue_order().len(), expected_glues);
+    }
+}
+
+#[test]
+fn test_zero_triangle_mesh_editing_and_lifecycle() {
+    let mut doc = create_m1_fixture_doc();
+    let mesh_id = id(501);
+    let vid1 = 1;
+    let vid2 = 2;
+    let vid3 = 3;
+    let base_mesh = Mesh {
+        id: mesh_id.clone(),
+        runtime_id: "ZeroTriMesh".into(),
+        name: "ZeroTriMesh".into(),
+        part_id: String::new(),
+        deformer_id: id(4),
+        texture_asset_id: doc.get_mesh(&doc.mesh_order()[0]).unwrap().texture_asset_id.clone(),
+        vertex_ids: vec![vid1, vid2, vid3],
+        base_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(5.0, 10.0)],
+        uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.5, 1.0)],
+        triangles: vec![], // Zero triangles!
+        appearance: Appearance::default(),
+        draw_order: Some(1.0),
+        blend_mode: BlendMode::Normal,
+        enabled: true,
+        double_sided: false,
+        inverted_mask: false,
+        masks: vec![],
+    };
+    assert!(doc.create_mesh(base_mesh.clone()).status.is_ok());
+
+    // Evaluate frame with zero-triangle mesh present
+    let mut frame = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    let z_drawable = frame.drawables.iter().find(|d| d.id == mesh_id).expect("drawable exists");
+    assert!(z_drawable.indices.is_empty());
+    assert_eq!(z_drawable.positions.len(), 3);
+
+    // Edit 1: Add a triangle (zero-triangle -> renderable)
+    let mut with_triangle = base_mesh.clone();
+    with_triangle.triangles = vec![[vid1, vid2, vid3]];
+    assert!(doc.replace_mesh(with_triangle).status.is_ok());
+
+    let mut frame2 = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame2).is_ok());
+    let r_drawable = frame2.drawables.iter().find(|d| d.id == mesh_id).expect("drawable exists");
+    assert_eq!(r_drawable.indices.len(), 3);
+
+    // Edit 2: Remove triangle again (renderable -> zero-triangle)
+    let mut without_triangle = base_mesh.clone();
+    without_triangle.triangles = vec![];
+    assert!(doc.replace_mesh(without_triangle).status.is_ok());
+
+    let mut frame3 = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame3).is_ok());
+    let z2_drawable = frame3.drawables.iter().find(|d| d.id == mesh_id).expect("drawable exists");
+    assert!(z2_drawable.indices.is_empty());
+
+    // Encode to MOC3 and verify zero triangles survive serialization
+    let encoded = encode_moc3(&doc).expect("encode failed");
+    let reimport = import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("reimport failed");
+    let re_mesh = reimport.document.get_mesh(&reimport.report.id_mapping.meshes["ZeroTriMesh"]).unwrap();
+    assert!(re_mesh.triangles.is_empty());
+    assert_eq!(re_mesh.vertex_ids.len(), 3);
+}
+
+#[test]
+fn test_decoder_strict_index_validation() {
+    let doc = create_m1_fixture_doc();
+    let encoded = encode_moc3(&doc).unwrap();
+    let inspection = inspect_moc3(&encoded.bytes).unwrap();
+    let idx_len_off = inspection.section_offsets[46] as usize; // art_mesh_src.idx_len
+    let idx_off_val = inspection.section_offsets[45] as usize; // art_mesh_src.idx_off
+    let indices_base = inspection.section_offsets[79] as usize; // idx_src.idx
+
+    // 1. Non-multiple of 3 index length
+    let mut bad_len = encoded.bytes.clone();
+    bad_len[idx_len_off..idx_len_off + 4].copy_from_slice(&i32::to_le_bytes(4)); // 4 is not divisible by 3
+    let err = kasane_moc3::decoder::decode_moc3(&bad_len, &inspection, &[]).unwrap_err();
+    assert_eq!(err.code, "INVALID_LENGTH");
+
+    // 2. Out of bounds vertex index (vi >= vc)
+    let mut bad_idx = encoded.bytes.clone();
+    let first_idx_offset = indices_base + (i32::from_le_bytes(bad_idx[idx_off_val..idx_off_val + 4].try_into().unwrap()) as usize) * 2;
+    bad_idx[first_idx_offset..first_idx_offset + 2].copy_from_slice(&u16::to_le_bytes(9999));
+    let err2 = kasane_moc3::decoder::decode_moc3(&bad_idx, &inspection, &[]).unwrap_err();
+    assert_eq!(err2.code, "INVALID_INDEX");
+
+    // 3. Repeated vertex within triangle
+    let mut dup_idx = encoded.bytes.clone();
+    let first_v = dup_idx[first_idx_offset..first_idx_offset + 2].to_vec();
+    dup_idx[first_idx_offset + 2..first_idx_offset + 4].copy_from_slice(&first_v); // i1 = i0
+    let err3 = kasane_moc3::decoder::decode_moc3(&dup_idx, &inspection, &[]).unwrap_err();
+    assert_eq!(err3.code, "REPEATED_VERTEX");
+}
+
+#[test]
+fn test_s1_layout_safety_and_version_gating() {
+    let doc = create_m1_fixture_doc();
+    let encoded = encode_moc3(&doc).unwrap();
+
+    // 1. Version 4 MOC3: inspect_moc3_safety succeeds, but inspect_moc3 reports UNSUPPORTED_FEATURE
+    let mut v4_bytes = encoded.bytes.clone();
+    v4_bytes[4] = 4;
+    let safe_v4 = kasane_moc3::inspect_moc3_safety(&v4_bytes).expect("safety should pass");
+    assert_eq!(safe_v4.version, Moc3Version::Version42);
+    assert_eq!(safe_v4.unsupported_features[0].category, "version_4_moc42");
+    let err_v4 = kasane_moc3::inspect_moc3(&v4_bytes).unwrap_err();
+    assert_eq!(err_v4.code, "UNSUPPORTED_FEATURE");
+
+    // 2. Version 6 MOC3 with 480 offsets header
+    let root = workspace_root();
+    let ren_path = root.join("third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.moc3");
+    if ren_path.exists() {
+        let ren_bytes = fs::read(&ren_path).expect("read Ren");
+        let safe_ren = kasane_moc3::inspect_moc3_safety(&ren_bytes).expect("safety should pass on Ren");
+        assert_eq!(safe_ren.version, Moc3Version::Version53);
+        assert_eq!(safe_ren.counts.offscreens, 24);
+        assert!(safe_ren.unsupported_features.iter().any(|u| u.category == "version_6_moc53"));
+        assert!(safe_ren.unsupported_features.iter().any(|u| u.category == "offscreen"));
+        let err_ren = kasane_moc3::inspect_moc3(&ren_bytes).unwrap_err();
+        assert_eq!(err_ren.code, "UNSUPPORTED_FEATURE");
+    }
+
+    // 3. Truncated 480-offset table for version 6
+    let mut short_v6 = vec![0u8; 1000]; // less than 1984 bytes
+    short_v6[0..4].copy_from_slice(b"MOC3");
+    short_v6[4] = 6;
+    assert_eq!(kasane_moc3::inspect_moc3_safety(&short_v6).unwrap_err().code, "BUFFER_TOO_SMALL");
+
+    // 4. Misaligned section offset
+    let mut misaligned = encoded.bytes.clone();
+    let old_off = u32::from_le_bytes(misaligned[64..68].try_into().unwrap());
+    misaligned[64..68].copy_from_slice(&(old_off + 1).to_le_bytes()); // add 1 to make it odd
+    assert_eq!(kasane_moc3::inspect_moc3_safety(&misaligned).unwrap_err().code, "FILE_CORRUPT");
+
+    // 5. Unknown version (version 7)
+    let mut v7_bytes = encoded.bytes.clone();
+    v7_bytes[4] = 7;
+    assert_eq!(kasane_moc3::inspect_moc3_safety(&v7_bytes).unwrap_err().code, "UNSUPPORTED_VERSION");
+}
+
