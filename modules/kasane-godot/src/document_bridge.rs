@@ -1262,6 +1262,34 @@ impl KasaneDocumentBridge {
         self.apply(edit)
     }
 
+    /// Call inside one workspace action for a single undo/redo entry.
+    #[func]
+    pub fn replace_part_binding_with_offscreen(
+        &mut self,
+        binding: Dictionary,
+        offscreen: Dictionary,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let binding = match scene_binding_from_dict(&binding) {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let offscreen = match crate::conversions::structured_from_dict::<
+            kasane_core::types::Offscreen,
+        >(&offscreen)
+        {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let edit = self
+            .session
+            .document_mut()
+            .replace_part_binding_with_offscreen(binding, offscreen);
+        self.apply(edit)
+    }
+
     #[func]
     pub fn write_scene_binding(
         &mut self,
@@ -1632,7 +1660,9 @@ impl KasaneDocumentBridge {
         out.set("glues", &items);
         let mut items = Array::new();
         for id in doc.offscreen_order() {
-            items.push(&crate::conversions::structured_to_dict(doc.get_offscreen(id).unwrap()));
+            items.push(&crate::conversions::structured_to_dict(
+                doc.get_offscreen(id).unwrap(),
+            ));
         }
         out.set("offscreens", &items);
 

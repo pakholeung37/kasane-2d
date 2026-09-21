@@ -26,6 +26,12 @@ jobs:
           python-version: '3.12'
       - name: Acceptance validator negative controls
         run: python -m unittest discover -s tools -p test_acceptance_validators.py -v
+      - name: M3C acceptance evidence controls
+        run: python -m unittest discover -s tools -p test_validate_m3c.py -v
+      - name: Decoder safety without native Core
+        env:
+          KASANE_MOC3_DISABLE_CORE_VALIDATION: "1"
+        run: cargo test -p kasane-moc3 --no-default-features --test safety_tests --locked
       - name: Regression tests
         run: cargo test --workspace --locked
       - name: Build extension

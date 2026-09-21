@@ -7,6 +7,10 @@ license.workspace = true
 authors.workspace = true
 description = "MOC3 5.0 binary encoder and exporter for Kasane 2D"
 
+[features]
+default = ["purism-validation"]
+purism-validation = []
+
 [dependencies]
 kasane-core = { path = "../kasane-core" }
 serde = { workspace = true }

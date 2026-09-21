@@ -465,7 +465,14 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         }
         let (v, clamped) = if p.repeat {
             let normalized = (requested - p.minimum) / range_length;
-            let wrapped = normalized - normalized.floor();
+            let wrapped = if normalized.is_finite() {
+                normalized - normalized.floor()
+            } else {
+                // Finite f32 inputs can overflow during subtraction or division.
+                (((requested as f64 - p.minimum as f64) % range_length as f64)
+                    .rem_euclid(range_length as f64)
+                    / range_length as f64) as f32
+            };
             let mut val = wrapped * range_length + p.minimum;
             if val < p.minimum || val >= p.maximum {
                 val = p.minimum;
@@ -1074,13 +1081,12 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     for k in 0..s.indices.len() {
                         let kf_idx = s.indices[k];
                         let w = s.weights[k];
-                        let os_kf_idx = if kf_idx < os.part_keyform_indices.len() {
-                            os.part_keyform_indices[kf_idx]
-                        } else {
-                            -1
+                        let index = match os.keyform_index(kf_idx, Some(b.keyforms.len())) {
+                            Ok(index) => index,
+                            Err(status) => return status,
                         };
-                        if os_kf_idx >= 0 && (os_kf_idx as usize) < os.keyforms.len() {
-                            let kf = &os.keyforms[os_kf_idx as usize];
+                        if let Some(index) = index {
+                            let kf = &os.keyforms[index];
                             interp_opa += kf.opacity * w;
                             if let Some(m) = kf.multiply {
                                 interp_mul[0] += m[0] * w;
@@ -1110,16 +1116,22 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                         mul_color = [interp_mul[0], interp_mul[1], interp_mul[2], 1.0];
                         scr_color = [interp_scr[0], interp_scr[1], interp_scr[2], 1.0];
                     }
-                } else if !os.keyforms.is_empty() {
-                    opacity = os.keyforms[0].opacity;
-                    if let Some(m) = os.keyforms[0].multiply {
-                        mul_color = [m[0], m[1], m[2], 1.0];
-                    }
-                    if let Some(scr) = os.keyforms[0].screen {
-                        scr_color = [scr[0], scr[1], scr[2], 1.0];
-                    }
                 } else {
+                    let index = match os.keyform_index(0, None) {
+                        Ok(index) => index,
+                        Err(status) => return status,
+                    };
                     opacity = 1.0;
+                    if let Some(index) = index {
+                        let kf = &os.keyforms[index];
+                        opacity = kf.opacity;
+                        if let Some(m) = kf.multiply {
+                            mul_color = [m[0], m[1], m[2], 1.0];
+                        }
+                        if let Some(scr) = kf.screen {
+                            scr_color = [scr[0], scr[1], scr[2], 1.0];
+                        }
+                    }
                 }
 
                 // Apply blendshapes

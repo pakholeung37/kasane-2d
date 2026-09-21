@@ -77,7 +77,13 @@ impl Canvas {
         }
     }
 
-    pub fn with_flag(width: f32, height: f32, origin: Vec2, pixels_per_unit: f32, flag: u8) -> Self {
+    pub fn with_flag(
+        width: f32,
+        height: f32,
+        origin: Vec2,
+        pixels_per_unit: f32,
+        flag: u8,
+    ) -> Self {
         Self {
             width,
             height,
@@ -518,6 +524,41 @@ pub struct Offscreen {
     pub masks: Vec<String>,
     pub part_keyform_indices: Vec<i32>,
     pub keyforms: Vec<OffscreenKeyform>,
+}
+
+impl Offscreen {
+    /// Resolve a Part key slot. None is a neutral appearance, including negative
+    /// sentinels. Only an unbound Part may implicitly use static keyform zero.
+    pub fn keyform_index(
+        &self,
+        slot: usize,
+        bound_key_count: Option<usize>,
+    ) -> Result<Option<usize>, Status> {
+        let count = bound_key_count.unwrap_or(1);
+        if slot >= count
+            || (!self.part_keyform_indices.is_empty() && self.part_keyform_indices.len() != count)
+        {
+            return Err(Status::error("INVALID_LENGTH", &self.id));
+        }
+        let index = self
+            .part_keyform_indices
+            .get(slot)
+            .copied()
+            .unwrap_or_else(|| {
+                if bound_key_count.is_none() && !self.keyforms.is_empty() {
+                    0
+                } else {
+                    -1
+                }
+            });
+        if index < 0 {
+            return Ok(None);
+        }
+        if index as usize >= self.keyforms.len() {
+            return Err(Status::error("INDEX_OUT_OF_BOUNDS", &self.id));
+        }
+        Ok(Some(index as usize))
+    }
 }
 
 impl Default for Offscreen {

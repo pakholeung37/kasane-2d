@@ -1,13 +1,14 @@
+use crate::schema::section;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 use kasane_core::types::{
-    Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable,
-    BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms, DeltaMeshKeyform,
-    DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform, DeltaWarpKeyform, Glue,
-    GlueVertexPair, Mesh, MeshBinding, MeshKeyform, Offscreen, OffscreenKeyform, Parameter,
-    ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform, Status, Transform,
-    TransformKind, Vec2, VertexId,
+    Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeConstraint,
+    BlendShapeKeyTable, BlendShapeTargetKind, Canvas, DeltaGlueKeyform, DeltaKeyforms,
+    DeltaMeshKeyform, DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform,
+    DeltaWarpKeyform, Glue, GlueVertexPair, Mesh, MeshBinding, MeshKeyform, Offscreen,
+    OffscreenKeyform, Parameter, ParameterKind, Part, RotationPose, SceneBinding, SceneKeyform,
+    Status, Transform, TransformKind, Vec2, VertexId,
 };
 use kasane_core::Document;
 
@@ -34,9 +35,9 @@ pub struct ImportIdMapping {
     pub parameter_by_index: Vec<String>, // index -> internal_id
     pub blend_key_table_by_index: Vec<String>, // index -> internal_id
     pub blend_constraint_by_index: Vec<String>, // index -> internal_id
-    pub blend_binding_by_index: Vec<String>,    // index -> internal_id
-    pub glue_by_index: Vec<String>,             // index -> internal_id
-    pub offscreen_by_index: Vec<String>,        // index -> internal_id
+    pub blend_binding_by_index: Vec<String>, // index -> internal_id
+    pub glue_by_index: Vec<String>,     // index -> internal_id
+    pub offscreen_by_index: Vec<String>, // index -> internal_id
 }
 
 #[derive(Debug, Clone)]
@@ -90,6 +91,28 @@ fn stable_id(doc_prefix: &str, kind: &str, index: usize, runtime_id: &str) -> St
         (hash[8] & 0x3f) | 0x80, hash[9],
         hash[10], hash[11], hash[12], hash[13], hash[14], hash[15]
     )
+}
+
+fn checked_reference<'a, T>(table: &'a [T], index: usize, field: &str) -> Result<&'a T, Status> {
+    table.get(index).ok_or_else(|| {
+        Status::error(
+            "INDEX_OUT_OF_BOUNDS",
+            format!(
+                "{field}: index {index} exceeds table length {}",
+                table.len()
+            ),
+        )
+    })
+}
+
+fn checked_window(start: usize, len: usize, count: usize, field: &str) -> Result<(), Status> {
+    if start > count || len > count - start {
+        return Err(Status::error(
+            "INDEX_OUT_OF_BOUNDS",
+            format!("{field}: window {start}+{len} exceeds table length {count}"),
+        ));
+    }
+    Ok(())
 }
 
 fn read_string(bytes: &[u8], offset: usize, max_len: usize) -> String {
@@ -190,9 +213,11 @@ fn parent_order(parents: &[i32], kind: &str) -> Result<Vec<usize>, Status> {
 
 pub fn decode_moc3(
     bytes: &[u8],
-    inspection: &Moc3InspectionReport,
+    _inspection: &Moc3InspectionReport,
     textures: &[TextureSlotInfo],
 ) -> Result<DecodedMoc3, Status> {
+    // Public callers may provide a stale report; never trust it for memory safety.
+    let inspection = crate::inspector::inspect_structure(bytes)?;
     let offsets = &inspection.section_offsets;
     let counts = &inspection.counts;
     let ver = inspection.version_number;
@@ -253,7 +278,7 @@ pub fn decode_moc3(
 
     // Pre-calculate stable internal IDs
     for i in 0..counts.parts as usize {
-        let mut rid = read_string(bytes, offsets[3] as usize + i * 64, 64);
+        let mut rid = read_string(bytes, offsets[section::PART_SRC_ID] as usize + i * 64, 64);
         if rid.is_empty() {
             rid = format!("Part{i}");
             generated_ids.push(rid.clone());
@@ -264,7 +289,11 @@ pub fn decode_moc3(
     }
 
     for i in 0..counts.deformers as usize {
-        let mut rid = read_string(bytes, offsets[11] as usize + i * 64, 64);
+        let mut rid = read_string(
+            bytes,
+            offsets[section::DEFORMER_SRC_ID] as usize + i * 64,
+            64,
+        );
         if rid.is_empty() {
             rid = format!("Deformer{i}");
             generated_ids.push(rid.clone());
@@ -275,7 +304,11 @@ pub fn decode_moc3(
     }
 
     for i in 0..counts.art_meshes as usize {
-        let mut rid = read_string(bytes, offsets[33] as usize + i * 64, 64);
+        let mut rid = read_string(
+            bytes,
+            offsets[section::ART_MESH_SRC_ID] as usize + i * 64,
+            64,
+        );
         if rid.is_empty() {
             rid = format!("ArtMesh{i}");
             generated_ids.push(rid.clone());
@@ -286,7 +319,7 @@ pub fn decode_moc3(
     }
 
     for i in 0..counts.parameters as usize {
-        let mut rid = read_string(bytes, offsets[50] as usize + i * 64, 64);
+        let mut rid = read_string(bytes, offsets[section::PARAM_SRC_ID] as usize + i * 64, 64);
         if rid.is_empty() {
             rid = format!("Param{i}");
             generated_ids.push(rid.clone());
@@ -308,16 +341,18 @@ pub fn decode_moc3(
             return Ok(appearance);
         }
         let index = (base as i64) + key as i64;
-        if index >= counts.keyform_mul_colors as i64
-            || index >= counts.keyform_scr_colors as i64
-        {
+        if index >= counts.keyform_mul_colors as i64 || index >= counts.keyform_scr_colors as i64 {
             return Err(Status::error("INVALID_COLOR_REFERENCE", format!("section {section} object[{object}] keyform[{key}]: color index {index} is outside the color pools")));
         }
         for channel in 0..3 {
-            appearance.multiply[channel] =
-                read_f32(bytes, offsets[108 + channel] as usize + index as usize * 4)?;
-            appearance.screen[channel] =
-                read_f32(bytes, offsets[111 + channel] as usize + index as usize * 4)?;
+            appearance.multiply[channel] = read_f32(
+                bytes,
+                offsets[section::KEYFORM_MUL_COLOR_SRC_R + channel] as usize + index as usize * 4,
+            )?;
+            appearance.screen[channel] = read_f32(
+                bytes,
+                offsets[section::KEYFORM_SCR_COLOR_SRC_R + channel] as usize + index as usize * 4,
+            )?;
         }
         Ok(appearance)
     };
@@ -330,17 +365,32 @@ pub fn decode_moc3(
                 format!("Invalid binding index {b_idx}"),
             ));
         }
-        let kt_off = read_i32(bytes, offsets[73] as usize + b_idx as usize * 4)? as usize;
-        let kt_len = read_i32(bytes, offsets[74] as usize + b_idx as usize * 4)? as usize;
+        let kt_off = read_i32(
+            bytes,
+            offsets[section::BINDING_SRC_KEY_TABLE_IDX_OFF] as usize + b_idx as usize * 4,
+        )? as usize;
+        let kt_len = read_i32(
+            bytes,
+            offsets[section::BINDING_SRC_KEY_TABLE_IDX_LEN] as usize + b_idx as usize * 4,
+        )? as usize;
         let mut axes = Vec::with_capacity(kt_len);
 
         for a in 0..kt_len {
-            let kt = read_i32(bytes, offsets[72] as usize + (kt_off + a) * 4)?;
+            let kt = read_i32(
+                bytes,
+                offsets[section::KEY_TABLE_IDX_SRC_IDX] as usize + (kt_off + a) * 4,
+            )?;
             // Find which parameter owns kt
             let mut param_idx: Option<usize> = None;
             for p in 0..counts.parameters as usize {
-                let p_off = read_i32(bytes, offsets[56] as usize + p * 4)?;
-                let p_len = read_i32(bytes, offsets[57] as usize + p * 4)?;
+                let p_off = read_i32(
+                    bytes,
+                    offsets[section::PARAM_SRC_KEY_TABLE_OFF] as usize + p * 4,
+                )?;
+                let p_len = read_i32(
+                    bytes,
+                    offsets[section::PARAM_SRC_KEY_TABLE_LEN] as usize + p * 4,
+                )?;
                 if kt >= p_off && kt < p_off + p_len {
                     param_idx = Some(p);
                     break;
@@ -353,11 +403,20 @@ pub fn decode_moc3(
                 )
             })?;
 
-            let keys_off = read_i32(bytes, offsets[75] as usize + kt as usize * 4)? as usize;
-            let keys_len = read_i32(bytes, offsets[76] as usize + kt as usize * 4)? as usize;
+            let keys_off = read_i32(
+                bytes,
+                offsets[section::KEY_TABLE_SRC_KEYS_OFF] as usize + kt as usize * 4,
+            )? as usize;
+            let keys_len = read_i32(
+                bytes,
+                offsets[section::KEY_TABLE_SRC_KEYS_LEN] as usize + kt as usize * 4,
+            )? as usize;
             let mut keys = Vec::with_capacity(keys_len);
             for k in 0..keys_len {
-                keys.push(read_f32(bytes, offsets[77] as usize + (keys_off + k) * 4)?);
+                keys.push(read_f32(
+                    bytes,
+                    offsets[section::KEYS_SRC_KEY] as usize + (keys_off + k) * 4,
+                )?);
             }
 
             axes.push(BindingAxis {
@@ -383,25 +442,43 @@ pub fn decode_moc3(
     // 4. Create Parameters
     for p in 0..counts.parameters as usize {
         let id = mapping.parameter_by_index[p].clone();
-        let runtime_id = read_string(bytes, offsets[50] as usize + p * 64, 64);
-        let max = read_f32(bytes, offsets[51] as usize + p * 4)?;
-        let min = read_f32(bytes, offsets[52] as usize + p * 4)?;
-        let default_val = read_f32(bytes, offsets[53] as usize + p * 4)?;
-        let dec_places = read_i32(bytes, offsets[55] as usize + p * 4)?;
-        let repeat = if offsets.len() > 54 && offsets[54] > 0 {
-            read_i32(bytes, offsets[54] as usize + p * 4)? != 0
+        let runtime_id = read_string(bytes, offsets[section::PARAM_SRC_ID] as usize + p * 64, 64);
+        let max = read_f32(
+            bytes,
+            offsets[section::PARAM_SRC_MAXIMUM_VALUE] as usize + p * 4,
+        )?;
+        let min = read_f32(
+            bytes,
+            offsets[section::PARAM_SRC_MINIMUM_VALUE] as usize + p * 4,
+        )?;
+        let default_val = read_f32(
+            bytes,
+            offsets[section::PARAM_SRC_DEFAULT_VALUE] as usize + p * 4,
+        )?;
+        let dec_places = read_i32(
+            bytes,
+            offsets[section::PARAM_SRC_DECIMAL_PLACES] as usize + p * 4,
+        )?;
+        let repeat = if offsets.len() > 54 && offsets[section::PARAM_SRC_REPEAT] > 0 {
+            read_i32(bytes, offsets[section::PARAM_SRC_REPEAT] as usize + p * 4)? != 0
         } else {
             false
         };
-        let param_type = if ver >= 4 && offsets.len() > 114 && offsets[114] > 0 {
-            read_i32(bytes, offsets[114] as usize + p * 4)?
+        let param_type = if ver >= 4 && offsets.len() > 114 && offsets[section::PARAM_SRC_TYPE] > 0
+        {
+            read_i32(bytes, offsets[section::PARAM_SRC_TYPE] as usize + p * 4)?
         } else {
             0
         };
         let kind = match param_type {
             0 => ParameterKind::Normal,
             1 => ParameterKind::BlendShape,
-            _ => return Err(Status::error("UNSUPPORTED_FEATURE", format!("Parameter {p}: unknown type {param_type}"))),
+            _ => {
+                return Err(Status::error(
+                    "UNSUPPORTED_FEATURE",
+                    format!("Parameter {p}: unknown type {param_type}"),
+                ))
+            }
         };
 
         check_status!(
@@ -431,7 +508,10 @@ pub fn decode_moc3(
     // 5. Create Parts (topologically ordered: parents before children)
     let mut part_parent_indices = Vec::with_capacity(counts.parts as usize);
     for p in 0..counts.parts as usize {
-        part_parent_indices.push(read_i32(bytes, offsets[9] as usize + p * 4)?);
+        part_parent_indices.push(read_i32(
+            bytes,
+            offsets[section::PART_SRC_PARENT_PART_IDX] as usize + p * 4,
+        )?);
     }
 
     let part_creation_order = parent_order(&part_parent_indices, "Part")?;
@@ -439,11 +519,18 @@ pub fn decode_moc3(
     let mut part_scene_bindings = Vec::new();
     for &p in &part_creation_order {
         let id = mapping.part_by_index[p].clone();
-        let runtime_id = read_string(bytes, offsets[3] as usize + p * 64, 64);
-        let b_idx = read_i32(bytes, offsets[4] as usize + p * 4)?;
-        let kf_off = read_i32(bytes, offsets[5] as usize + p * 4)? as usize;
-        let _kf_len = read_i32(bytes, offsets[6] as usize + p * 4)? as usize;
-        let enabled = read_i32(bytes, offsets[8] as usize + p * 4)? != 0;
+        let runtime_id = read_string(bytes, offsets[section::PART_SRC_ID] as usize + p * 64, 64);
+        let b_idx = read_i32(
+            bytes,
+            offsets[section::PART_SRC_BINDING_IDX] as usize + p * 4,
+        )?;
+        let kf_off = read_i32(
+            bytes,
+            offsets[section::PART_SRC_KEYFORM_OFF] as usize + p * 4,
+        )? as usize;
+        let _kf_len =
+            read_i32(bytes, offsets[section::PART_SRC_KEY_LEN] as usize + p * 4)? as usize;
+        let enabled = read_i32(bytes, offsets[section::PART_SRC_ENABLE] as usize + p * 4)? != 0;
         let parent_idx = part_parent_indices[p];
 
         let parent_id = if parent_idx >= 0 && (parent_idx as usize) < counts.parts as usize {
@@ -462,7 +549,10 @@ pub fn decode_moc3(
 
         let base_draw_order = if counts.part_keyforms > 0 && kf_off < counts.part_keyforms as usize
         {
-            read_f32(bytes, offsets[58] as usize + kf_off * 4)?
+            read_f32(
+                bytes,
+                offsets[section::PART_KEY_SRC_DRAW_ORDER] as usize + kf_off * 4,
+            )?
         } else {
             0.0
         };
@@ -491,7 +581,10 @@ pub fn decode_moc3(
             let mut keyforms = Vec::with_capacity(total_combos);
             for k in 0..total_combos {
                 let d_order = if kf_off + k < counts.part_keyforms as usize {
-                    read_f32(bytes, offsets[58] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::PART_KEY_SRC_DRAW_ORDER] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     base_draw_order
                 };
@@ -515,7 +608,10 @@ pub fn decode_moc3(
     // 6. Create Transforms (Deformers) (topologically ordered: parents before children)
     let mut deformer_parents = Vec::with_capacity(counts.deformers as usize);
     for d in 0..counts.deformers as usize {
-        deformer_parents.push(read_i32(bytes, offsets[16] as usize + d * 4)?);
+        deformer_parents.push(read_i32(
+            bytes,
+            offsets[section::DEFORMER_SRC_PARENT_DEFORMER_IDX] as usize + d * 4,
+        )?);
     }
 
     let deformer_creation_order = parent_order(&deformer_parents, "Deformer")?;
@@ -525,13 +621,29 @@ pub fn decode_moc3(
     let mut deformer_scene_bindings = Vec::new();
     for &d in &deformer_creation_order {
         let id = mapping.deformer_by_index[d].clone();
-        let runtime_id = read_string(bytes, offsets[11] as usize + d * 64, 64);
-        let b_idx = read_i32(bytes, offsets[12] as usize + d * 4)?;
-        let enabled = read_i32(bytes, offsets[14] as usize + d * 4)? != 0;
-        let part_idx = read_i32(bytes, offsets[15] as usize + d * 4)?;
+        let runtime_id = read_string(
+            bytes,
+            offsets[section::DEFORMER_SRC_ID] as usize + d * 64,
+            64,
+        );
+        let b_idx = read_i32(
+            bytes,
+            offsets[section::DEFORMER_SRC_BINDING_IDX] as usize + d * 4,
+        )?;
+        let enabled = read_i32(
+            bytes,
+            offsets[section::DEFORMER_SRC_ENABLE] as usize + d * 4,
+        )? != 0;
+        let part_idx = read_i32(
+            bytes,
+            offsets[section::DEFORMER_SRC_PARENT_PART_IDX] as usize + d * 4,
+        )?;
         let parent_def_idx = deformer_parents[d];
-        let dtype = read_i32(bytes, offsets[17] as usize + d * 4)?;
-        let local_idx = read_i32(bytes, offsets[18] as usize + d * 4)? as usize;
+        let dtype = read_i32(bytes, offsets[section::DEFORMER_SRC_TYPE] as usize + d * 4)?;
+        let local_idx = read_i32(
+            bytes,
+            offsets[section::DEFORMER_SRC_LOCAL_IDX] as usize + d * 4,
+        )? as usize;
 
         let part_id = if part_idx >= 0 && (part_idx as usize) < counts.parts as usize {
             mapping.part_by_index[part_idx as usize].clone()
@@ -557,11 +669,23 @@ pub fn decode_moc3(
 
         let is_warp = dtype == 0;
         if is_warp {
-            let kf_off = read_i32(bytes, offsets[20] as usize + local_idx * 4)? as usize;
-            let rows = read_i32(bytes, offsets[23] as usize + local_idx * 4)? as u32;
-            let cols = read_i32(bytes, offsets[24] as usize + local_idx * 4)? as u32;
+            let kf_off = read_i32(
+                bytes,
+                offsets[section::WARP_SRC_KEYFORM_OFF] as usize + local_idx * 4,
+            )? as usize;
+            let rows = read_i32(
+                bytes,
+                offsets[section::WARP_SRC_ROW] as usize + local_idx * 4,
+            )? as u32;
+            let cols = read_i32(
+                bytes,
+                offsets[section::WARP_SRC_COL] as usize + local_idx * 4,
+            )? as u32;
             let quad = if offsets.len() > 101 && counts.warps > 0 {
-                read_i32(bytes, offsets[101] as usize + local_idx * 4)? != 0
+                read_i32(
+                    bytes,
+                    offsets[section::WARP_SRC_QUAD_TRANSFORM] as usize + local_idx * 4,
+                )? != 0
             } else {
                 true
             };
@@ -571,20 +695,32 @@ pub fn decode_moc3(
 
             for k in 0..total_combos {
                 let opacity = if kf_off + k < counts.warp_keyforms as usize {
-                    read_f32(bytes, offsets[59] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::WARP_KEY_SRC_OPACITY] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     1.0
                 };
                 let pos_off = if kf_off + k < counts.warp_keyforms as usize {
-                    read_i32(bytes, offsets[60] as usize + (kf_off + k) * 4)? as usize
+                    read_i32(
+                        bytes,
+                        offsets[section::WARP_KEY_SRC_KEY_POS_OFF] as usize + (kf_off + k) * 4,
+                    )? as usize
                 } else {
                     0
                 };
 
                 let mut points = Vec::with_capacity(pt_count);
                 for p_idx in 0..pt_count {
-                    let rx = read_f32(bytes, offsets[71] as usize + (pos_off + p_idx * 2) * 4)?;
-                    let ry = read_f32(bytes, offsets[71] as usize + (pos_off + p_idx * 2 + 1) * 4)?;
+                    let rx = read_f32(
+                        bytes,
+                        offsets[section::KEY_POS_SRC_XY] as usize + (pos_off + p_idx * 2) * 4,
+                    )?;
+                    let ry = read_f32(
+                        bytes,
+                        offsets[section::KEY_POS_SRC_XY] as usize + (pos_off + p_idx * 2 + 1) * 4,
+                    )?;
                     if is_root {
                         points.push(Vec2::new(
                             rx * ppu + canvas.origin.x,
@@ -595,7 +731,7 @@ pub fn decode_moc3(
                     }
                 }
 
-                let mut appearance = get_colors(105, local_idx, k)?;
+                let mut appearance = get_colors(section::WARP_SRC_KEY_COLOR_OFF, local_idx, k)?;
                 appearance.opacity = opacity;
 
                 keyforms.push(SceneKeyform {
@@ -651,54 +787,84 @@ pub fn decode_moc3(
             }
         } else {
             // Rotation Deformer
-            let kf_off = read_i32(bytes, offsets[26] as usize + local_idx * 4)? as usize;
-            let base_angle = read_f32(bytes, offsets[28] as usize + local_idx * 4)?;
+            let kf_off = read_i32(
+                bytes,
+                offsets[section::ROTATION_SRC_KEYFORM_OFF] as usize + local_idx * 4,
+            )? as usize;
+            let base_angle = read_f32(
+                bytes,
+                offsets[section::ROTATION_SRC_BASE_ANGLE] as usize + local_idx * 4,
+            )?;
 
             let mut keyforms = Vec::with_capacity(total_combos);
             for k in 0..total_combos {
                 let opacity = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_f32(bytes, offsets[61] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_OPACITY] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     1.0
                 };
                 let angle = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_f32(bytes, offsets[62] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_ANGLE] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     0.0
                 };
                 let ox = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_f32(bytes, offsets[63] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_ORIGIN_X] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     0.0
                 };
                 let oy = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_f32(bytes, offsets[64] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_ORIGIN_Y] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     0.0
                 };
                 let scale = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_f32(bytes, offsets[65] as usize + (kf_off + k) * 4)?
+                    read_f32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_SCALE] as usize + (kf_off + k) * 4,
+                    )?
                 } else {
                     1.0
                 };
                 let ref_x = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_i32(bytes, offsets[66] as usize + (kf_off + k) * 4)? != 0
+                    read_i32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_REFLECT_X] as usize + (kf_off + k) * 4,
+                    )? != 0
                 } else {
                     false
                 };
                 let ref_y = if kf_off + k < counts.rotation_keyforms as usize {
-                    read_i32(bytes, offsets[67] as usize + (kf_off + k) * 4)? != 0
+                    read_i32(
+                        bytes,
+                        offsets[section::ROTATION_KEY_SRC_REFLECT_Y] as usize + (kf_off + k) * 4,
+                    )? != 0
                 } else {
                     false
                 };
 
                 let origin = if is_root {
-                    kasane_core::types::PreciseVec2::new(ox as f64 * ppu as f64 + canvas.origin.x as f64, canvas.origin.y as f64 - oy as f64 * ppu as f64)
+                    kasane_core::types::PreciseVec2::new(
+                        ox as f64 * ppu as f64 + canvas.origin.x as f64,
+                        canvas.origin.y as f64 - oy as f64 * ppu as f64,
+                    )
                 } else {
                     kasane_core::types::PreciseVec2::new(ox as f64, oy as f64)
                 };
 
-                let mut appearance = get_colors(106, local_idx, k)?;
+                let mut appearance = get_colors(section::ROTATION_SRC_KEY_COLOR_OFF, local_idx, k)?;
                 appearance.opacity = opacity;
 
                 keyforms.push(SceneKeyform {
@@ -766,20 +932,60 @@ pub fn decode_moc3(
     let mut mesh_masks = Vec::new();
     for m in 0..counts.art_meshes as usize {
         let id = mapping.mesh_by_index[m].clone();
-        let runtime_id = read_string(bytes, offsets[33] as usize + m * 64, 64);
-        let b_idx = read_i32(bytes, offsets[34] as usize + m * 4)?;
-        let kf_off = read_i32(bytes, offsets[35] as usize + m * 4)? as usize;
-        let enabled = read_i32(bytes, offsets[38] as usize + m * 4)? != 0;
-        let part_idx = read_i32(bytes, offsets[39] as usize + m * 4)?;
-        let def_idx = read_i32(bytes, offsets[40] as usize + m * 4)?;
-        let tex_no = read_i32(bytes, offsets[41] as usize + m * 4)?;
-        let flag = bytes[offsets[42] as usize + m];
-        let vc = read_i32(bytes, offsets[43] as usize + m * 4)? as usize;
-        let uv_off = read_i32(bytes, offsets[44] as usize + m * 4)? as usize;
-        let idx_off = read_i32(bytes, offsets[45] as usize + m * 4)? as usize;
-        let idx_len = read_i32(bytes, offsets[46] as usize + m * 4)? as usize;
-        let mask_off = read_i32(bytes, offsets[47] as usize + m * 4)? as usize;
-        let mask_len = read_i32(bytes, offsets[48] as usize + m * 4)? as usize;
+        let runtime_id = read_string(
+            bytes,
+            offsets[section::ART_MESH_SRC_ID] as usize + m * 64,
+            64,
+        );
+        let b_idx = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_BINDING_IDX] as usize + m * 4,
+        )?;
+        let kf_off = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_KEYFORM_OFF] as usize + m * 4,
+        )? as usize;
+        let enabled = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_ENABLE] as usize + m * 4,
+        )? != 0;
+        let part_idx = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_PARENT_PART_IDX] as usize + m * 4,
+        )?;
+        let def_idx = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_PARENT_DEFORMER_IDX] as usize + m * 4,
+        )?;
+        let tex_no = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_TEXTURE_NO] as usize + m * 4,
+        )?;
+        let flag = bytes[offsets[section::ART_MESH_SRC_DRAWABLE_FLAG] as usize + m];
+        let vc = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_VERTEX_COUNT] as usize + m * 4,
+        )? as usize;
+        let uv_off = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_UV_OFF] as usize + m * 4,
+        )? as usize;
+        let idx_off = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_IDX_OFF] as usize + m * 4,
+        )? as usize;
+        let idx_len = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_IDX_LEN] as usize + m * 4,
+        )? as usize;
+        let mask_off = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_MASK_OFF] as usize + m * 4,
+        )? as usize;
+        let mask_len = read_i32(
+            bytes,
+            offsets[section::ART_MESH_SRC_MASK_LEN] as usize + m * 4,
+        )? as usize;
 
         let part_id = if part_idx >= 0 && (part_idx as usize) < counts.parts as usize {
             mapping.part_by_index[part_idx as usize].clone()
@@ -823,22 +1029,32 @@ pub fn decode_moc3(
             2 => BlendMode::Multiplicative,
             _ => BlendMode::Normal,
         };
-        let raw_blend_mode = if ver >= 6 && offsets.len() > 153 && offsets[153] > 0 {
-            let raw_bm = read_u32(bytes, offsets[153] as usize + m * 4)?;
-            if raw_bm != 0 {
-                Some(raw_bm)
+        let raw_blend_mode =
+            if ver >= 6 && offsets.len() > 153 && offsets[section::ART_MESH_SRC_BLEND_MODE] > 0 {
+                let raw_bm = read_u32(
+                    bytes,
+                    offsets[section::ART_MESH_SRC_BLEND_MODE] as usize + m * 4,
+                )?;
+                if raw_bm != 0 {
+                    Some(raw_bm)
+                } else {
+                    None
+                }
             } else {
                 None
-            }
-        } else {
-            None
-        };
+            };
 
         // Read UVs
         let mut uvs = Vec::with_capacity(vc);
         for v in 0..vc {
-            let u = read_f32(bytes, offsets[78] as usize + (uv_off + v * 2) * 4)?;
-            let v_val = read_f32(bytes, offsets[78] as usize + (uv_off + v * 2 + 1) * 4)?;
+            let u = read_f32(
+                bytes,
+                offsets[section::UV_SRC_XY] as usize + (uv_off + v * 2) * 4,
+            )?;
+            let v_val = read_f32(
+                bytes,
+                offsets[section::UV_SRC_XY] as usize + (uv_off + v * 2 + 1) * 4,
+            )?;
             uvs.push(Vec2::new(u, 1.0 - v_val));
         }
 
@@ -854,9 +1070,18 @@ pub fn decode_moc3(
         }
         let mut triangles = Vec::with_capacity(idx_len / 3);
         for t in 0..(idx_len / 3) {
-            let i0 = read_u16(bytes, offsets[79] as usize + (idx_off + t * 3) * 2)? as usize;
-            let i1 = read_u16(bytes, offsets[79] as usize + (idx_off + t * 3 + 1) * 2)? as usize;
-            let i2 = read_u16(bytes, offsets[79] as usize + (idx_off + t * 3 + 2) * 2)? as usize;
+            let i0 = read_u16(
+                bytes,
+                offsets[section::IDX_SRC_IDX] as usize + (idx_off + t * 3) * 2,
+            )? as usize;
+            let i1 = read_u16(
+                bytes,
+                offsets[section::IDX_SRC_IDX] as usize + (idx_off + t * 3 + 1) * 2,
+            )? as usize;
+            let i2 = read_u16(
+                bytes,
+                offsets[section::IDX_SRC_IDX] as usize + (idx_off + t * 3 + 2) * 2,
+            )? as usize;
             if i0 >= vc || i1 >= vc || i2 >= vc {
                 return Err(Status::error(
                     "INVALID_INDEX",
@@ -868,7 +1093,9 @@ pub fn decode_moc3(
             if i0 == i1 || i1 == i2 || i0 == i2 {
                 return Err(Status::error(
                     "REPEATED_VERTEX",
-                    format!("Mesh {m} triangle {t} contains duplicate vertices: ({i0}, {i1}, {i2})"),
+                    format!(
+                        "Mesh {m} triangle {t} contains duplicate vertices: ({i0}, {i1}, {i2})"
+                    ),
                 ));
             }
             // Invert winding swap (render swapped 1 and 2, so swapping 1 and 2 restores source)
@@ -878,7 +1105,10 @@ pub fn decode_moc3(
         // Masks
         let mut masks = Vec::with_capacity(mask_len);
         for m_idx in 0..mask_len {
-            let target_mesh_idx = read_i32(bytes, offsets[80] as usize + (mask_off + m_idx) * 4)?;
+            let target_mesh_idx = read_i32(
+                bytes,
+                offsets[section::MASK_SRC_ART_MESH_IDX] as usize + (mask_off + m_idx) * 4,
+            )?;
             if target_mesh_idx >= 0 && (target_mesh_idx as usize) < counts.art_meshes as usize {
                 let target_id = mapping.mesh_by_index[target_mesh_idx as usize].clone();
                 if !masks.contains(&target_id) {
@@ -898,25 +1128,40 @@ pub fn decode_moc3(
         let mut keyforms = Vec::with_capacity(total_combos);
         for k in 0..total_combos {
             let opacity = if kf_off + k < counts.art_mesh_keyforms as usize {
-                read_f32(bytes, offsets[68] as usize + (kf_off + k) * 4)?
+                read_f32(
+                    bytes,
+                    offsets[section::ART_MESH_KEY_SRC_OPACITY] as usize + (kf_off + k) * 4,
+                )?
             } else {
                 1.0
             };
             let d_order = if kf_off + k < counts.art_mesh_keyforms as usize {
-                read_f32(bytes, offsets[69] as usize + (kf_off + k) * 4)?
+                read_f32(
+                    bytes,
+                    offsets[section::ART_MESH_KEY_SRC_DRAW_ORDER] as usize + (kf_off + k) * 4,
+                )?
             } else {
                 m as f32
             };
             let pos_off = if kf_off + k < counts.art_mesh_keyforms as usize {
-                read_i32(bytes, offsets[70] as usize + (kf_off + k) * 4)? as usize
+                read_i32(
+                    bytes,
+                    offsets[section::ART_MESH_KEY_SRC_KEY_POS_OFF] as usize + (kf_off + k) * 4,
+                )? as usize
             } else {
                 0
             };
 
             let mut positions = Vec::with_capacity(vc);
             for v in 0..vc {
-                let rx = read_f32(bytes, offsets[71] as usize + (pos_off + v * 2) * 4)?;
-                let ry = read_f32(bytes, offsets[71] as usize + (pos_off + v * 2 + 1) * 4)?;
+                let rx = read_f32(
+                    bytes,
+                    offsets[section::KEY_POS_SRC_XY] as usize + (pos_off + v * 2) * 4,
+                )?;
+                let ry = read_f32(
+                    bytes,
+                    offsets[section::KEY_POS_SRC_XY] as usize + (pos_off + v * 2 + 1) * 4,
+                )?;
                 if is_root {
                     positions.push(Vec2::new(
                         rx * ppu + canvas.origin.x,
@@ -927,7 +1172,7 @@ pub fn decode_moc3(
                 }
             }
 
-            let mut appearance = get_colors(107, m, k)?;
+            let mut appearance = get_colors(section::ART_MESH_SRC_KEY_COLOR_OFF, m, k)?;
             appearance.opacity = opacity;
 
             keyforms.push(MeshKeyform {
@@ -1010,7 +1255,11 @@ pub fn decode_moc3(
     // Decode Glues (sections 89..100)
     let mut seen_glue_ids = std::collections::HashSet::new();
     for g_idx in 0..counts.glues as usize {
-        let raw_id = read_string(bytes, offsets[90] as usize + g_idx * 64, 64);
+        let raw_id = read_string(
+            bytes,
+            offsets[section::GLUE_SRC_ID] as usize + g_idx * 64,
+            64,
+        );
         let runtime_id = if raw_id.trim().is_empty() || seen_glue_ids.contains(&raw_id) {
             let gen = format!("Glue_{g_idx}");
             generated_ids.push(gen.clone());
@@ -1021,14 +1270,35 @@ pub fn decode_moc3(
         seen_glue_ids.insert(runtime_id.clone());
         let id = stable_id(&doc_id, "glue", g_idx, &runtime_id);
 
-        let binding_idx = read_i32(bytes, offsets[91] as usize + g_idx * 4)?;
+        let binding_idx = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_BINDING_IDX] as usize + g_idx * 4,
+        )?;
         let axes = get_binding_axes(binding_idx)?;
-        let keyform_off = read_i32(bytes, offsets[92] as usize + g_idx * 4)?;
-        let key_len = read_i32(bytes, offsets[93] as usize + g_idx * 4)?;
-        let mesh_idx_a = read_i32(bytes, offsets[94] as usize + g_idx * 4)?;
-        let mesh_idx_b = read_i32(bytes, offsets[95] as usize + g_idx * 4)?;
-        let info_off = read_i32(bytes, offsets[96] as usize + g_idx * 4)?;
-        let info_len = read_i32(bytes, offsets[97] as usize + g_idx * 4)?;
+        let keyform_off = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_KEYFORM_OFF] as usize + g_idx * 4,
+        )?;
+        let key_len = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_KEY_LEN] as usize + g_idx * 4,
+        )?;
+        let mesh_idx_a = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_ART_MESH_IDX_A] as usize + g_idx * 4,
+        )?;
+        let mesh_idx_b = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_ART_MESH_IDX_B] as usize + g_idx * 4,
+        )?;
+        let info_off = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_INFO_OFF] as usize + g_idx * 4,
+        )?;
+        let info_len = read_i32(
+            bytes,
+            offsets[section::GLUE_SRC_INFO_LEN] as usize + g_idx * 4,
+        )?;
 
         if mesh_idx_a < 0
             || mesh_idx_a as usize >= mapping.mesh_by_index.len()
@@ -1046,14 +1316,17 @@ pub fn decode_moc3(
         let mesh_a = doc.get_mesh(&mesh_a_id).unwrap();
         let mesh_b = doc.get_mesh(&mesh_b_id).unwrap();
 
-        let intensity = if key_len > 0 && offsets[100] > 0 {
+        let intensity = if key_len > 0 && offsets[section::GLUE_KEY_SRC_INTENSITY] > 0 {
             if keyform_off < 0 || keyform_off as usize >= counts.glue_keyforms as usize {
                 return Err(Status::error(
                     "INVALID_GLUE",
                     format!("Glue {g_idx} keyform_off {keyform_off} out of bounds"),
                 ));
             }
-            read_f32(bytes, offsets[100] as usize + keyform_off as usize * 4)?
+            read_f32(
+                bytes,
+                offsets[section::GLUE_KEY_SRC_INTENSITY] as usize + keyform_off as usize * 4,
+            )?
         } else {
             1.0
         };
@@ -1080,11 +1353,22 @@ pub fn decode_moc3(
 
         let mut pairs = Vec::with_capacity(info_len as usize / 2);
         for p in (0..info_len as usize).step_by(2) {
-            let pos_a = read_u16(bytes, offsets[99] as usize + (info_off as usize + p) * 2)? as usize;
-            let wt_a = read_f32(bytes, offsets[98] as usize + (info_off as usize + p) * 4)?;
-            let pos_b =
-                read_u16(bytes, offsets[99] as usize + (info_off as usize + p + 1) * 2)? as usize;
-            let wt_b = read_f32(bytes, offsets[98] as usize + (info_off as usize + p + 1) * 4)?;
+            let pos_a = read_u16(
+                bytes,
+                offsets[section::GLUE_INFO_SRC_POS_IDX] as usize + (info_off as usize + p) * 2,
+            )? as usize;
+            let wt_a = read_f32(
+                bytes,
+                offsets[section::GLUE_INFO_SRC_WEIGHT] as usize + (info_off as usize + p) * 4,
+            )?;
+            let pos_b = read_u16(
+                bytes,
+                offsets[section::GLUE_INFO_SRC_POS_IDX] as usize + (info_off as usize + p + 1) * 2,
+            )? as usize;
+            let wt_b = read_f32(
+                bytes,
+                offsets[section::GLUE_INFO_SRC_WEIGHT] as usize + (info_off as usize + p + 1) * 4,
+            )?;
 
             if pos_a >= mesh_a.vertex_ids.len() || pos_b >= mesh_b.vertex_ids.len() {
                 return Err(Status::error(
@@ -1113,11 +1397,17 @@ pub fn decode_moc3(
             mesh_b_id,
             pairs,
             intensity,
-            binding: if axes.is_empty() { None } else {
+            binding: if axes.is_empty() {
+                None
+            } else {
                 let mut keyforms = Vec::new();
                 for k in 0..key_len as usize {
                     keyforms.push(kasane_core::types::GlueKeyform {
-                        intensity: read_f32(bytes, offsets[100] as usize + (keyform_off as usize + k) * 4)?,
+                        intensity: read_f32(
+                            bytes,
+                            offsets[section::GLUE_KEY_SRC_INTENSITY] as usize
+                                + (keyform_off as usize + k) * 4,
+                        )?,
                     });
                 }
                 Some(kasane_core::types::GlueBinding { axes, keyforms })
@@ -1132,8 +1422,14 @@ pub fn decode_moc3(
         for i in 0..counts.blend_key_tables as usize {
             let mut owner_param: Option<usize> = None;
             for p in 0..counts.parameters as usize {
-                let p_off = read_i32(bytes, offsets[115] as usize + p * 4)? as usize;
-                let p_len = read_i32(bytes, offsets[116] as usize + p * 4)? as usize;
+                let p_off = read_i32(
+                    bytes,
+                    offsets[section::PARAM_SRC_BLEND_KEY_TABLE_OFF] as usize + p * 4,
+                )? as usize;
+                let p_len = read_i32(
+                    bytes,
+                    offsets[section::PARAM_SRC_BLEND_KEY_TABLE_LEN] as usize + p * 4,
+                )? as usize;
                 if i >= p_off && i < p_off + p_len {
                     owner_param = Some(p);
                     break;
@@ -1146,27 +1442,45 @@ pub fn decode_moc3(
                 )
             })?;
             let parameter_id = mapping.parameter_by_index[p].clone();
-            let keys_off = read_i32(bytes, offsets[117] as usize + i * 4)? as usize;
-            let keys_len = read_i32(bytes, offsets[118] as usize + i * 4)? as usize;
-            let base_key_idx = read_i32(bytes, offsets[119] as usize + i * 4)? as usize;
+            let keys_off = read_i32(
+                bytes,
+                offsets[section::BLEND_KEY_TABLE_SRC_KEYS_OFF] as usize + i * 4,
+            )? as usize;
+            let keys_len = read_i32(
+                bytes,
+                offsets[section::BLEND_KEY_TABLE_SRC_KEYS_LEN] as usize + i * 4,
+            )? as usize;
+            let base_key_idx = read_i32(
+                bytes,
+                offsets[section::BLEND_KEY_TABLE_SRC_BASE_KEY_IDX] as usize + i * 4,
+            )? as usize;
             let mut keys = Vec::with_capacity(keys_len);
             for k in 0..keys_len {
-                keys.push(read_f32(bytes, offsets[77] as usize + (keys_off + k) * 4)?);
+                keys.push(read_f32(
+                    bytes,
+                    offsets[section::KEYS_SRC_KEY] as usize + (keys_off + k) * 4,
+                )?);
             }
             let bkt_id = stable_id(&doc_id, "blend_key_table", i, &format!("bkt_{i}"));
             mapping.blend_key_table_by_index.push(bkt_id.clone());
-            check_status!(doc.create_blend_key_table(BlendShapeKeyTable {
-                id: bkt_id,
-                parameter_id,
-                keys,
-                base_key_idx,
-            }).status);
+            check_status!(
+                doc.create_blend_key_table(BlendShapeKeyTable {
+                    id: bkt_id,
+                    parameter_id,
+                    keys,
+                    base_key_idx,
+                })
+                .status
+            );
         }
     }
 
     if counts.bs_constraints > 0 {
         for i in 0..counts.bs_constraints as usize {
-            let param_idx = read_i32(bytes, offsets[132] as usize + i * 4)? as usize;
+            let param_idx = read_i32(
+                bytes,
+                offsets[section::BLEND_CONSTRAINT_SRC_PARAMETER_IDX] as usize + i * 4,
+            )? as usize;
             if param_idx >= mapping.parameter_by_index.len() {
                 return Err(Status::error(
                     "INVALID_CONSTRAINT",
@@ -1174,28 +1488,46 @@ pub fn decode_moc3(
                 ));
             }
             let parameter_id = mapping.parameter_by_index[param_idx].clone();
-            let val_off = read_i32(bytes, offsets[133] as usize + i * 4)? as usize;
-            let val_len = read_i32(bytes, offsets[134] as usize + i * 4)? as usize;
+            let val_off = read_i32(
+                bytes,
+                offsets[section::BLEND_CONSTRAINT_SRC_VALUE_OFF] as usize + i * 4,
+            )? as usize;
+            let val_len = read_i32(
+                bytes,
+                offsets[section::BLEND_CONSTRAINT_SRC_VALUE_LEN] as usize + i * 4,
+            )? as usize;
             let mut keys = Vec::with_capacity(val_len);
             let mut weights = Vec::with_capacity(val_len);
             for k in 0..val_len {
-                keys.push(read_f32(bytes, offsets[135] as usize + (val_off + k) * 4)?);
-                weights.push(read_f32(bytes, offsets[136] as usize + (val_off + k) * 4)?);
+                keys.push(read_f32(
+                    bytes,
+                    offsets[section::BLEND_CONSTRAINT_VAL_SRC_KEY] as usize + (val_off + k) * 4,
+                )?);
+                weights.push(read_f32(
+                    bytes,
+                    offsets[section::BLEND_CONSTRAINT_VAL_SRC_WEIGHT] as usize + (val_off + k) * 4,
+                )?);
             }
             let bsc_id = stable_id(&doc_id, "blend_constraint", i, &format!("bsc_{i}"));
             mapping.blend_constraint_by_index.push(bsc_id.clone());
-            check_status!(doc.create_blend_constraint(BlendShapeConstraint {
-                id: bsc_id,
-                parameter_id,
-                keys,
-                weights,
-            }).status);
+            check_status!(
+                doc.create_blend_constraint(BlendShapeConstraint {
+                    id: bsc_id,
+                    parameter_id,
+                    keys,
+                    weights,
+                })
+                .status
+            );
         }
     }
 
     if ver >= 6 && counts.offscreens > 0 {
         for i in 0..counts.offscreens as usize {
-            let owner_part_idx = read_i32(bytes, offsets[155] as usize + i * 4)? as usize;
+            let owner_part_idx = read_i32(
+                bytes,
+                offsets[section::OFFSCREEN_SRC_OWNER_IDX] as usize + i * 4,
+            )? as usize;
             if owner_part_idx >= mapping.part_by_index.len() {
                 return Err(Status::error(
                     "INVALID_OFFSCREEN",
@@ -1214,13 +1546,25 @@ pub fn decode_moc3(
                 .map(|p| p.name.clone())
                 .unwrap_or_else(|| format!("Part{owner_part_idx}"));
 
-            let flags = bytes[offsets[156] as usize + i];
-            let blend_mode = read_u32(bytes, offsets[157] as usize + i * 4)?;
-            let mask_off = read_i32(bytes, offsets[158] as usize + i * 4)? as usize;
-            let mask_len = read_i32(bytes, offsets[159] as usize + i * 4)? as usize;
+            let flags = bytes[offsets[section::OFFSCREEN_SRC_DRAWABLE_FLAG] as usize + i];
+            let blend_mode = read_u32(
+                bytes,
+                offsets[section::OFFSCREEN_SRC_BLEND_MODE] as usize + i * 4,
+            )?;
+            let mask_off = read_i32(
+                bytes,
+                offsets[section::OFFSCREEN_SRC_MASK_OFF] as usize + i * 4,
+            )? as usize;
+            let mask_len = read_i32(
+                bytes,
+                offsets[section::OFFSCREEN_SRC_MASK_LEN] as usize + i * 4,
+            )? as usize;
             let mut masks = Vec::with_capacity(mask_len);
             for m in 0..mask_len {
-                let mesh_idx = read_i32(bytes, offsets[80] as usize + (mask_off + m) * 4)? as usize;
+                let mesh_idx = read_i32(
+                    bytes,
+                    offsets[section::MASK_SRC_ART_MESH_IDX] as usize + (mask_off + m) * 4,
+                )? as usize;
                 if mesh_idx >= mapping.mesh_by_index.len() {
                     return Err(Status::error(
                         "INVALID_OFFSCREEN_MASK",
@@ -1230,34 +1574,100 @@ pub fn decode_moc3(
                 masks.push(mapping.mesh_by_index[mesh_idx].clone());
             }
 
-            let part_keyform_off = read_i32(bytes, offsets[5] as usize + owner_part_idx * 4)? as usize;
-            let part_key_len = read_i32(bytes, offsets[6] as usize + owner_part_idx * 4)? as usize;
+            let part_keyform_off = read_i32(
+                bytes,
+                offsets[section::PART_SRC_KEYFORM_OFF] as usize + owner_part_idx * 4,
+            )? as usize;
+            let part_key_len = read_i32(
+                bytes,
+                offsets[section::PART_SRC_KEY_LEN] as usize + owner_part_idx * 4,
+            )? as usize;
             let mut keyforms = Vec::new();
             let mut part_keyform_indices = Vec::with_capacity(part_key_len);
 
             for k in 0..part_key_len {
-                let global_kf_idx = read_i32(bytes, offsets[160] as usize + (part_keyform_off + k) * 4)?;
+                let global_kf_idx = read_i32(
+                    bytes,
+                    offsets[section::PART_KEY_SRC_KEY_IDX] as usize + (part_keyform_off + k) * 4,
+                )?;
                 if global_kf_idx < 0 {
                     part_keyform_indices.push(-1);
                 } else {
                     let g = global_kf_idx as usize;
-                    let opacity = read_f32(bytes, offsets[161] as usize + g * 4)?;
-                    let mul_idx = read_i32(bytes, offsets[162] as usize + g * 4)?;
-                    let multiply = if mul_idx >= 0 && offsets.len() > 110 && offsets[108] > 0 {
+                    if g >= counts.offscreen_keyforms as usize {
+                        return Err(Status::error(
+                            "INDEX_OUT_OF_BOUNDS",
+                            "Offscreen keyform index exceeds its table",
+                        ));
+                    }
+                    let opacity = read_f32(
+                        bytes,
+                        offsets[section::OFFSCREEN_KEY_SRC_OPACITY] as usize + g * 4,
+                    )?;
+                    let mul_idx = read_i32(
+                        bytes,
+                        offsets[section::OFFSCREEN_KEY_SRC_KEY_MUL_COLOR_OFF] as usize + g * 4,
+                    )?;
+                    if mul_idx >= counts.keyform_mul_colors {
+                        return Err(Status::error(
+                            "INDEX_OUT_OF_BOUNDS",
+                            "Offscreen multiply color index exceeds its pool",
+                        ));
+                    }
+                    let multiply = if mul_idx >= 0
+                        && offsets.len() > 110
+                        && offsets[section::KEYFORM_MUL_COLOR_SRC_R] > 0
+                    {
                         Some([
-                            read_f32(bytes, offsets[108] as usize + mul_idx as usize * 4)?,
-                            read_f32(bytes, offsets[109] as usize + mul_idx as usize * 4)?,
-                            read_f32(bytes, offsets[110] as usize + mul_idx as usize * 4)?,
+                            read_f32(
+                                bytes,
+                                offsets[section::KEYFORM_MUL_COLOR_SRC_R] as usize
+                                    + mul_idx as usize * 4,
+                            )?,
+                            read_f32(
+                                bytes,
+                                offsets[section::KEYFORM_MUL_COLOR_SRC_G] as usize
+                                    + mul_idx as usize * 4,
+                            )?,
+                            read_f32(
+                                bytes,
+                                offsets[section::KEYFORM_MUL_COLOR_SRC_B] as usize
+                                    + mul_idx as usize * 4,
+                            )?,
                         ])
                     } else {
                         None
                     };
-                    let scr_idx = read_i32(bytes, offsets[163] as usize + g * 4)?;
-                    let screen = if scr_idx >= 0 && offsets.len() > 113 && offsets[111] > 0 {
+                    let scr_idx = read_i32(
+                        bytes,
+                        offsets[section::OFFSCREEN_KEY_SRC_KEY_SCR_COLOR_OFF] as usize + g * 4,
+                    )?;
+                    if scr_idx >= counts.keyform_scr_colors {
+                        return Err(Status::error(
+                            "INDEX_OUT_OF_BOUNDS",
+                            "Offscreen screen color index exceeds its pool",
+                        ));
+                    }
+                    let screen = if scr_idx >= 0
+                        && offsets.len() > 113
+                        && offsets[section::KEYFORM_SCR_COLOR_SRC_R] > 0
+                    {
                         Some([
-                            read_f32(bytes, offsets[111] as usize + scr_idx as usize * 4)?,
-                            read_f32(bytes, offsets[112] as usize + scr_idx as usize * 4)?,
-                            read_f32(bytes, offsets[113] as usize + scr_idx as usize * 4)?,
+                            read_f32(
+                                bytes,
+                                offsets[section::KEYFORM_SCR_COLOR_SRC_R] as usize
+                                    + scr_idx as usize * 4,
+                            )?,
+                            read_f32(
+                                bytes,
+                                offsets[section::KEYFORM_SCR_COLOR_SRC_G] as usize
+                                    + scr_idx as usize * 4,
+                            )?,
+                            read_f32(
+                                bytes,
+                                offsets[section::KEYFORM_SCR_COLOR_SRC_B] as usize
+                                    + scr_idx as usize * 4,
+                            )?,
                         ])
                     } else {
                         None
@@ -1275,17 +1685,20 @@ pub fn decode_moc3(
             let name = format!("{part_name} (Offscreen)");
             let os_id = stable_id(&doc_id, "offscreen", i, &runtime_id);
             mapping.offscreen_by_index.push(os_id.clone());
-            check_status!(doc.create_offscreen(Offscreen {
-                id: os_id,
-                runtime_id,
-                name,
-                part_id,
-                blend_mode,
-                flags,
-                masks,
-                part_keyform_indices,
-                keyforms,
-            }).status);
+            check_status!(
+                doc.create_offscreen(Offscreen {
+                    id: os_id,
+                    runtime_id,
+                    name,
+                    part_id,
+                    blend_mode,
+                    flags,
+                    masks,
+                    part_keyform_indices,
+                    keyforms,
+                })
+                .status
+            );
         }
     }
 
@@ -1297,10 +1710,19 @@ pub fn decode_moc3(
         let mut target_groups = std::collections::HashSet::new();
         let mut register_group = |target_id: &str, kind, start, len| -> Result<(), Status> {
             if !target_groups.insert(target_id.to_owned()) {
-                return Err(Status::error("UNSUPPORTED_FEATURE", format!("{target_id}: multiple BlendShape target groups are not yet representable")));
+                return Err(Status::error(
+                    "UNSUPPORTED_FEATURE",
+                    format!(
+                        "{target_id}: multiple BlendShape target groups are not yet representable"
+                    ),
+                ));
             }
+            checked_window(start, len, counts.blend_bindings as usize, "blend_binding")?;
             for binding in start..start + len {
-                if binding_targets.insert(binding, (target_id.to_owned(), kind)).is_some() {
+                if binding_targets
+                    .insert(binding, (target_id.to_owned(), kind))
+                    .is_some()
+                {
                     return Err(Status::error("UNSUPPORTED_FEATURE", format!("Blend binding {binding}: shared target windows are not yet representable")));
                 }
             }
@@ -1308,58 +1730,128 @@ pub fn decode_moc3(
         };
 
         for i in 0..counts.bs_warps as usize {
-            let target_local = read_i32(bytes, offsets[125] as usize + i * 4)? as usize;
-            let target_id = warp_by_local_idx[target_local].clone();
-            let b_off = read_i32(bytes, offsets[126] as usize + i * 4)? as usize;
-            let b_len = read_i32(bytes, offsets[127] as usize + i * 4)? as usize;
+            let target_local = read_i32(
+                bytes,
+                offsets[section::BS_WARP_SRC_TARGET_IDX] as usize + i * 4,
+            )? as usize;
+            let target_id =
+                checked_reference(&warp_by_local_idx, target_local, "bs_warp.target")?.clone();
+            let b_off = read_i32(
+                bytes,
+                offsets[section::BS_WARP_SRC_BS_BINDING_OFF] as usize + i * 4,
+            )? as usize;
+            let b_len = read_i32(
+                bytes,
+                offsets[section::BS_WARP_SRC_BS_BINDING_LEN] as usize + i * 4,
+            )? as usize;
             register_group(&target_id, BlendShapeTargetKind::Warp, b_off, b_len)?;
         }
 
         if ver >= 5 {
             for i in 0..counts.bs_rotations as usize {
-                let target_local = read_i32(bytes, offsets[146] as usize + i * 4)? as usize;
-                let target_id = rotation_by_local_idx[target_local].clone();
-                let b_off = read_i32(bytes, offsets[147] as usize + i * 4)? as usize;
-                let b_len = read_i32(bytes, offsets[148] as usize + i * 4)? as usize;
+                let target_local = read_i32(
+                    bytes,
+                    offsets[section::BS_ROTATION_SRC_TARGET_IDX] as usize + i * 4,
+                )? as usize;
+                let target_id =
+                    checked_reference(&rotation_by_local_idx, target_local, "bs_rotation.target")?
+                        .clone();
+                let b_off = read_i32(
+                    bytes,
+                    offsets[section::BS_ROTATION_SRC_BS_BINDING_OFF] as usize + i * 4,
+                )? as usize;
+                let b_len = read_i32(
+                    bytes,
+                    offsets[section::BS_ROTATION_SRC_BS_BINDING_LEN] as usize + i * 4,
+                )? as usize;
                 register_group(&target_id, BlendShapeTargetKind::Rotation, b_off, b_len)?;
             }
 
             for i in 0..counts.bs_parts as usize {
-                let target_part = read_i32(bytes, offsets[143] as usize + i * 4)? as usize;
-                let target_id = mapping.part_by_index[target_part].clone();
-                let b_off = read_i32(bytes, offsets[144] as usize + i * 4)? as usize;
-                let b_len = read_i32(bytes, offsets[145] as usize + i * 4)? as usize;
+                let target_part = read_i32(
+                    bytes,
+                    offsets[section::BS_PART_SRC_TARGET_IDX] as usize + i * 4,
+                )? as usize;
+                let target_id =
+                    checked_reference(&mapping.part_by_index, target_part, "bs_part.target")?
+                        .clone();
+                let b_off = read_i32(
+                    bytes,
+                    offsets[section::BS_PART_SRC_BS_BINDING_OFF] as usize + i * 4,
+                )? as usize;
+                let b_len = read_i32(
+                    bytes,
+                    offsets[section::BS_PART_SRC_BS_BINDING_LEN] as usize + i * 4,
+                )? as usize;
                 register_group(&target_id, BlendShapeTargetKind::Part, b_off, b_len)?;
             }
 
             for i in 0..counts.bs_glues as usize {
-                let target_glue = read_i32(bytes, offsets[149] as usize + i * 4)? as usize;
-                let target_id = mapping.glue_by_index[target_glue].clone();
-                let b_off = read_i32(bytes, offsets[150] as usize + i * 4)? as usize;
-                let b_len = read_i32(bytes, offsets[151] as usize + i * 4)? as usize;
+                let target_glue = read_i32(
+                    bytes,
+                    offsets[section::BS_GLUE_SRC_TARGET_IDX] as usize + i * 4,
+                )? as usize;
+                let target_id =
+                    checked_reference(&mapping.glue_by_index, target_glue, "bs_glue.target")?
+                        .clone();
+                let b_off = read_i32(
+                    bytes,
+                    offsets[section::BS_GLUE_SRC_BS_BINDING_OFF] as usize + i * 4,
+                )? as usize;
+                let b_len = read_i32(
+                    bytes,
+                    offsets[section::BS_GLUE_SRC_BS_BINDING_LEN] as usize + i * 4,
+                )? as usize;
                 register_group(&target_id, BlendShapeTargetKind::Glue, b_off, b_len)?;
             }
 
             if ver >= 6 {
                 for i in 0..counts.bs_offscreens as usize {
-                    let target_os = read_i32(bytes, offsets[164] as usize + i * 4)? as usize;
-                    let target_id = mapping.offscreen_by_index[target_os].clone();
-                    let b_off = read_i32(bytes, offsets[165] as usize + i * 4)? as usize;
-                    let b_len = read_i32(bytes, offsets[166] as usize + i * 4)? as usize;
+                    let target_os = read_i32(
+                        bytes,
+                        offsets[section::BS_OFFSCREEN_SRC_TARGET_IDX] as usize + i * 4,
+                    )? as usize;
+                    let target_id = checked_reference(
+                        &mapping.offscreen_by_index,
+                        target_os,
+                        "bs_offscreen.target",
+                    )?
+                    .clone();
+                    let b_off = read_i32(
+                        bytes,
+                        offsets[section::BS_OFFSCREEN_SRC_BS_BINDING_OFF] as usize + i * 4,
+                    )? as usize;
+                    let b_len = read_i32(
+                        bytes,
+                        offsets[section::BS_OFFSCREEN_SRC_BS_BINDING_LEN] as usize + i * 4,
+                    )? as usize;
                     register_group(&target_id, BlendShapeTargetKind::Offscreen, b_off, b_len)?;
                 }
             }
         }
 
         for i in 0..counts.bs_art_meshes as usize {
-            let target_mesh = read_i32(bytes, offsets[128] as usize + i * 4)? as usize;
-            let target_id = mapping.mesh_by_index[target_mesh].clone();
-            let b_off = read_i32(bytes, offsets[129] as usize + i * 4)? as usize;
-            let b_len = read_i32(bytes, offsets[130] as usize + i * 4)? as usize;
+            let target_mesh = read_i32(
+                bytes,
+                offsets[section::BS_ART_MESH_SRC_TARGET_IDX] as usize + i * 4,
+            )? as usize;
+            let target_id =
+                checked_reference(&mapping.mesh_by_index, target_mesh, "bs_mesh.target")?.clone();
+            let b_off = read_i32(
+                bytes,
+                offsets[section::BS_ART_MESH_SRC_BS_BINDING_OFF] as usize + i * 4,
+            )? as usize;
+            let b_len = read_i32(
+                bytes,
+                offsets[section::BS_ART_MESH_SRC_BS_BINDING_LEN] as usize + i * 4,
+            )? as usize;
             register_group(&target_id, BlendShapeTargetKind::Mesh, b_off, b_len)?;
         }
 
-        let get_bs_colors = |sec_mul: usize, sec_scr: usize, key_idx: usize| -> Result<(Option<[f32; 3]>, Option<[f32; 3]>), Status> {
+        let get_bs_colors = |sec_mul: usize,
+                             sec_scr: usize,
+                             key_idx: usize|
+         -> Result<(Option<[f32; 3]>, Option<[f32; 3]>), Status> {
             if ver < 5 {
                 return Ok((None, None));
             }
@@ -1367,9 +1859,18 @@ pub fn decode_moc3(
                 let idx = read_i32(bytes, offsets[sec_mul] as usize + key_idx * 4)?;
                 if idx >= 0 {
                     Some([
-                        read_f32(bytes, offsets[108] as usize + idx as usize * 4)?,
-                        read_f32(bytes, offsets[109] as usize + idx as usize * 4)?,
-                        read_f32(bytes, offsets[110] as usize + idx as usize * 4)?,
+                        read_f32(
+                            bytes,
+                            offsets[section::KEYFORM_MUL_COLOR_SRC_R] as usize + idx as usize * 4,
+                        )?,
+                        read_f32(
+                            bytes,
+                            offsets[section::KEYFORM_MUL_COLOR_SRC_G] as usize + idx as usize * 4,
+                        )?,
+                        read_f32(
+                            bytes,
+                            offsets[section::KEYFORM_MUL_COLOR_SRC_B] as usize + idx as usize * 4,
+                        )?,
                     ])
                 } else {
                     None
@@ -1381,9 +1882,18 @@ pub fn decode_moc3(
                 let idx = read_i32(bytes, offsets[sec_scr] as usize + key_idx * 4)?;
                 if idx >= 0 {
                     Some([
-                        read_f32(bytes, offsets[111] as usize + idx as usize * 4)?,
-                        read_f32(bytes, offsets[112] as usize + idx as usize * 4)?,
-                        read_f32(bytes, offsets[113] as usize + idx as usize * 4)?,
+                        read_f32(
+                            bytes,
+                            offsets[section::KEYFORM_SCR_COLOR_SRC_R] as usize + idx as usize * 4,
+                        )?,
+                        read_f32(
+                            bytes,
+                            offsets[section::KEYFORM_SCR_COLOR_SRC_G] as usize + idx as usize * 4,
+                        )?,
+                        read_f32(
+                            bytes,
+                            offsets[section::KEYFORM_SCR_COLOR_SRC_B] as usize + idx as usize * 4,
+                        )?,
                     ])
                 } else {
                     None
@@ -1395,28 +1905,86 @@ pub fn decode_moc3(
         };
 
         for b in 0..counts.blend_bindings as usize {
-            let (target_id, target_kind) = binding_targets.get(&b).ok_or_else(|| {
-                Status::error("ORPHAN_BINDING", format!("Blend binding {b} has no target"))
-            })?.clone();
+            let (target_id, target_kind) = binding_targets
+                .get(&b)
+                .ok_or_else(|| {
+                    Status::error("ORPHAN_BINDING", format!("Blend binding {b} has no target"))
+                })?
+                .clone();
 
-            let kt_idx = read_i32(bytes, offsets[120] as usize + b * 4)? as usize;
-            let key_table_id = mapping.blend_key_table_by_index[kt_idx].clone();
-            let key_bs_off = read_i32(bytes, offsets[121] as usize + b * 4)? as usize;
-            let key_bs_len = read_i32(bytes, offsets[122] as usize + b * 4)? as usize;
-            let c_off = read_i32(bytes, offsets[123] as usize + b * 4)? as usize;
-            let c_len = read_i32(bytes, offsets[124] as usize + b * 4)? as usize;
+            let kt_idx = read_i32(
+                bytes,
+                offsets[section::BLEND_BINDING_SRC_KEY_TABLE_IDX] as usize + b * 4,
+            )? as usize;
+            let key_table_id = checked_reference(
+                &mapping.blend_key_table_by_index,
+                kt_idx,
+                "blend_binding.key_table",
+            )?
+            .clone();
+            let key_bs_off = read_i32(
+                bytes,
+                offsets[section::BLEND_BINDING_SRC_KEY_BS_OFF] as usize + b * 4,
+            )? as usize;
+            let key_bs_len = read_i32(
+                bytes,
+                offsets[section::BLEND_BINDING_SRC_KEY_BS_LEN] as usize + b * 4,
+            )? as usize;
+            let c_off = read_i32(
+                bytes,
+                offsets[section::BLEND_BINDING_SRC_BS_CONSTRAINT_IDX_OFF] as usize + b * 4,
+            )? as usize;
+            let c_len = read_i32(
+                bytes,
+                offsets[section::BLEND_BINDING_SRC_BS_CONSTRAINT_IDX_LEN] as usize + b * 4,
+            )? as usize;
 
+            checked_window(
+                c_off,
+                c_len,
+                counts.bs_constraint_idx as usize,
+                "blend_binding.constraints",
+            )?;
+            let keyform_count = match target_kind {
+                BlendShapeTargetKind::Part => counts.part_keyforms,
+                BlendShapeTargetKind::Warp => counts.warp_keyforms,
+                BlendShapeTargetKind::Rotation => counts.rotation_keyforms,
+                BlendShapeTargetKind::Mesh => counts.art_mesh_keyforms,
+                BlendShapeTargetKind::Glue => counts.glue_keyforms,
+                BlendShapeTargetKind::Offscreen => counts.offscreen_keyforms,
+            };
+            checked_window(
+                key_bs_off,
+                key_bs_len,
+                keyform_count as usize,
+                "blend_binding.keyforms",
+            )?;
             let mut constraint_ids = Vec::with_capacity(c_len);
             for c in 0..c_len {
-                let c_idx = read_i32(bytes, offsets[131] as usize + (c_off + c) * 4)? as usize;
-                constraint_ids.push(mapping.blend_constraint_by_index[c_idx].clone());
+                let c_idx = read_i32(
+                    bytes,
+                    offsets[section::BLEND_CONSTRAINT_IDX_SRC_CONSTRAINT_IDX] as usize
+                        + (c_off + c) * 4,
+                )? as usize;
+                constraint_ids.push(
+                    checked_reference(
+                        &mapping.blend_constraint_by_index,
+                        c_idx,
+                        "blend_binding.constraint",
+                    )?
+                    .clone(),
+                );
             }
 
             let keyforms = match target_kind {
                 BlendShapeTargetKind::Part => {
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
-                        let draw_order = read_f32(bytes, offsets[58] as usize + (key_bs_off + k) * 4)?;
+                        let draw_order = read_f32(
+                            bytes,
+                            offsets[section::PART_KEY_SRC_DRAW_ORDER] as usize
+                                + (key_bs_off + k) * 4,
+                        )?;
                         forms.push(DeltaPartKeyform { draw_order });
                     }
                     DeltaKeyforms::Part(forms)
@@ -1428,19 +1996,36 @@ pub fn decode_moc3(
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;
-                        let op = read_f32(bytes, offsets[59] as usize + ki * 4)?;
-                        let pos_off = read_i32(bytes, offsets[60] as usize + ki * 4)? as usize;
+                        let op = read_f32(
+                            bytes,
+                            offsets[section::WARP_KEY_SRC_OPACITY] as usize + ki * 4,
+                        )?;
+                        let pos_off = read_i32(
+                            bytes,
+                            offsets[section::WARP_KEY_SRC_KEY_POS_OFF] as usize + ki * 4,
+                        )? as usize;
                         let mut points = Vec::with_capacity(pt_count);
                         for p in 0..pt_count {
-                            let rx = read_f32(bytes, offsets[71] as usize + (pos_off + p * 2) * 4)?;
-                            let ry = read_f32(bytes, offsets[71] as usize + (pos_off + p * 2 + 1) * 4)?;
+                            let rx = read_f32(
+                                bytes,
+                                offsets[section::KEY_POS_SRC_XY] as usize + (pos_off + p * 2) * 4,
+                            )?;
+                            let ry = read_f32(
+                                bytes,
+                                offsets[section::KEY_POS_SRC_XY] as usize
+                                    + (pos_off + p * 2 + 1) * 4,
+                            )?;
                             if is_root {
                                 points.push(Vec2::new(rx * ppu, -ry * ppu));
                             } else {
                                 points.push(Vec2::new(rx, ry));
                             }
                         }
-                        let (mul, scr) = get_bs_colors(137, 138, ki)?;
+                        let (mul, scr) = get_bs_colors(
+                            section::WARP_KEY_SRC_KEY_MUL_COLOR_OFF,
+                            section::WARP_KEY_SRC_KEY_SCR_COLOR_OFF,
+                            ki,
+                        )?;
                         forms.push(DeltaWarpKeyform {
                             points,
                             opacity: Some(op),
@@ -1456,17 +2041,36 @@ pub fn decode_moc3(
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;
-                        let op = read_f32(bytes, offsets[61] as usize + ki * 4)?;
-                        let ang = read_f32(bytes, offsets[62] as usize + ki * 4)?;
-                        let ox = read_f32(bytes, offsets[63] as usize + ki * 4)?;
-                        let oy = read_f32(bytes, offsets[64] as usize + ki * 4)?;
-                        let sc = read_f32(bytes, offsets[65] as usize + ki * 4)?;
+                        let op = read_f32(
+                            bytes,
+                            offsets[section::ROTATION_KEY_SRC_OPACITY] as usize + ki * 4,
+                        )?;
+                        let ang = read_f32(
+                            bytes,
+                            offsets[section::ROTATION_KEY_SRC_ANGLE] as usize + ki * 4,
+                        )?;
+                        let ox = read_f32(
+                            bytes,
+                            offsets[section::ROTATION_KEY_SRC_ORIGIN_X] as usize + ki * 4,
+                        )?;
+                        let oy = read_f32(
+                            bytes,
+                            offsets[section::ROTATION_KEY_SRC_ORIGIN_Y] as usize + ki * 4,
+                        )?;
+                        let sc = read_f32(
+                            bytes,
+                            offsets[section::ROTATION_KEY_SRC_SCALE] as usize + ki * 4,
+                        )?;
                         let origin = if is_root {
                             Vec2::new(ox * ppu, -oy * ppu)
                         } else {
                             Vec2::new(ox, oy)
                         };
-                        let (mul, scr) = get_bs_colors(139, 140, ki)?;
+                        let (mul, scr) = get_bs_colors(
+                            section::ROTATION_KEY_SRC_KEY_MUL_COLOR_OFF,
+                            section::ROTATION_KEY_SRC_KEY_SCR_COLOR_OFF,
+                            ki,
+                        )?;
                         forms.push(DeltaRotationKeyform {
                             origin: Some(origin),
                             angle: Some(ang),
@@ -1485,20 +2089,40 @@ pub fn decode_moc3(
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;
-                        let op = read_f32(bytes, offsets[68] as usize + ki * 4)?;
-                        let d_order = read_f32(bytes, offsets[69] as usize + ki * 4)?;
-                        let pos_off = read_i32(bytes, offsets[70] as usize + ki * 4)? as usize;
+                        let op = read_f32(
+                            bytes,
+                            offsets[section::ART_MESH_KEY_SRC_OPACITY] as usize + ki * 4,
+                        )?;
+                        let d_order = read_f32(
+                            bytes,
+                            offsets[section::ART_MESH_KEY_SRC_DRAW_ORDER] as usize + ki * 4,
+                        )?;
+                        let pos_off = read_i32(
+                            bytes,
+                            offsets[section::ART_MESH_KEY_SRC_KEY_POS_OFF] as usize + ki * 4,
+                        )? as usize;
                         let mut positions = Vec::with_capacity(vc);
                         for v in 0..vc {
-                            let rx = read_f32(bytes, offsets[71] as usize + (pos_off + v * 2) * 4)?;
-                            let ry = read_f32(bytes, offsets[71] as usize + (pos_off + v * 2 + 1) * 4)?;
+                            let rx = read_f32(
+                                bytes,
+                                offsets[section::KEY_POS_SRC_XY] as usize + (pos_off + v * 2) * 4,
+                            )?;
+                            let ry = read_f32(
+                                bytes,
+                                offsets[section::KEY_POS_SRC_XY] as usize
+                                    + (pos_off + v * 2 + 1) * 4,
+                            )?;
                             if is_root {
                                 positions.push(Vec2::new(rx * ppu, -ry * ppu));
                             } else {
                                 positions.push(Vec2::new(rx, ry));
                             }
                         }
-                        let (mul, scr) = get_bs_colors(141, 142, ki)?;
+                        let (mul, scr) = get_bs_colors(
+                            section::ART_MESH_KEY_SRC_KEY_MUL_COLOR_OFF,
+                            section::ART_MESH_KEY_SRC_KEY_SCR_COLOR_OFF,
+                            ki,
+                        )?;
                         forms.push(DeltaMeshKeyform {
                             positions,
                             opacity: Some(op),
@@ -1513,7 +2137,10 @@ pub fn decode_moc3(
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;
-                        let intensity = read_f32(bytes, offsets[100] as usize + ki * 4)?;
+                        let intensity = read_f32(
+                            bytes,
+                            offsets[section::GLUE_KEY_SRC_INTENSITY] as usize + ki * 4,
+                        )?;
                         forms.push(DeltaGlueKeyform { intensity });
                     }
                     DeltaKeyforms::Glue(forms)
@@ -1522,8 +2149,15 @@ pub fn decode_moc3(
                     let mut forms = Vec::with_capacity(key_bs_len);
                     for k in 0..key_bs_len {
                         let ki = key_bs_off + k;
-                        let op = read_f32(bytes, offsets[161] as usize + ki * 4)?;
-                        let (mul, scr) = get_bs_colors(162, 163, ki)?;
+                        let op = read_f32(
+                            bytes,
+                            offsets[section::OFFSCREEN_KEY_SRC_OPACITY] as usize + ki * 4,
+                        )?;
+                        let (mul, scr) = get_bs_colors(
+                            section::OFFSCREEN_KEY_SRC_KEY_MUL_COLOR_OFF,
+                            section::OFFSCREEN_KEY_SRC_KEY_SCR_COLOR_OFF,
+                            ki,
+                        )?;
                         forms.push(DeltaOffscreenKeyform {
                             opacity: op,
                             multiply: mul,
@@ -1536,14 +2170,17 @@ pub fn decode_moc3(
 
             let b_id = stable_id(&doc_id, "blend_binding", b, &format!("bb_{b}"));
             mapping.blend_binding_by_index.push(b_id.clone());
-            check_status!(doc.create_blend_binding(BlendShapeBinding {
-                id: b_id,
-                target_id,
-                target_kind,
-                key_table_id,
-                constraint_ids,
-                keyforms,
-            }).status);
+            check_status!(
+                doc.create_blend_binding(BlendShapeBinding {
+                    id: b_id,
+                    target_id,
+                    target_kind,
+                    key_table_id,
+                    constraint_ids,
+                    keyforms,
+                })
+                .status
+            );
         }
     }
 
@@ -1558,9 +2195,19 @@ pub fn decode_moc3(
     }
     owners[0] = Some(String::new());
     for index in 0..counts.draw_items as usize {
-        if read_i32(bytes, offsets[86] as usize + index * 4)? == 1 {
-            let part = read_i32(bytes, offsets[87] as usize + index * 4)?;
-            let child = read_i32(bytes, offsets[88] as usize + index * 4)?;
+        if read_i32(
+            bytes,
+            offsets[section::DRAW_GROUP_OBJ_SRC_TYPE] as usize + index * 4,
+        )? == 1
+        {
+            let part = read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_OBJ_SRC_IDX] as usize + index * 4,
+            )?;
+            let child = read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_OBJ_SRC_SELF_GROUP_IDX] as usize + index * 4,
+            )?;
             if part < 0
                 || part as usize >= mapping.part_by_index.len()
                 || child <= 0
@@ -1582,8 +2229,14 @@ pub fn decode_moc3(
                 format!("Detached drawing group {index}"),
             )
         })?;
-        let start = read_i32(bytes, offsets[81] as usize + index * 4)?;
-        let length = read_i32(bytes, offsets[82] as usize + index * 4)?;
+        let start = read_i32(
+            bytes,
+            offsets[section::DRAW_GROUP_SRC_OBJ_OFF] as usize + index * 4,
+        )?;
+        let length = read_i32(
+            bytes,
+            offsets[section::DRAW_GROUP_SRC_OBJ_LEN] as usize + index * 4,
+        )?;
         if start < 0 || length < 0 || start as i64 + length as i64 > counts.draw_items as i64 {
             return Err(Status::error(
                 "INVALID_DRAW_GROUP",
@@ -1592,8 +2245,14 @@ pub fn decode_moc3(
         }
         let mut items = Vec::new();
         for item in start as usize..(start + length) as usize {
-            let kind = read_i32(bytes, offsets[86] as usize + item * 4)?;
-            let object = read_i32(bytes, offsets[87] as usize + item * 4)?;
+            let kind = read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_OBJ_SRC_TYPE] as usize + item * 4,
+            )?;
+            let object = read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_OBJ_SRC_IDX] as usize + item * 4,
+            )?;
             let table = match kind {
                 0 => &mapping.mesh_by_index,
                 1 => &mapping.part_by_index,
@@ -1615,8 +2274,14 @@ pub fn decode_moc3(
         groups.push(kasane_core::draw_order::DrawOrderGroup {
             owner,
             items,
-            min_order: read_i32(bytes, offsets[85] as usize + index * 4)?,
-            max_order: read_i32(bytes, offsets[84] as usize + index * 4)?,
+            min_order: read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_SRC_MIN_ORDER] as usize + index * 4,
+            )?,
+            max_order: read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_SRC_MAX_ORDER] as usize + index * 4,
+            )?,
         });
     }
     check_status!(doc.replace_draw_order_groups(groups).status);

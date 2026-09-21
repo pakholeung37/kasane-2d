@@ -33,10 +33,12 @@ impl Layout {
     }
 
     pub fn field_index(&self, name: &str) -> Result<usize, Status> {
-        SCHEMA
+        let index = SCHEMA
             .iter()
             .position(|s| s.name == name)
-            .ok_or_else(|| Status::error("CODEC_LAYOUT", format!("Unknown MOC3 field: {name}")))
+            .ok_or_else(|| Status::error("CODEC_LAYOUT", format!("Unknown MOC3 field: {name}")))?;
+        crate::schema::VersionLayout::new(self.version)?.require(index)?;
+        Ok(index)
     }
 
     pub fn field(&mut self, name: &str) -> Result<&mut Vec<u8>, Status> {
@@ -72,7 +74,8 @@ impl Layout {
         // Reserve loader scratch after the 64-byte header and 160 offsets (v5) or 480 offsets (v6).
         // Both Core implementations revive pointers in this area in-place.
         // This is zeroed wire padding, never a serialized native structure.
-        let header_reserve = if self.version >= 6 { 5824 } else { 1984 };
+        let layout = crate::schema::VersionLayout::new(self.version)?;
+        let header_reserve = layout.loader_reserve();
         let mut out = vec![0u8; header_reserve];
         out[0] = b'M';
         out[1] = b'O';
@@ -80,13 +83,7 @@ impl Layout {
         out[3] = b'3';
         out[4] = self.version;
 
-        let section_count = match self.version {
-            1 => 101,
-            2 | 3 => 102,
-            4 => 137,
-            5 => 152,
-            _ => 167,
-        };
+        let section_count = layout.section_count();
 
         for (i, s) in SCHEMA[..section_count].iter().enumerate() {
             let count = if s.count_index < 0 {

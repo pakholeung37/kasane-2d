@@ -1,5 +1,7 @@
-use std::os::raw::{c_int, c_uint, c_void};
+use crate::schema::section;
 use kasane_core::types::Status;
+#[cfg(has_purism_core)]
+use std::os::raw::{c_int, c_uint, c_void};
 
 #[cfg(has_purism_core)]
 extern "C" {
@@ -120,7 +122,9 @@ fn read_i32(buf: &[u8], offset: usize) -> Result<i32, Status> {
             format!("Buffer truncated reading i32 at {offset}"),
         ));
     }
-    Ok(i32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()))
+    Ok(i32::from_le_bytes(
+        buf[offset..offset + 4].try_into().unwrap(),
+    ))
 }
 
 fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Status> {
@@ -130,7 +134,9 @@ fn read_u32(buf: &[u8], offset: usize) -> Result<u32, Status> {
             format!("Buffer truncated reading u32 at {offset}"),
         ));
     }
-    Ok(u32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()))
+    Ok(u32::from_le_bytes(
+        buf[offset..offset + 4].try_into().unwrap(),
+    ))
 }
 
 fn read_f32(buf: &[u8], offset: usize) -> Result<f32, Status> {
@@ -140,7 +146,9 @@ fn read_f32(buf: &[u8], offset: usize) -> Result<f32, Status> {
             format!("Buffer truncated reading f32 at {offset}"),
         ));
     }
-    Ok(f32::from_le_bytes(buf[offset..offset + 4].try_into().unwrap()))
+    Ok(f32::from_le_bytes(
+        buf[offset..offset + 4].try_into().unwrap(),
+    ))
 }
 
 use crate::schema::{SectionSchema, SCHEMA};
@@ -149,11 +157,17 @@ fn get_section_schema(i: usize) -> Option<&'static SectionSchema> {
     SCHEMA.get(i)
 }
 
-fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
+fn inspect_moc3_internal(
+    bytes: &[u8],
+    native_validation: bool,
+) -> Result<Moc3InspectionReport, Status> {
     if bytes.len() < 64 {
         return Err(Status::error(
             "BUFFER_TOO_SMALL",
-            format!("MOC3 file size {} is smaller than 64-byte header", bytes.len()),
+            format!(
+                "MOC3 file size {} is smaller than 64-byte header",
+                bytes.len()
+            ),
         ));
     }
 
@@ -174,19 +188,11 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         ));
     }
 
-    match version_raw {
-        1..=6 => {}
-        other => {
-            return Err(Status::error(
-                "UNSUPPORTED_VERSION",
-                format!("MOC3 version {other} is not supported (accepted versions: 1 to 6)"),
-            ));
-        }
-    }
-
+    #[cfg(not(has_purism_core))]
+    let _ = native_validation;
+    let layout = crate::schema::VersionLayout::new(version_raw)?;
     let version = Moc3Version::from_u8(version_raw);
-
-    let offset_count = if version_raw >= 6 { 480 } else { 160 };
+    let offset_count = layout.offset_count();
     let header_size = 64 + offset_count * 4;
     if bytes.len() < header_size {
         return Err(Status::error(
@@ -204,13 +210,16 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         section_offsets.push(off);
     }
 
-    let counts_off = section_offsets[0] as usize;
-    let count_ints = if version_raw >= 5 { 64 } else { 32 };
+    let counts_off = section_offsets[section::COUNT_INFO] as usize;
+    let count_ints = layout.count_count();
     let count_bytes = count_ints * 4;
     if counts_off + count_bytes > bytes.len() {
         return Err(Status::error(
             "SECTION_OOB",
-            format!("count_info section at {counts_off} exceeds buffer size {}", bytes.len()),
+            format!(
+                "count_info section at {counts_off} exceeds buffer size {}",
+                bytes.len()
+            ),
         ));
     }
 
@@ -282,14 +291,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     }
 
     // Section bounds and 8-byte alignment verification across all valid sections of this version
-    let valid_section_count = match version_raw {
-        1 => 101,
-        2 | 3 => 102,
-        4 => 137,
-        5 => 152,
-        6 => 167,
-        _ => 101,
-    };
+    let valid_section_count = layout.section_count();
 
     for i in 0..valid_section_count {
         let off = section_offsets[i] as usize;
@@ -326,8 +328,16 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
         }
     }
 
+    crate::safety::validate(bytes, &section_offsets, &counts_raw, layout).map_err(|s| {
+        if native_validation {
+            Status::error("FILE_CORRUPT", s.message)
+        } else {
+            s
+        }
+    })?;
+
     // Read canvas info (section 1) before feature checking
-    let canvas_off = section_offsets[1] as usize;
+    let canvas_off = section_offsets[section::CANVAS_INFO] as usize;
     let ppu = read_f32(bytes, canvas_off)?;
     let ox = read_f32(bytes, canvas_off + 4)?;
     let oy = read_f32(bytes, canvas_off + 8)?;
@@ -335,7 +345,13 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     let height = read_f32(bytes, canvas_off + 16)?;
     let flag = bytes[canvas_off + 20];
 
-    if !ppu.is_finite() || ppu <= 0.0 || !ox.is_finite() || !oy.is_finite() || !width.is_finite() || !height.is_finite() {
+    if !ppu.is_finite()
+        || ppu <= 0.0
+        || !ox.is_finite()
+        || !oy.is_finite()
+        || !width.is_finite()
+        || !height.is_finite()
+    {
         return Err(Status::error(
             "NON_FINITE",
             "canvas_info contains non-finite or non-positive float values",
@@ -344,7 +360,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
 
     // PurismCore consistency check (when available)
     #[cfg(has_purism_core)]
-    {
+    if native_validation {
         let mut buffer_copy = bytes.to_vec();
         let r = unsafe {
             csmHasMocConsistency(
@@ -363,13 +379,16 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
     // Collect all unsupported features in a single pass without failing on the first one
     let mut unsupported_features = Vec::new();
 
-
     if version_raw >= 4 && section_offsets.len() > 114 {
         for p in 0..counts.parameters as usize {
-            let kind = read_i32(bytes, section_offsets[114] as usize + p * 4)?;
+            let kind = read_i32(
+                bytes,
+                section_offsets[section::PARAM_SRC_TYPE] as usize + p * 4,
+            )?;
             if kind != 0 && kind != 1 {
                 unsupported_features.push(UnsupportedFeature {
-                    category: "parameter_type".into(), count: 1,
+                    category: "parameter_type".into(),
+                    count: 1,
                     detail: format!("Parameter {p}: unknown type {kind}"),
                 });
             }
@@ -395,7 +414,7 @@ fn inspect_moc3_internal(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
 }
 
 pub fn inspect_moc3_safety(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
-    inspect_moc3_internal(bytes)
+    inspect_moc3_internal(bytes, true)
 }
 
 pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
@@ -408,8 +427,15 @@ pub fn inspect_moc3(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
             .collect();
         return Err(Status::error(
             "UNSUPPORTED_FEATURE",
-            format!("Model contains unsupported features: {}", details.join("; ")),
+            format!(
+                "Model contains unsupported features: {}",
+                details.join("; ")
+            ),
         ));
     }
     Ok(report)
+}
+
+pub(crate) fn inspect_structure(bytes: &[u8]) -> Result<Moc3InspectionReport, Status> {
+    inspect_moc3_internal(bytes, false)
 }

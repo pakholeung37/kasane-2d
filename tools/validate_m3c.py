@@ -17,6 +17,8 @@ import json
 import math
 import os
 import platform
+import re
+import acceptance_evidence as evidence
 import struct
 import subprocess
 import sys
@@ -236,41 +238,9 @@ def build_s0_baseline_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -
         {"glue_index": 25, "mesh_a": 131, "mesh_b": 132, "zero_mesh_id": "ArtMesh137"},
     ]
 
-    # Core acceptance table for zero-triangle meshes
-    core_zero_acceptance = {
-        "vc_4_idx_0": {"official_core": "passed", "purism_core": "passed"},
-        "vc_3_idx_0": {"official_core": "passed", "purism_core": "passed"},
-        "vc_2_idx_0": {"official_core": "passed", "purism_core": "passed"},
-        "vc_1_idx_0": {"official_core": "passed", "purism_core": "passed"},
-        "vc_0_idx_0": {"official_core": "passed", "purism_core": "passed"},
-    }
-
-    # Core & GPU capability matrix
-    capability_table = {
-        "live2d_official_core_probe": {
-            "version": "6.0.1",
-            "supported_moc_versions": [2, 3, 4, 5, 6],
-            "offscreen_numerical_api": True,
-            "status": "ready"
-        },
-        "purism_core_probe": {
-            "version": "1.1.0 (compat 6.0.1)",
-            "supported_moc_versions": [2, 3, 4, 5, 6],
-            "offscreen_numerical_api": True,
-            "status": "ready"
-        },
-        "cubism_framework_native_renderer": {
-            "renderer": "OpenGL_ES2",
-            "offscreen_shaders_available": True,
-            "demo_binary_built": True,
-            "status": "ready"
-        },
-        "gd_cubism_addon": {
-            "supported_moc_versions": [2, 3, 5],
-            "offscreen_shaders_available": False,
-            "status": "legacy_regression_only"
-        }
-    }
+    core_zero_acceptance = {"status": "not_run", "reason": "No zero-vertex Core probe executed by this baseline run"}
+    capability_table = {"official_probe": {"path": str(official_probe), "sha256": sha256_file(official_probe)},
+                        "purism_probe": {"path": str(purism_probe), "sha256": sha256_file(purism_probe)}}
 
     # Missing assets inventory
     missing_assets = {
@@ -300,23 +270,23 @@ def build_s0_baseline_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -
     known_rejections = {
         "version_3_inspector": {
             "cause": "inspector.rs accepts only version 2 and 5; version 3 rejected with UNSUPPORTED_VERSION",
-            "verified": True
+            "status": "historical_unverified"
         },
         "zero_triangle_mesh_geometry": {
             "cause": "geometry.rs validate_render_mesh enforces non-empty indices; doc.create_mesh and frame validation fail with INVALID_LENGTH",
-            "verified": True
+            "status": "historical_unverified"
         },
         "blendshape_glue_inspector": {
             "cause": "inspector.rs explicitly rejects bs_glues > 0",
-            "verified": True
+            "status": "historical_unverified"
         },
         "repeat_parameter_inspector": {
             "cause": "inspector.rs explicitly rejects repeat != 0",
-            "verified": True
+            "status": "historical_unverified"
         },
         "offscreen_inspector": {
             "cause": "inspector.rs explicitly rejects offscreens > 0",
-            "verified": True
+            "status": "historical_unverified"
         }
     }
 
@@ -341,17 +311,14 @@ def build_s0_baseline_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -
         "core_gpu_capabilities": capability_table,
         "missing_assets": missing_assets,
         "known_rejections": known_rejections,
-        "gate": {
-            "all_samples_identified": True,
-            "known_rejections_reproduced": True,
-            "reference_and_asset_gaps_listed": True,
-            "passed": True
-        }
+        "checks": [evidence.missing("historical_rejections", "historical", "Baseline failure reproduction must be run against its original revision"),
+                   evidence.missing("core_zero_vertex_probe", "numerical", "Not executed in this run")],
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
     report_path = output_dir / "s0_baseline_report.json"
     manifest_path = output_dir / "baseline_manifest.json"
+    evidence.finalize(report)
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     manifest_path.write_text(json.dumps(unique_samples, indent=2) + "\n")
     print(f"S0 Baseline report written to {report_path}")
@@ -373,8 +340,7 @@ def build_s1_report(manifest_path: Path, output_dir: Path) -> Dict[str, Any]:
     for suite_name, cmd in cargo_suites:
         print(f"Running {suite_name} tests...")
         try:
-            output = run_cmd(cmd)
-            test_results[suite_name] = {"passed": True, "output_snippet": output.splitlines()[-5:]}
+            test_results[suite_name] = test_evidence(cmd, output_dir / "s1", suite_name)
         except Exception as e:
             test_results[suite_name] = {"passed": False, "error": str(e)}
             raise RuntimeError(f"Cargo test suite {suite_name} failed: {e}")
@@ -402,17 +368,7 @@ def build_s1_report(manifest_path: Path, output_dir: Path) -> Dict[str, Any]:
     assert len(zero_tri_meshes_hiyori) == 4, f"Expected 4 zero-triangle meshes in Hiyori, found {len(zero_tri_meshes_hiyori)}"
 
     # 3. Gate verification
-    gate = {
-        "hiyori_four_zero_triangle_meshes_retained": True,
-        "hiyori_glue_topology_preserved": True,
-        "rice_and_mark_v3_imported_and_evaluated": True,
-        "purism_core_and_document_numerical_parity": True,
-        "strict_index_validation_enforced": True,
-        "multi_version_layout_safety_validated": True,
-        "v4_and_v6_import_safely_gated": True,
-        "v2_and_v5_no_regression": True,
-        "passed": True,
-    }
+    checks = stage_checks("S1", test_results, output_dir)
 
     report = {
         "milestone": "M3C",
@@ -432,13 +388,74 @@ def build_s1_report(manifest_path: Path, output_dir: Path) -> Dict[str, Any]:
             "kasane_handling": "geometry.rs decoupled validity from drawability; mesh_view updates bounds without surface",
             "serialization": "encoder.rs writes idx_len=0 and keeps mesh & glue topology intact",
         },
-        "gate": gate,
+        "checks": checks,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    evidence.finalize(report)
     report_path = output_dir / "s1_report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(f"S1 Report written to {report_path}")
+    return report
+
+
+def finalize_required_gates(report):
+    # Compatibility for callers constructing the legacy gate shape.
+    if "checks" in report:
+        return evidence.finalize(report)
+    checks = [value for name, value in report["gate"].items() if name != "passed"]
+    passed = bool(checks) and all(value is True or value == "passed" for value in checks)
+    report["gate"]["passed"] = passed
+    report["status"] = ("passed" if passed else
+                        "failed" if any(value is False or value == "failed" for value in checks)
+                        else "not_run")
+    return report
+
+
+def test_evidence(cmd, output_dir, suite):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output = run_cmd(cmd)
+    log = output_dir / (suite + ".log")
+    log.write_text(output)
+    count = sum(int(n) for n in re.findall(r"test result: ok\. (\d+) passed", output))
+    if count == 0:
+        raise RuntimeError(f"{suite}: no passing tests were executed")
+    return {"passed": True, "tests_passed": count, "command": cmd,
+            "evidence": [evidence.artifact(log, "test_log")]}
+
+
+def stage_checks(stage, tests, output_dir, probe=None):
+    checks = [evidence.check("rust_" + name, "constructed_tests", "passed" if result["passed"] else "failed", result["evidence"])
+              for name, result in tests.items()]
+    if probe:
+        model, source_kind, probe_input, p_json, o_json, purism, official = probe
+        path = output_dir / (stage.lower() + "-numerical-evidence.json")
+        path.write_text(json.dumps({"input": probe_input, "purism": p_json, "official": o_json}, indent=2))
+        checks.append(evidence.check("dual_core_numerical", source_kind, "passed", [
+            evidence.artifact(path, "numerical_comparison"), evidence.artifact(model, source_kind),
+            evidence.artifact(purism, "reference_binary"), evidence.artifact(official, "reference_binary")]))
+    if stage in ("S2", "S3", "S4"):
+        checks.append(evidence.missing("real_asset_acceptance", "real_model", "Only constructed fixtures were run; external feature asset acceptance is missing"))
+    if stage in ("S1", "S2"):
+        checks.append(evidence.missing("real_model_editor_gpu", "gpu", "This runner has not executed the required real-model Editor/GPU workflow"))
+    return checks
+
+
+def execute_stage(stage, builder, output_dir, *args):
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / ("s0_baseline_report.json" if stage == "S0" else stage.lower() + "_report.json")
+    report = {"stage": stage, "status": "not_run", "checks": [], "gate": {"passed": False}}
+    path.write_text(json.dumps(report, indent=2))  # Invalidate stale success before any command.
+    try:
+        before = evidence.source_identity(ROOT)
+        report = builder(*args)
+        report['provenance'] = before
+        if evidence.source_identity(ROOT) != before:
+            report.setdefault('checks', []).append(evidence.check('stable_source', 'provenance', 'failed', reason='Source changed during run'))
+        evidence.finalize(report)
+    except Exception as exc:
+        report.update(status='failed', gate={'passed': False}, error=str(exc))
+    path.write_text(json.dumps(report, indent=2) + "\n")
     return report
 
 
@@ -495,8 +512,7 @@ def build_s2_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
     test_results = {}
     for suite_name, cmd in cargo_suites:
         print(f"Running {suite_name} tests...")
-        output = run_cmd(cmd)
-        test_results[suite_name] = {"passed": True, "output_snippet": output.splitlines()[-5:]}
+        test_results[suite_name] = test_evidence(cmd, output_dir / "s2", suite_name)
 
     # 4. Field mapping specification for PSM__SECTIONS_V42 (sections 0..136)
     field_mapping_report = {
@@ -597,17 +613,7 @@ def build_s2_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
         },
     }
 
-    gate = {
-        "v42_field_mapping_complete": True,
-        "v42_color_pools_and_defaults_verified": True,
-        "v42_warp_mesh_blendshapes_verified": True,
-        "v42_shared_constraint_verified": True,
-        "v42_intermediate_base_key_verified": True,
-        "v42_dual_core_parity_verified": True,
-        "v42_project_save_detach_reopen_export": True,
-        "real_42_asset_acceptance": "not_run",
-        "passed": True,
-    }
+    checks = stage_checks("S2", test_results, output_dir, (v42_moc3, "constructed_model", probe_input, p_json, o_json, purism_probe, official_probe))
 
     report = {
         "milestone": "M3C",
@@ -628,10 +634,11 @@ def build_s2_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
             "purism_core_status": "passed",
         },
         "field_mapping": field_mapping_report,
-        "gate": gate,
+        "checks": checks,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    evidence.finalize(report)
     report_path = output_dir / "s2_report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(f"S2 Report written to {report_path}")
@@ -691,24 +698,9 @@ def build_s3_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
     test_results = {}
     for suite_name, cmd in cargo_suites:
         print(f"Running {suite_name} tests...")
-        output = run_cmd(cmd)
-        test_results[suite_name] = {"passed": True, "output_snippet": output.splitlines()[-5:]}
+        test_results[suite_name] = test_evidence(cmd, output_dir / "s3", suite_name)
 
-    gate = {
-        "cyclic_parameter_definition_verified": True,
-        "min_max_and_boundary_wrap_verified": True,
-        "epsilon_sides_wrap_verified": True,
-        "multi_period_positive_negative_verified": True,
-        "fixed_param_repeated_frames_verified": True,
-        "seam_a_b_a_verified": True,
-        "cyclic_constraint_driven_blendshape_verified": True,
-        "project_v4_migration_and_compatibility_verified": True,
-        "project_v4_rejects_unimplemented_collections": True,
-        "legacy_reader_rejects_v4_verified": True,
-        "failure_preserves_document_verified": True,
-        "dual_core_parity_verified": True,
-        "passed": True,
-    }
+    checks = stage_checks("S3", test_results, output_dir, (cyclic_moc3, "constructed_model", probe_input, p_json, o_json, purism_probe, official_probe))
 
     report = {
         "milestone": "M3C",
@@ -729,10 +721,11 @@ def build_s3_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
             "official_core_status": "passed",
             "purism_core_status": "passed",
         },
-        "gate": gate,
+        "checks": checks,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    evidence.finalize(report)
     report_path = output_dir / "s3_report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(f"S3 Report written to {report_path}")
@@ -797,20 +790,9 @@ def build_s4_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
     test_results = {}
     for suite_name, cmd in cargo_suites:
         print(f"Running {suite_name} tests...")
-        output = run_cmd(cmd)
-        test_results[suite_name] = {"passed": True, "output_snippet": output.splitlines()[-5:]}
+        test_results[suite_name] = test_evidence(cmd, output_dir / "s4", suite_name)
 
-    gate = {
-        "glue_typed_target_and_intensity_delta": True,
-        "ordinary_and_delta_coexistence": True,
-        "intensity_clamping_zero_to_one": True,
-        "decoder_and_encoder_bs_glue_src": True,
-        "delete_reference_protection": True,
-        "project_v4_roundtrip": True,
-        "dual_core_parity_verified": True,
-        "mao_v5_no_regression": True,
-        "passed": True,
-    }
+    checks = stage_checks("S4", test_results, output_dir, (bs_glue_moc3, "constructed_model", probe_input, p_json, o_json, purism_probe, official_probe))
 
     report = {
         "milestone": "M3C",
@@ -830,10 +812,11 @@ def build_s4_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
             "official_core_status": "passed",
             "purism_core_status": "passed",
         },
-        "gate": gate,
+        "checks": checks,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    evidence.finalize(report)
     report_path = output_dir / "s4_report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(f"S4 Report written to {report_path}")
@@ -920,20 +903,9 @@ def build_s5_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
     test_results = {}
     for suite_name, cmd in cargo_suites:
         print(f"Running {suite_name} tests...")
-        output = run_cmd(cmd)
-        test_results[suite_name] = {"passed": True, "output_snippet": output.splitlines()[-5:]}
+        test_results[suite_name] = test_evidence(cmd, output_dir / "s5", suite_name)
 
-    gate = {
-        "version_6_layout_and_480_offsets": True,
-        "offscreen_document_object_and_order": True,
-        "offscreen_evaluation_and_scene_binding": True,
-        "offscreen_blendshape_and_delta_keyforms": True,
-        "art_mesh_raw_blend_mode": True,
-        "project_v4_codec_preserves_offscreen": True,
-        "export_auto_and_preflight_rejection": True,
-        "ren_24_offscreens_dual_core_parity": True,
-        "passed": True,
-    }
+    checks = stage_checks("S5", test_results, output_dir, (ren_moc3, "real_model", probe_input, p_json, o_json, purism_probe, official_probe))
 
     report = {
         "milestone": "M3C",
@@ -955,10 +927,11 @@ def build_s5_report(sdk_dir: Path, probe_dir: Path, output_dir: Path) -> Dict[st
             "official_core_status": "passed",
             "purism_core_status": "passed",
         },
-        "gate": gate,
+        "checks": checks,
     }
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    evidence.finalize(report)
     report_path = output_dir / "s5_report.json"
     report_path.write_text(json.dumps(report, indent=2) + "\n")
     print(f"S5 Report written to {report_path}")
@@ -973,37 +946,52 @@ def main():
     parser.add_argument("--sdk", type=Path, default=ROOT / "third_party/CubismSdkForNative-5-r.5")
     parser.add_argument("--probe-dir", type=Path, default=ROOT / "target/probes")
     args = parser.parse_args()
+    if not __debug__:
+        parser.error("Acceptance comparisons require Python assertions; do not run with -O")
 
     args.output.mkdir(parents=True, exist_ok=True)
+    incomplete_stages = []
 
     if args.stage in ("S0", "all"):
         print("=== Executing M3C Stage S0: Baseline, Manifest & Oracle Setup ===")
-        s0_report = build_s0_baseline_report(args.sdk, args.probe_dir, args.output)
+        s0_report = execute_stage("S0", build_s0_baseline_report, args.output, args.sdk, args.probe_dir, args.output)
+        if not s0_report["gate"]["passed"]:
+            incomplete_stages.append("S0")
         if args.stage == "S0":
             return 0 if s0_report["gate"]["passed"] else 1
 
     if args.stage in ("S1", "all"):
-        s1_report = build_s1_report(args.manifest, args.output)
+        s1_report = execute_stage("S1", build_s1_report, args.output, args.manifest, args.output)
+        if not s1_report["gate"]["passed"]:
+            incomplete_stages.append("S1")
         if args.stage == "S1":
             return 0 if s1_report["gate"]["passed"] else 1
 
     if args.stage in ("S2", "all"):
-        s2_report = build_s2_report(args.sdk, args.probe_dir, args.output)
+        s2_report = execute_stage("S2", build_s2_report, args.output, args.sdk, args.probe_dir, args.output)
+        if not s2_report["gate"]["passed"]:
+            incomplete_stages.append("S2")
         if args.stage == "S2":
             return 0 if s2_report["gate"]["passed"] else 1
 
     if args.stage in ("S3", "all"):
-        s3_report = build_s3_report(args.sdk, args.probe_dir, args.output)
+        s3_report = execute_stage("S3", build_s3_report, args.output, args.sdk, args.probe_dir, args.output)
+        if not s3_report["gate"]["passed"]:
+            incomplete_stages.append("S3")
         if args.stage == "S3":
             return 0 if s3_report["gate"]["passed"] else 1
 
     if args.stage in ("S4", "all"):
-        s4_report = build_s4_report(args.sdk, args.probe_dir, args.output)
+        s4_report = execute_stage("S4", build_s4_report, args.output, args.sdk, args.probe_dir, args.output)
+        if not s4_report["gate"]["passed"]:
+            incomplete_stages.append("S4")
         if args.stage == "S4":
             return 0 if s4_report["gate"]["passed"] else 1
 
     if args.stage in ("S5", "all"):
-        s5_report = build_s5_report(args.sdk, args.probe_dir, args.output)
+        s5_report = execute_stage("S5", build_s5_report, args.output, args.sdk, args.probe_dir, args.output)
+        if not s5_report["gate"]["passed"]:
+            incomplete_stages.append("S5")
         if args.stage == "S5":
             return 0 if s5_report["gate"]["passed"] else 1
 
@@ -1019,13 +1007,12 @@ def main():
 
     # Release closure remains a separate S7 gate.
     stages = ["S7"] if args.stage == "all" else [args.stage]
-    incomplete_stages = []
     for st in stages:
         stage_report_file = args.output / f"{st.lower()}_report.json"
         # Check if already completed by a dedicated run
         if stage_report_file.is_file():
             data = json.loads(stage_report_file.read_text())
-            if data.get("status") != "passed":
+            if not evidence.reusable(data, ROOT):
                 incomplete_stages.append(st)
         else:
             incomplete_stages.append(st)

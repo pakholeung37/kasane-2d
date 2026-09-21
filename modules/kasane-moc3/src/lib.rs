@@ -3,6 +3,7 @@ pub mod encoder;
 pub mod importer;
 pub mod inspector;
 pub mod layout;
+mod safety;
 pub mod schema;
 pub mod types;
 
@@ -17,3 +18,6 @@ pub use inspector::{
     UnsupportedFeature,
 };
 pub use types::{Moc3Artifact, TextureSlot};
+
+/// Whether optional native consistency checks were compiled into this build.
+pub const HAS_CORE_VALIDATION: bool = cfg!(has_purism_core);

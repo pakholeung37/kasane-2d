@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """S6 real-GPU acceptance against the pinned official Native Framework."""
 import argparse
+import acceptance_evidence as evidence
 import hashlib
 import json
 import os
@@ -163,7 +164,7 @@ def script(body):
 def editor_gate(output, probe, godot, sdk):
     from editor_agent import submit
     stage=output/'editor';agent=output/'agent'
-    for generated in [agent, output/'saved', output/'exported', output/'mao-saved', output/'mao-exported']:
+    for generated in [agent, output/'saved', output/'exported', output/'mao-saved', output/'mao-exported', output/'joint-exported']:
         if generated.exists(): shutil.rmtree(generated)
     shutil.copytree(ROOT/'apps/editor',stage,dirs_exist_ok=True,ignore=shutil.ignore_patterns('.godot','native'))
     (stage/'native').mkdir(exist_ok=True)
@@ -203,6 +204,15 @@ def editor_gate(output, probe, godot, sdk):
         result=send('editor-parameter',f'return w.document.set_preview_values({{{json.dumps(parameter["id"])}: 15.0}})',True)
         compare('editor-parameter',result,original_moc,original_atlas)
         send('editor-reset','return w.document.set_preview_values({})')
+        joint = send('editor-joint-keyform-edit', (ROOT/'tests/editor_m3c_joint_edit.gd').read_text())
+        joint_package = output/'joint-exported'
+        send('editor-joint-export', f'return w.export_model({json.dumps(str(joint_package))})')
+        joint_model = json.loads(next(joint_package.glob('*.model3.json')).read_text())['FileReferences']
+        for index, value in enumerate(joint['business']['samples']):
+            name = 'editor-joint-sample-' + str(index)
+            sample = send(name, f'return w.document.set_preview_values({{{json.dumps(joint["business"]["parameter_id"])}: {value}}})', True)
+            compare(name, sample, joint_package/joint_model['Moc'], joint_package/joint_model['Textures'][0])
+        send('editor-joint-restore', 'w.undo_redo.undo()\nreturn w.document.set_preview_values({})')
         result=send('editor-edit',\
 """var d = w.document
 var before: Dictionary = d.get_document_summary()
@@ -289,6 +299,7 @@ def acceptance(output, sdk, godot, matrix_only=False):
     names = ('build', 'blend_matrix') if matrix_only else REQUIRED_GATES
     report = {'stage': 'S6-matrix' if matrix_only else 'S6', 'status': 'failed',
               'gates': {name: {'status': 'not_run'} for name in names},
+              'checks': [evidence.missing(name, 'gpu' if name not in ('build','m4_data','m3b_numerical') else 'runtime', 'Not executed') for name in names],
               'thresholds': {'rgba_mae': .005, 'bad_pixel_fraction': .01, 'bad_pixel_threshold': .05},
               'system': {'platform': platform.platform(), 'godot': str(godot)},
               'editor_configuration': 'Current apps/editor with current debug GDExtension; standalone packaging belongs to S7'}
@@ -301,10 +312,25 @@ def acceptance(output, sdk, godot, matrix_only=False):
             result = operation()
             result['elapsed_seconds'] = time.monotonic()-started
             report['gates'][name] = result
+            evidence_path = output / ('evidence-' + name + '.json')
+            evidence_path.write_text(json.dumps(result, indent=2) + '\n')
+            artifacts = [evidence.artifact(evidence_path, 'gate_result')]
+            def collect(value):
+                if isinstance(value, dict):
+                    for key, child in value.items():
+                        if key in ('report', 'reference', 'actual', 'difference') and isinstance(child, str) and Path(child).is_file():
+                            artifacts.append(evidence.artifact(child, key))
+                        else: collect(child)
+                elif isinstance(value, list):
+                    for child in value: collect(child)
+            collect(result)
+            item = next(c for c in report['checks'] if c['id'] == name)
+            item.update(status=result.get('status', 'failed'), evidence=artifacts, reason='')
             if result.get('status') != 'passed':
                 raise RuntimeError(name+' failed: '+str(result)[:1000])
         except Exception as exc:
             report['gates'][name].update(status='failed', error=str(exc))
+            next(c for c in report['checks'] if c['id'] == name).update(status='failed', reason=str(exc))
             raise
         finally:
             persist()
@@ -321,6 +347,7 @@ def acceptance(output, sdk, godot, matrix_only=False):
             raise RuntimeError('This pinned official GPU harness currently requires macOS OpenGL')
         manifest = source_manifest(sdk)
         report['source_sha256'] = manifest
+        report['provenance'] = evidence.source_identity(ROOT)
         report['git_revision'] = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
         build = ROOT/'target/s6-probes'
         probe = build/'kasane_framework_gpu_probe'
@@ -360,11 +387,14 @@ def acceptance(output, sdk, godot, matrix_only=False):
             gate('m3b_numerical', lambda: external('m3b', [sys.executable, ROOT/'tools/validate_m3b.py', '--numerical-only',
                  '--sdk', sdk, '--probe-dir', build, '--output-dir', output/'m3b'], 'numerical_status'))
             gate('editor_official', lambda: editor_gate(output, probe, godot, sdk))
-        if manifest != source_manifest(sdk) or sha(library) != report['gates']['build']['library_sha256']:
+        if (manifest != source_manifest(sdk) or evidence.source_identity(ROOT) != report['provenance']
+                or sha(library) != report['gates']['build']['library_sha256']):
             raise RuntimeError('Source or runtime changed during acceptance; rerun on a stable checkout')
         report['status'] = ('passed' if all(g['status']=='passed' for g in report['gates'].values()) else 'failed') if matrix_only else ('passed' if all_gates_passed(report) else 'failed')
     except Exception as exc:
         report['error'] = str(exc)
+        report['checks'].append(evidence.check('run_integrity', 'provenance', 'failed', reason=str(exc)))
+    evidence.finalize(report)
     persist()
     return report
 

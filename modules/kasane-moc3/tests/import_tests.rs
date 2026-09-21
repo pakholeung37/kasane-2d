@@ -671,13 +671,17 @@ fn test_unsupported_features_rejected() {
     // 1. mao_pro.moc3 has Glues (7) and BlendShapes (34 targets/tables), which are valid in M3B
     let root = workspace_root();
     let mao_path = root.join("demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3");
-    let mao_path_bench = root.join("benchmarks/cubism-matrix/assets/live2d/mao/runtime/mao_pro.moc3");
+    let mao_path_bench =
+        root.join("benchmarks/cubism-matrix/assets/live2d/mao/runtime/mao_pro.moc3");
     let target_path = if mao_path.exists() {
         mao_path
     } else {
         mao_path_bench
     };
-    assert!(target_path.exists(), "mao_pro.moc3 must exist for M3B acceptance");
+    assert!(
+        target_path.exists(),
+        "mao_pro.moc3 must exist for M3B acceptance"
+    );
     let bytes = fs::read(&target_path).expect("Failed to read mao_pro.moc3");
     let report = inspect_moc3(&bytes).expect("mao_pro must pass structural inspection in M3B");
     assert_eq!(report.version, Moc3Version::Version50);
@@ -709,7 +713,12 @@ fn test_unsupported_features_rejected() {
     let imported = import_from_bare_moc3(&cyclic_bytes, &std::collections::HashMap::new())
         .expect("Decode cyclic model");
     let decoded = &imported.document;
-    assert!(decoded.get_parameter(decoded.parameter_order()[0].as_str()).unwrap().repeat);
+    assert!(
+        decoded
+            .get_parameter(decoded.parameter_order()[0].as_str())
+            .unwrap()
+            .repeat
+    );
 
     // 4. Unknown parameter type is rejected as unsupported feature
     let type_off = offsets[114] as usize;
@@ -726,7 +735,10 @@ fn test_unsupported_features_rejected() {
         corrupt[counts_off + field * 4..counts_off + field * 4 + 4]
             .copy_from_slice(&i32::to_le_bytes(count));
         import_cases::set_i32(&mut corrupt, 40, 0, i32::MAX);
-        assert_eq!(kasane_moc3::inspect_moc3_safety(&corrupt).unwrap_err().code, "FILE_CORRUPT");
+        assert_eq!(
+            kasane_moc3::inspect_moc3_safety(&corrupt).unwrap_err().code,
+            "FILE_CORRUPT"
+        );
     }
 }
 
@@ -943,18 +955,32 @@ fn test_import_mao_full() {
     let mao_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3");
     if !mao_path.exists() {
-        eprintln!("Skipping test_import_mao_full: mao_pro.moc3 not found at {:?}", mao_path);
+        eprintln!(
+            "Skipping test_import_mao_full: mao_pro.moc3 not found at {:?}",
+            mao_path
+        );
         return;
     }
 
     let bytes = std::fs::read(&mao_path).expect("failed to read mao_pro.moc3");
-    let decoded = import_from_bare_moc3(&bytes, &HashMap::new()).expect("failed to import mao_pro.moc3");
+    let decoded =
+        import_from_bare_moc3(&bytes, &HashMap::new()).expect("failed to import mao_pro.moc3");
     let doc = &decoded.document;
 
     // Verify element counts
     assert_eq!(doc.part_order().len(), 31, "Parts count");
-    let warps_count = doc.transform_order().iter().filter(|t| doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Warp).count();
-    let rotations_count = doc.transform_order().iter().filter(|t| doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Rotation).count();
+    let warps_count = doc
+        .transform_order()
+        .iter()
+        .filter(|t| doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Warp)
+        .count();
+    let rotations_count = doc
+        .transform_order()
+        .iter()
+        .filter(|t| {
+            doc.get_transform(t).unwrap().kind == kasane_core::types::TransformKind::Rotation
+        })
+        .count();
     assert_eq!(warps_count, 116, "Warps count");
     assert_eq!(rotations_count, 59, "Rotations count");
     assert_eq!(doc.mesh_order().len(), 260, "ArtMeshes count");
@@ -964,11 +990,23 @@ fn test_import_mao_full() {
     println!("Counts: bs_warps={}, bs_rotations={}, bs_parts={}, bs_art_meshes={}, bs_constraints={}, blend_bindings={}, blend_key_tables={}",
         inspection.counts.bs_warps, inspection.counts.bs_rotations, inspection.counts.bs_parts, inspection.counts.bs_art_meshes,
         inspection.counts.bs_constraints, inspection.counts.blend_bindings, inspection.counts.blend_key_tables);
-    assert_eq!(doc.blend_constraint_order().len(), 7, "BlendShapeConstraint count");
-    assert_eq!(doc.blend_binding_order().len(), 124, "BlendShapeBinding count");
+    assert_eq!(
+        doc.blend_constraint_order().len(),
+        7,
+        "BlendShapeConstraint count"
+    );
+    assert_eq!(
+        doc.blend_binding_order().len(),
+        124,
+        "BlendShapeBinding count"
+    );
     assert_eq!(doc.glue_order().len(), 7, "Glue count");
 
-    let total_glue_pairs: usize = doc.glue_order().iter().map(|g| doc.get_glue(g).unwrap().pairs.len()).sum();
+    let total_glue_pairs: usize = doc
+        .glue_order()
+        .iter()
+        .map(|g| doc.get_glue(g).unwrap().pairs.len())
+        .sum();
     assert_eq!(total_glue_pairs, 161, "Total Glue pairs count");
 
     let mut part_bb = 0;
@@ -987,7 +1025,10 @@ fn test_import_mao_full() {
             kasane_core::types::DeltaKeyforms::Offscreen(_) => {}
         }
     }
-    println!("BlendBindings distribution: Part={}, Warp={}, Rotation={}, Mesh={}, Glue={}", part_bb, warp_bb, rot_bb, mesh_bb, glue_bb);
+    println!(
+        "BlendBindings distribution: Part={}, Warp={}, Rotation={}, Mesh={}, Glue={}",
+        part_bb, warp_bb, rot_bb, mesh_bb, glue_bb
+    );
 
     // Evaluation against PurismModelInstance
     let mut runtime = PurismModelInstance::new(&bytes);
@@ -1003,10 +1044,21 @@ fn test_import_mao_full() {
     for mesh_id in doc.mesh_order() {
         let mesh = doc.get_mesh(mesh_id).unwrap();
         if let Some(purism_drawable) = runtime.get_drawable(&mesh.runtime_id) {
-            let doc_drawable = frame.drawables.iter().find(|d| d.runtime_id == mesh.runtime_id).unwrap();
-            assert_eq!(doc_drawable.positions.len(), purism_drawable.positions.len());
+            let doc_drawable = frame
+                .drawables
+                .iter()
+                .find(|d| d.runtime_id == mesh.runtime_id)
+                .unwrap();
+            assert_eq!(
+                doc_drawable.positions.len(),
+                purism_drawable.positions.len()
+            );
             let mut mesh_err = 0.0f32;
-            for (p_doc, p_purism) in doc_drawable.positions.iter().zip(&purism_drawable.positions) {
+            for (p_doc, p_purism) in doc_drawable
+                .positions
+                .iter()
+                .zip(&purism_drawable.positions)
+            {
                 let err = ((p_doc.x - p_purism.x).powi(2) + (p_doc.y - p_purism.y).powi(2)).sqrt();
                 if err > mesh_err {
                     mesh_err = err;
@@ -1026,20 +1078,32 @@ fn test_import_mao_full() {
     let mut mismatch_count = 0;
     for d in &frame.drawables {
         let p = runtime.get_drawable(&d.runtime_id).unwrap();
-        let is_ok = d.positions.iter().zip(&p.positions).all(|(a, b)| {
-            ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt() <= 0.05
-        });
+        let is_ok = d
+            .positions
+            .iter()
+            .zip(&p.positions)
+            .all(|(a, b)| ((a.x - b.x).powi(2) + (a.y - b.y).powi(2)).sqrt() <= 0.05);
         if !is_ok {
             mismatch_count += 1;
         }
     }
     let ok_count = checked_meshes - mismatch_count;
-    println!("Matching meshes (<= 0.05px): {} / {}", ok_count, checked_meshes);
+    println!(
+        "Matching meshes (<= 0.05px): {} / {}",
+        ok_count, checked_meshes
+    );
     println!("Mismatch count: {}", mismatch_count);
 
     assert_eq!(checked_meshes, 260, "All meshes checked");
-    println!("Max position error against PurismCore on Mao default pose: {} px", max_pos_error);
-    assert!(max_pos_error < 0.05, "Dual-core numerical parity margin exceeded: max_pos_error={}", max_pos_error);
+    println!(
+        "Max position error against PurismCore on Mao default pose: {} px",
+        max_pos_error
+    );
+    assert!(
+        max_pos_error < 0.05,
+        "Dual-core numerical parity margin exceeded: max_pos_error={}",
+        max_pos_error
+    );
 }
 
 #[test]
@@ -1048,24 +1112,29 @@ fn test_mao_roundtrip_export_and_detached_reopening() {
         "../../demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3",
         "demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3",
     ];
-    let path = candidates.iter().map(std::path::Path::new).find(|p| p.exists());
+    let path = candidates
+        .iter()
+        .map(std::path::Path::new)
+        .find(|p| p.exists());
     if path.is_none() {
-        eprintln!("Skipping test_mao_roundtrip_export_and_detached_reopening: mao_pro.moc3 not found");
+        eprintln!(
+            "Skipping test_mao_roundtrip_export_and_detached_reopening: mao_pro.moc3 not found"
+        );
         return;
     }
     let path = path.unwrap();
 
     let orig_bytes = std::fs::read(path).expect("failed to read mao_pro.moc3");
-    let orig_res = import_from_bare_moc3(&orig_bytes, &HashMap::new()).expect("initial import failed");
+    let orig_res =
+        import_from_bare_moc3(&orig_bytes, &HashMap::new()).expect("initial import failed");
     let orig_doc = &orig_res.document;
 
     // 1. Serialize Document to Project v2 format
-    let project_json = kasane_project::encode_project(orig_doc)
-        .expect("encode_project failed");
+    let project_json = kasane_project::encode_project(orig_doc).expect("encode_project failed");
 
     // 2. Load into a fresh, completely detached Document (no orig_bytes reference)
-    let detached_doc = kasane_project::decode_project(&project_json)
-        .expect("decode_project failed");
+    let detached_doc =
+        kasane_project::decode_project(&project_json).expect("decode_project failed");
 
     assert_eq!(detached_doc.mesh_order().len(), 260);
     assert_eq!(detached_doc.parameter_order().len(), 128);
@@ -1086,7 +1155,10 @@ fn test_mao_roundtrip_export_and_detached_reopening() {
             moc_buf.as_mut_ptr() as *mut std::ffi::c_void,
             moc_buf.len() as u32,
         );
-        assert_eq!(consistent, 1, "csmHasMocConsistency failed on exported 5.0 MOC3");
+        assert_eq!(
+            consistent, 1,
+            "csmHasMocConsistency failed on exported 5.0 MOC3"
+        );
     }
 
     // 5. Initialize Purism runtime on exported bytes
@@ -1110,11 +1182,19 @@ fn test_mao_roundtrip_export_and_detached_reopening() {
             }
         }
     }
-    println!("Max position error between original Mao and exported Mao in PurismCore: {} px", max_err);
-    assert!(max_err < 0.05, "Dual-core numerical parity margin exceeded on exported MOC3: max_err={}", max_err);
+    println!(
+        "Max position error between original Mao and exported Mao in PurismCore: {} px",
+        max_err
+    );
+    assert!(
+        max_err < 0.05,
+        "Dual-core numerical parity margin exceeded on exported MOC3: max_err={}",
+        max_err
+    );
 
     // 7. Re-import the exported MOC3 binary into a 3rd Document and verify lossless roundtrip
-    let reimported_res = import_from_bare_moc3(&exp_bytes, &HashMap::new()).expect("re-import of exported MOC3 failed");
+    let reimported_res = import_from_bare_moc3(&exp_bytes, &HashMap::new())
+        .expect("re-import of exported MOC3 failed");
     let reimported_doc = &reimported_res.document;
     assert_eq!(reimported_doc.mesh_order().len(), 260);
     assert_eq!(reimported_doc.parameter_order().len(), 128);
@@ -1130,7 +1210,6 @@ fn test_mao_roundtrip_export_and_detached_reopening() {
     assert_eq!(reimported_doc.blend_key_table_order().len(), 33);
     assert_eq!(reimported_doc.blend_constraint_order().len(), 7);
 }
-
 
 #[test]
 fn blend_colors_and_fractional_orders_match_core_and_roundtrip() {
@@ -1392,27 +1471,50 @@ fn safety_inspection_does_not_skip_corruption_for_unsupported_features() {
 fn repeated_blend_target_groups_are_not_silently_merged() {
     use kasane_core::types::*;
     let mut doc = create_m1_fixture_doc();
-    assert!(doc.create_parameter(Parameter {
-        id: id(420), runtime_id: "SharedBlend".into(), minimum: 0.0,
-        maximum: 1.0, default_value: 0.0, kind: ParameterKind::BlendShape,
-        ..Default::default()
-    }).status.is_ok());
-    assert!(doc.create_blend_key_table(BlendShapeKeyTable {
-        id: id(421), parameter_id: id(420), keys: vec![0.0, 1.0], base_key_idx: 0,
-    }).status.is_ok());
+    assert!(doc
+        .create_parameter(Parameter {
+            id: id(420),
+            runtime_id: "SharedBlend".into(),
+            minimum: 0.0,
+            maximum: 1.0,
+            default_value: 0.0,
+            kind: ParameterKind::BlendShape,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_blend_key_table(BlendShapeKeyTable {
+            id: id(421),
+            parameter_id: id(420),
+            keys: vec![0.0, 1.0],
+            base_key_idx: 0,
+        })
+        .status
+        .is_ok());
     let original = doc.get_mesh(&doc.mesh_order()[0]).unwrap().clone();
     let mut other = original.clone();
     other.id = id(422);
     other.runtime_id = "SecondBlendTarget".into();
     assert!(doc.create_mesh(other.clone()).status.is_ok());
     for (n, mesh) in [original, other].iter().enumerate() {
-        assert!(doc.create_blend_binding(BlendShapeBinding {
-            id: id(423 + n as i32), target_id: mesh.id.clone(), target_kind: BlendShapeTargetKind::Mesh,
-            key_table_id: id(421), constraint_ids: vec![],
-            keyforms: DeltaKeyforms::Mesh(vec![DeltaMeshKeyform {
-                positions: vec![Vec2::default(); mesh.vertex_ids.len()], ..Default::default()
-            }; 2]),
-        }).status.is_ok());
+        assert!(doc
+            .create_blend_binding(BlendShapeBinding {
+                id: id(423 + n as i32),
+                target_id: mesh.id.clone(),
+                target_kind: BlendShapeTargetKind::Mesh,
+                key_table_id: id(421),
+                constraint_ids: vec![],
+                keyforms: DeltaKeyforms::Mesh(vec![
+                    DeltaMeshKeyform {
+                        positions: vec![Vec2::default(); mesh.vertex_ids.len()],
+                        ..Default::default()
+                    };
+                    2
+                ]),
+            })
+            .status
+            .is_ok());
     }
     let mut bytes = encode_moc3(&doc).unwrap().bytes;
     let inspection = inspect_moc3(&bytes).unwrap();
@@ -1428,9 +1530,12 @@ fn repeated_blend_target_groups_are_not_silently_merged() {
 #[test]
 fn test_import_hiyori_zero_triangle_meshes_and_glue() {
     let root = workspace_root();
-    let moc_path = root.join("third_party/CubismSdkForNative-5-r.5/Samples/Resources/Hiyori/Hiyori.moc3");
+    let moc_path =
+        root.join("third_party/CubismSdkForNative-5-r.5/Samples/Resources/Hiyori/Hiyori.moc3");
     if !moc_path.exists() {
-        eprintln!("Skipping test_import_hiyori_zero_triangle_meshes_and_glue: Hiyori.moc3 not found");
+        eprintln!(
+            "Skipping test_import_hiyori_zero_triangle_meshes_and_glue: Hiyori.moc3 not found"
+        );
         return;
     }
     let bytes = fs::read(&moc_path).expect("failed to read Hiyori.moc3");
@@ -1440,17 +1545,31 @@ fn test_import_hiyori_zero_triangle_meshes_and_glue() {
     assert_eq!(inspection.counts.art_meshes, 134);
     assert_eq!(inspection.counts.glues, 26);
 
-    let decoded = import_from_bare_moc3(&bytes, &HashMap::new()).expect("failed to import Hiyori.moc3");
+    let decoded =
+        import_from_bare_moc3(&bytes, &HashMap::new()).expect("failed to import Hiyori.moc3");
     let doc = &decoded.document;
 
     // Verify the 4 zero-triangle meshes exist in Document
     let zero_triangle_rids = ["ArtMesh116", "ArtMesh123", "ArtMesh130", "ArtMesh137"];
     let mut zero_mesh_ids = Vec::new();
     for rid in &zero_triangle_rids {
-        let m_id = decoded.report.id_mapping.meshes.get(*rid).expect("mesh mapping found");
+        let m_id = decoded
+            .report
+            .id_mapping
+            .meshes
+            .get(*rid)
+            .expect("mesh mapping found");
         let mesh = doc.get_mesh(m_id).expect("mesh exists in document");
-        assert!(mesh.triangles.is_empty(), "Mesh {} must have zero triangles", rid);
-        assert!(!mesh.vertex_ids.is_empty(), "Mesh {} must retain its vertices", rid);
+        assert!(
+            mesh.triangles.is_empty(),
+            "Mesh {} must have zero triangles",
+            rid
+        );
+        assert!(
+            !mesh.vertex_ids.is_empty(),
+            "Mesh {} must retain its vertices",
+            rid
+        );
         zero_mesh_ids.push(m_id.clone());
     }
 
@@ -1462,10 +1581,16 @@ fn test_import_hiyori_zero_triangle_meshes_and_glue() {
         let g = doc.get_glue(g_id).unwrap();
         if zero_mesh_ids.contains(&g.mesh_a_id) || zero_mesh_ids.contains(&g.mesh_b_id) {
             zero_mesh_glues += 1;
-            assert!(!g.pairs.is_empty(), "Glue with zero-triangle endpoint must have vertex pairs");
+            assert!(
+                !g.pairs.is_empty(),
+                "Glue with zero-triangle endpoint must have vertex pairs"
+            );
         }
     }
-    assert_eq!(zero_mesh_glues, 4, "All 4 zero-triangle meshes must be bound to glues");
+    assert_eq!(
+        zero_mesh_glues, 4,
+        "All 4 zero-triangle meshes must be bound to glues"
+    );
 
     // Evaluate against PurismCore
     let mut runtime = PurismModelInstance::new(&bytes);
@@ -1487,17 +1612,26 @@ fn test_import_hiyori_zero_triangle_meshes_and_glue() {
             }
         }
     }
-    assert!(max_pos_error < 1e-3, "Hiyori max position error {max_pos_error} too high");
+    assert!(
+        max_pos_error < 1e-3,
+        "Hiyori max position error {max_pos_error} too high"
+    );
 
     // Export to MOC3 v5 and verify roundtrip
     let encoded = encode_moc3(doc).expect("failed to encode Hiyori");
-    let reimport = import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("failed to reimport Hiyori");
+    let reimport =
+        import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("failed to reimport Hiyori");
     assert_eq!(reimport.document.mesh_order().len(), 134);
     assert_eq!(reimport.document.glue_order().len(), 26);
 
     // Verify zero-triangle meshes are still zero-triangle in reimported doc
     for rid in &zero_triangle_rids {
-        let m_id = reimport.report.id_mapping.meshes.get(*rid).expect("mesh mapping in reimport");
+        let m_id = reimport
+            .report
+            .id_mapping
+            .meshes
+            .get(*rid)
+            .expect("mesh mapping in reimport");
         let mesh = reimport.document.get_mesh(m_id).expect("mesh in reimport");
         assert!(mesh.triangles.is_empty());
     }
@@ -1507,8 +1641,18 @@ fn test_import_hiyori_zero_triangle_meshes_and_glue() {
 fn test_import_rice_and_mark_v3() {
     let root = workspace_root();
     for (name, rel_path, expected_meshes, expected_glues) in [
-        ("Rice", "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Rice/Rice.moc3", 178, 33),
-        ("Mark", "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Mark/Mark.moc3", 30, 0),
+        (
+            "Rice",
+            "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Rice/Rice.moc3",
+            178,
+            33,
+        ),
+        (
+            "Mark",
+            "third_party/CubismSdkForNative-5-r.5/Samples/Resources/Mark/Mark.moc3",
+            30,
+            0,
+        ),
     ] {
         let moc_path = root.join(rel_path);
         if !moc_path.exists() {
@@ -1546,11 +1690,15 @@ fn test_import_rice_and_mark_v3() {
                 }
             }
         }
-        assert!(max_pos_error < 1e-3, "{name} max position error {max_pos_error} too high");
+        assert!(
+            max_pos_error < 1e-3,
+            "{name} max position error {max_pos_error} too high"
+        );
 
         // Encode and roundtrip
         let encoded = encode_moc3(doc).expect("encode failed");
-        let reimport = import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("reimport failed");
+        let reimport =
+            import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("reimport failed");
         assert_eq!(reimport.document.mesh_order().len(), expected_meshes);
         assert_eq!(reimport.document.glue_order().len(), expected_glues);
     }
@@ -1569,10 +1717,22 @@ fn test_zero_triangle_mesh_editing_and_lifecycle() {
         name: "ZeroTriMesh".into(),
         part_id: String::new(),
         deformer_id: id(4),
-        texture_asset_id: doc.get_mesh(&doc.mesh_order()[0]).unwrap().texture_asset_id.clone(),
+        texture_asset_id: doc
+            .get_mesh(&doc.mesh_order()[0])
+            .unwrap()
+            .texture_asset_id
+            .clone(),
         vertex_ids: vec![vid1, vid2, vid3],
-        base_positions: vec![Vec2::new(0.0, 0.0), Vec2::new(10.0, 0.0), Vec2::new(5.0, 10.0)],
-        uvs: vec![Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.5, 1.0)],
+        base_positions: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(5.0, 10.0),
+        ],
+        uvs: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.5, 1.0),
+        ],
         triangles: vec![], // Zero triangles!
         appearance: Appearance::default(),
         draw_order: Some(1.0),
@@ -1588,7 +1748,11 @@ fn test_zero_triangle_mesh_editing_and_lifecycle() {
     // Evaluate frame with zero-triangle mesh present
     let mut frame = DrawableFrame::default();
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
-    let z_drawable = frame.drawables.iter().find(|d| d.id == mesh_id).expect("drawable exists");
+    let z_drawable = frame
+        .drawables
+        .iter()
+        .find(|d| d.id == mesh_id)
+        .expect("drawable exists");
     assert!(z_drawable.indices.is_empty());
     assert_eq!(z_drawable.positions.len(), 3);
 
@@ -1599,7 +1763,11 @@ fn test_zero_triangle_mesh_editing_and_lifecycle() {
 
     let mut frame2 = DrawableFrame::default();
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame2).is_ok());
-    let r_drawable = frame2.drawables.iter().find(|d| d.id == mesh_id).expect("drawable exists");
+    let r_drawable = frame2
+        .drawables
+        .iter()
+        .find(|d| d.id == mesh_id)
+        .expect("drawable exists");
     assert_eq!(r_drawable.indices.len(), 3);
 
     // Edit 2: Remove triangle again (renderable -> zero-triangle)
@@ -1609,13 +1777,20 @@ fn test_zero_triangle_mesh_editing_and_lifecycle() {
 
     let mut frame3 = DrawableFrame::default();
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame3).is_ok());
-    let z2_drawable = frame3.drawables.iter().find(|d| d.id == mesh_id).expect("drawable exists");
+    let z2_drawable = frame3
+        .drawables
+        .iter()
+        .find(|d| d.id == mesh_id)
+        .expect("drawable exists");
     assert!(z2_drawable.indices.is_empty());
 
     // Encode to MOC3 and verify zero triangles survive serialization
     let encoded = encode_moc3(&doc).expect("encode failed");
     let reimport = import_from_bare_moc3(&encoded.bytes, &HashMap::new()).expect("reimport failed");
-    let re_mesh = reimport.document.get_mesh(&reimport.report.id_mapping.meshes["ZeroTriMesh"]).unwrap();
+    let re_mesh = reimport
+        .document
+        .get_mesh(&reimport.report.id_mapping.meshes["ZeroTriMesh"])
+        .unwrap();
     assert!(re_mesh.triangles.is_empty());
     assert_eq!(re_mesh.vertex_ids.len(), 3);
 }
@@ -1637,7 +1812,9 @@ fn test_decoder_strict_index_validation() {
 
     // 2. Out of bounds vertex index (vi >= vc)
     let mut bad_idx = encoded.bytes.clone();
-    let first_idx_offset = indices_base + (i32::from_le_bytes(bad_idx[idx_off_val..idx_off_val + 4].try_into().unwrap()) as usize) * 2;
+    let first_idx_offset = indices_base
+        + (i32::from_le_bytes(bad_idx[idx_off_val..idx_off_val + 4].try_into().unwrap()) as usize)
+            * 2;
     bad_idx[first_idx_offset..first_idx_offset + 2].copy_from_slice(&u16::to_le_bytes(9999));
     let err2 = kasane_moc3::decoder::decode_moc3(&bad_idx, &inspection, &[]).unwrap_err();
     assert_eq!(err2.code, "INVALID_INDEX");
@@ -1660,7 +1837,10 @@ fn test_s1_layout_safety_and_version_gating() {
     v4_bytes[4] = 4;
     let safe_v4 = kasane_moc3::inspect_moc3_safety(&v4_bytes).expect("safety should pass");
     assert_eq!(safe_v4.version, Moc3Version::Version42);
-    assert!(!safe_v4.unsupported_features.iter().any(|u| u.category == "version_4_moc42"));
+    assert!(!safe_v4
+        .unsupported_features
+        .iter()
+        .any(|u| u.category == "version_4_moc42"));
     let ins_v4 = kasane_moc3::inspect_moc3(&v4_bytes).expect("v4 inspection should succeed in S2");
     assert_eq!(ins_v4.version, Moc3Version::Version42);
 
@@ -1669,13 +1849,20 @@ fn test_s1_layout_safety_and_version_gating() {
     let ren_path = root.join("third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.moc3");
     if ren_path.exists() {
         let ren_bytes = fs::read(&ren_path).expect("read Ren");
-        let safe_ren = kasane_moc3::inspect_moc3_safety(&ren_bytes).expect("safety should pass on Ren");
+        let safe_ren =
+            kasane_moc3::inspect_moc3_safety(&ren_bytes).expect("safety should pass on Ren");
         assert_eq!(safe_ren.version, Moc3Version::Version53);
         assert_eq!(safe_ren.counts.offscreens, 24);
-        assert!(safe_ren.unsupported_features.is_empty(), "Ren unsupported_features must be empty in S5: {:?}", safe_ren.unsupported_features);
-        let ins_ren = kasane_moc3::inspect_moc3(&ren_bytes).expect("Ren inspection should succeed in S5");
+        assert!(
+            safe_ren.unsupported_features.is_empty(),
+            "Ren unsupported_features must be empty in S5: {:?}",
+            safe_ren.unsupported_features
+        );
+        let ins_ren =
+            kasane_moc3::inspect_moc3(&ren_bytes).expect("Ren inspection should succeed in S5");
         assert_eq!(ins_ren.version, Moc3Version::Version53);
-        let decoded = kasane_moc3::decode_moc3(&ren_bytes, &ins_ren, &[]).expect("decode Ren in S5");
+        let decoded =
+            kasane_moc3::decode_moc3(&ren_bytes, &ins_ren, &[]).expect("decode Ren in S5");
         assert_eq!(decoded.document.offscreen_count(), 24);
         assert_eq!(decoded.document.part_order().len(), 51);
         assert_eq!(decoded.document.mesh_order().len(), 198);
@@ -1685,18 +1872,33 @@ fn test_s1_layout_safety_and_version_gating() {
     let mut short_v6 = vec![0u8; 1000]; // less than 1984 bytes
     short_v6[0..4].copy_from_slice(b"MOC3");
     short_v6[4] = 6;
-    assert_eq!(kasane_moc3::inspect_moc3_safety(&short_v6).unwrap_err().code, "BUFFER_TOO_SMALL");
+    assert_eq!(
+        kasane_moc3::inspect_moc3_safety(&short_v6)
+            .unwrap_err()
+            .code,
+        "BUFFER_TOO_SMALL"
+    );
 
     // 4. Misaligned section offset
     let mut misaligned = encoded.bytes.clone();
     let old_off = u32::from_le_bytes(misaligned[64..68].try_into().unwrap());
     misaligned[64..68].copy_from_slice(&(old_off + 1).to_le_bytes()); // add 1 to make it odd
-    assert_eq!(kasane_moc3::inspect_moc3_safety(&misaligned).unwrap_err().code, "FILE_CORRUPT");
+    assert_eq!(
+        kasane_moc3::inspect_moc3_safety(&misaligned)
+            .unwrap_err()
+            .code,
+        "FILE_CORRUPT"
+    );
 
     // 5. Unknown version (version 7)
     let mut v7_bytes = encoded.bytes.clone();
     v7_bytes[4] = 7;
-    assert_eq!(kasane_moc3::inspect_moc3_safety(&v7_bytes).unwrap_err().code, "UNSUPPORTED_VERSION");
+    assert_eq!(
+        kasane_moc3::inspect_moc3_safety(&v7_bytes)
+            .unwrap_err()
+            .code,
+        "UNSUPPORTED_VERSION"
+    );
 }
 
 #[test]
@@ -1735,9 +1937,11 @@ fn test_import_external_v42() {
     assert_eq!(doc.blend_binding_order().len(), 2);
 
     // Verify ParamBS is BlendShape
-    let p_bs_id = doc.parameter_order().iter().find(|id| {
-        doc.get_parameter(id).unwrap().runtime_id == "ParamBS"
-    }).expect("ParamBS exists");
+    let p_bs_id = doc
+        .parameter_order()
+        .iter()
+        .find(|id| doc.get_parameter(id).unwrap().runtime_id == "ParamBS")
+        .expect("ParamBS exists");
     let p_bs = doc.get_parameter(p_bs_id).unwrap();
     assert_eq!(p_bs.kind, ParameterKind::BlendShape);
 
@@ -1789,8 +1993,10 @@ fn test_v42_without_blendshapes() {
         bytes[counts_off + f * 4..counts_off + f * 4 + 4].copy_from_slice(&0i32.to_le_bytes());
     }
     // Also clear param_src.blend_key_table_len (section 116) and param_src.type (section 114)
-    let sec_114_off = u32::from_le_bytes(bytes[64 + 114 * 4..64 + 114 * 4 + 4].try_into().unwrap()) as usize;
-    let sec_116_off = u32::from_le_bytes(bytes[64 + 116 * 4..64 + 116 * 4 + 4].try_into().unwrap()) as usize;
+    let sec_114_off =
+        u32::from_le_bytes(bytes[64 + 114 * 4..64 + 114 * 4 + 4].try_into().unwrap()) as usize;
+    let sec_116_off =
+        u32::from_le_bytes(bytes[64 + 116 * 4..64 + 116 * 4 + 4].try_into().unwrap()) as usize;
     for p in 0..3 {
         bytes[sec_114_off + p * 4..sec_114_off + p * 4 + 4].copy_from_slice(&0i32.to_le_bytes());
         bytes[sec_116_off + p * 4..sec_116_off + p * 4 + 4].copy_from_slice(&0i32.to_le_bytes());
@@ -1800,7 +2006,8 @@ fn test_v42_without_blendshapes() {
     assert_eq!(inspection.counts.blend_bindings, 0);
     assert_eq!(inspection.counts.blend_key_tables, 0);
 
-    let res = import_from_bare_moc3(&bytes, &HashMap::new()).expect("Import without BS should succeed");
+    let res =
+        import_from_bare_moc3(&bytes, &HashMap::new()).expect("Import without BS should succeed");
     assert_eq!(res.document.blend_binding_order().len(), 0);
     assert_eq!(res.document.blend_key_table_order().len(), 0);
 
@@ -1816,12 +2023,16 @@ fn test_v42_corrupt_color_index_rejected() {
 
     // Section 107 is art_mesh_src.key_color_off
     // Corrupt it to point to 999 (outside keyform_mul_colors which is 7)
-    let sec_107_off = u32::from_le_bytes(bytes[64 + 107 * 4..64 + 107 * 4 + 4].try_into().unwrap()) as usize;
+    let sec_107_off =
+        u32::from_le_bytes(bytes[64 + 107 * 4..64 + 107 * 4 + 4].try_into().unwrap()) as usize;
     bytes[sec_107_off..sec_107_off + 4].copy_from_slice(&999i32.to_le_bytes());
 
     let err = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap_err();
     assert!(
-        matches!(err.code.as_str(), "INVALID_COLOR_REFERENCE" | "FILE_CORRUPT"),
+        matches!(
+            err.code.as_str(),
+            "INVALID_COLOR_REFERENCE" | "FILE_CORRUPT"
+        ),
         "Expected color reference error, got: {:?}",
         err
     );
@@ -1875,7 +2086,10 @@ fn test_cyclic_parameter_moc3_roundtrip_and_evaluation() {
         .expect("Import encoded cyclic model");
     let re_doc = &imported.document;
     assert!(
-        re_doc.get_parameter(re_doc.parameter_order()[0].as_str()).unwrap().repeat,
+        re_doc
+            .get_parameter(re_doc.parameter_order()[0].as_str())
+            .unwrap()
+            .repeat,
         "Re-imported document must have repeat: true"
     );
 
@@ -1895,7 +2109,10 @@ fn test_cyclic_parameter_moc3_roundtrip_and_evaluation() {
         assert!(kasane_core::evaluate_frame(re_doc, &preview_re, &mut frame_re).is_ok());
 
         assert_eq!(frame_orig.parameters[0].value, frame_re.parameters[0].value);
-        assert_eq!(frame_orig.drawables[0].positions, frame_re.drawables[0].positions);
+        assert_eq!(
+            frame_orig.drawables[0].positions,
+            frame_re.drawables[0].positions
+        );
     }
 }
 
@@ -1957,7 +2174,8 @@ fn test_v6_export_and_preflight() {
     // 1. Re-export Ren with Auto -> should succeed and export v6
     let exported = kasane_moc3::encode_moc3(doc).expect("encode Ren auto");
     assert_eq!(exported.bytes[4], 6); // Version 6
-    let safe_re = kasane_moc3::inspect_moc3_safety(&exported.bytes).expect("safety on re-exported Ren");
+    let safe_re =
+        kasane_moc3::inspect_moc3_safety(&exported.bytes).expect("safety on re-exported Ren");
     assert_eq!(safe_re.version, Moc3Version::Version53);
     assert_eq!(safe_re.counts.offscreens, 24);
     assert_eq!(safe_re.counts.parts, 51);
@@ -1969,8 +2187,8 @@ fn test_v6_export_and_preflight() {
     assert_eq!(err_v50.code, "INCOMPATIBLE_EXPORT_VERSION");
 
     // 3. Export with Moc3ExportVersion::V53 -> should succeed
-    let exp_v53 = encode_moc3_with_version(doc, Moc3ExportVersion::V53)
-        .expect("V53 export must succeed");
+    let exp_v53 =
+        encode_moc3_with_version(doc, Moc3ExportVersion::V53).expect("V53 export must succeed");
     assert_eq!(exp_v53.bytes[4], 6);
 
     // 4. Verify re-exported bytes can be loaded in PurismModelInstance
@@ -1980,15 +2198,196 @@ fn test_v6_export_and_preflight() {
 
     // Render order must include Offscreens in group descendant totals. Missing
     // them creates colliding orders and loses meshes in the official renderer.
-    let defaults: Vec<f32> = doc.parameter_order().iter()
-        .map(|id| doc.get_parameter(id).unwrap().default_value).collect();
+    let defaults: Vec<f32> = doc
+        .parameter_order()
+        .iter()
+        .map(|id| doc.get_parameter(id).unwrap().default_value)
+        .collect();
     assert_runtime_matches(doc, &exported.bytes, &[defaults]);
 
     // 5. Test auto on a document without 5.3 features exports v5
     let v5_source = fs::read(root.join("tests/fixtures/external_v50/model.moc3")).unwrap();
-    let v5_doc = import_from_bare_moc3(&v5_source, &HashMap::new()).unwrap().document;
+    let v5_doc = import_from_bare_moc3(&v5_source, &HashMap::new())
+        .unwrap()
+        .document;
     let v5_exported = kasane_moc3::encode_moc3(&v5_doc).expect("encode v5 doc auto");
     assert_eq!(v5_exported.bytes[4], 5); // Version 5
 }
 
+#[test]
+fn static_offscreen_export_preserves_appearance() {
+    use kasane_core::types::{Offscreen, OffscreenKeyform, Part};
+    let mut doc = create_m1_fixture_doc();
+    assert!(doc
+        .create_part(Part {
+            id: id(900),
+            runtime_id: "StaticPart".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_offscreen(Offscreen {
+            id: id(901),
+            runtime_id: "StaticOffscreen".into(),
+            part_id: id(900),
+            keyforms: vec![OffscreenKeyform {
+                opacity: 0.3,
+                multiply: Some([0.4, 0.5, 0.6]),
+                screen: Some([0.1, 0.2, 0.3])
+            }],
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut before = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut before).is_ok());
+    let exported = encode_moc3(&doc).unwrap();
+    let imported = import_from_bare_moc3(&exported.bytes, &HashMap::new()).unwrap();
+    let mut after = DrawableFrame::default();
+    assert!(evaluate_frame(&imported.document, &HashMap::new(), &mut after).is_ok());
+    assert_eq!(before.offscreens[0].opacity, after.offscreens[0].opacity);
+    assert_eq!(
+        before.offscreens[0].multiply_color,
+        after.offscreens[0].multiply_color
+    );
+    assert_eq!(
+        before.offscreens[0].screen_color,
+        after.offscreens[0].screen_color
+    );
+}
 
+#[test]
+fn decoder_rejects_blendshape_references_without_core_guard() {
+    // Keep valid section layout and counts, change only semantic references.
+    // Calling the decoder directly exercises its own checks, independently of
+    // the optional native consistency checker used by inspect_moc3.
+    let original =
+        fs::read(workspace_root().join("tests/fixtures/external_v50_bs_glue/model.moc3")).unwrap();
+    let inspection = inspect_moc3(&original).unwrap();
+    for section in [149, 150, 151, 120, 121, 122, 123, 124] {
+        let mut bytes = original.clone();
+        let offset = inspection.section_offsets[section] as usize;
+        bytes[offset..offset + 4].copy_from_slice(&i32::MAX.to_le_bytes());
+        let error = kasane_moc3::decode_moc3(&bytes, &inspection, &[]).unwrap_err();
+        assert_eq!(error.code, "INDEX_OUT_OF_BOUNDS", "section {section}");
+    }
+}
+
+#[test]
+fn joint_offscreen_edit_survives_project_and_moc3_roundtrip() {
+    use kasane_core::{Offscreen, OffscreenKeyform, Part, SceneBinding, SceneKeyform};
+    let mut doc = create_m1_fixture_doc();
+    let mut asset = doc.get_asset(&id(2)).unwrap().clone();
+    asset.sha256 = "0".repeat(64);
+    asset.source = "assets/textures/0.png".into();
+    assert!(doc.replace_asset(asset).status.is_ok());
+    assert!(doc
+        .create_part(Part {
+            id: id(910),
+            runtime_id: "JointPart".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_parameter(Parameter {
+            id: id(911),
+            runtime_id: "JointParam".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut binding = SceneBinding {
+        id: id(912),
+        target_id: id(910),
+        axes: vec![BindingAxis {
+            parameter_id: id(911),
+            keys: vec![-1.0, 1.0],
+        }],
+        keyforms: vec![
+            SceneKeyform {
+                keys: vec![-1.0],
+                ..Default::default()
+            },
+            SceneKeyform {
+                keys: vec![1.0],
+                ..Default::default()
+            },
+        ],
+    };
+    assert!(doc.create_scene_binding(binding.clone()).status.is_ok());
+    let mut os = Offscreen {
+        id: id(913),
+        runtime_id: "JointOS".into(),
+        part_id: id(910),
+        part_keyform_indices: vec![0, -1],
+        keyforms: vec![OffscreenKeyform {
+            opacity: 0.2,
+            multiply: Some([0.4, 0.5, 0.6]),
+            screen: Some([0.1, 0.2, 0.3]),
+        }],
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(os.clone()).status.is_ok());
+    binding.axes[0].keys.insert(1, 0.0);
+    binding.keyforms.insert(
+        1,
+        SceneKeyform {
+            keys: vec![0.0],
+            ..Default::default()
+        },
+    );
+    os.keyforms.push(OffscreenKeyform {
+        opacity: 0.6,
+        multiply: Some([0.7, 0.8, 0.9]),
+        screen: Some([0.2, 0.3, 0.4]),
+    });
+    os.part_keyform_indices = vec![0, 1, -1];
+    assert!(doc
+        .replace_part_binding_with_offscreen(binding, os.clone())
+        .status
+        .is_ok());
+    // Reordered, reused and neutral slots must preserve interpolated appearance.
+    for mapping in [
+        vec![0, 1, -1],
+        vec![-1, 1, 0],
+        vec![1, 0, 1],
+        vec![-1, -1, -1],
+    ] {
+        os.part_keyform_indices = mapping;
+        assert!(doc.replace_offscreen(os.clone()).status.is_ok());
+        let reopened =
+            kasane_project::decode_project(&kasane_project::encode_project(&doc).unwrap()).unwrap();
+        assert_eq!(reopened.get_offscreen(&id(913)), Some(&os));
+        let bytes = encode_moc3(&reopened).unwrap().bytes;
+        let imported = import_from_bare_moc3(&bytes, &HashMap::new())
+            .unwrap()
+            .document;
+        let imported_param = imported
+            .parameter_order()
+            .iter()
+            .find(|id| imported.get_parameter(id).unwrap().runtime_id == "JointParam")
+            .unwrap();
+        for value in [-1.0, -0.5, 0.0, 0.5, 1.0] {
+            let mut before = DrawableFrame::default();
+            let mut after = DrawableFrame::default();
+            assert!(evaluate_frame(&doc, &HashMap::from([(id(911), value)]), &mut before).is_ok());
+            assert!(evaluate_frame(
+                &imported,
+                &HashMap::from([(imported_param.clone(), value)]),
+                &mut after
+            )
+            .is_ok());
+            assert_eq!(before.offscreens[0].opacity, after.offscreens[0].opacity);
+            assert_eq!(
+                before.offscreens[0].multiply_color,
+                after.offscreens[0].multiply_color
+            );
+            assert_eq!(
+                before.offscreens[0].screen_color,
+                after.offscreens[0].screen_color
+            );
+        }
+    }
+}

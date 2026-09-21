@@ -2,6 +2,12 @@ use std::path::Path;
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(has_purism_core)");
+    println!("cargo:rerun-if-env-changed=KASANE_MOC3_DISABLE_CORE_VALIDATION");
+    if std::env::var_os("CARGO_FEATURE_PURISM_VALIDATION").is_none()
+        || std::env::var_os("KASANE_MOC3_DISABLE_CORE_VALIDATION").is_some()
+    {
+        return;
+    }
     let purism_root = Path::new("../purism-core");
     if !purism_root.join("include/PurismCore.h").exists() {
         println!(

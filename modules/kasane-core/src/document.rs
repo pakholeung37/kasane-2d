@@ -1754,6 +1754,26 @@ impl Document {
             occupied[index] = true;
             ordered[index] = f;
         }
+        if let Some(os) = self.offscreen_for_part(&b.target_id) {
+            if !os.part_keyform_indices.is_empty() && os.part_keyform_indices.len() != total {
+                return Status::error(
+                    "INVALID_LENGTH",
+                    format!(
+                        "{}: update offscreen mapping before changing Part keyform count",
+                        os.id
+                    ),
+                );
+            }
+        }
+        if let Some(previous) = self.get_scene_binding(&b.id) {
+            if previous.target_id != b.target_id {
+                if let Some(os) = self.offscreen_for_part(&previous.target_id) {
+                    if !os.part_keyform_indices.is_empty() {
+                        return Status::error("OBJECT_REFERENCED", &os.id);
+                    }
+                }
+            }
+        }
         b.keyforms = ordered;
         Status::ok()
     }
@@ -1794,6 +1814,54 @@ impl Document {
         self.scene_bindings.insert(id.clone(), b);
         let meshes = self.mesh_order.clone();
         self.changed(ChangeKind::Structure, meshes, vec![id, target, previous])
+    }
+
+    /// Atomically replace an existing Part binding and its Offscreen appearance.
+    /// The caller supplies every new keyform and mapping explicitly; no implicit
+    /// interpolation or slot copying takes place. Mapping slots use canonical axis order.
+    pub fn replace_part_binding_with_offscreen(
+        &mut self,
+        binding: SceneBinding,
+        offscreen: Offscreen,
+    ) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &binding.id));
+        }
+        let Some(old_binding) = self.get_scene_binding(&binding.id) else {
+            return self.failed(Status::error("MISSING_BINDING", &binding.id));
+        };
+        let Some(old_offscreen) = self.get_offscreen(&offscreen.id) else {
+            return self.failed(Status::error("MISSING_OBJECT", &offscreen.id));
+        };
+        if binding.target_id != old_binding.target_id
+            || offscreen.part_id != old_offscreen.part_id
+            || binding.target_id != offscreen.part_id
+        {
+            return self.failed(Status::error(
+                "INVALID_BINDING",
+                "Preserve the Part and Offscreen owner",
+            ));
+        }
+        let objects = vec![
+            binding.id.clone(),
+            binding.target_id.clone(),
+            offscreen.id.clone(),
+        ];
+        let mut candidate = self.clone();
+        candidate
+            .offscreens
+            .insert(offscreen.id.clone(), offscreen.clone());
+        let edit = candidate.replace_scene_binding(binding);
+        if !edit.status.is_ok() {
+            return self.failed(edit.status);
+        }
+        let edit = candidate.replace_offscreen(offscreen);
+        if !edit.status.is_ok() {
+            return self.failed(edit.status);
+        }
+        self.scene_bindings = candidate.scene_bindings;
+        self.offscreens = candidate.offscreens;
+        self.changed(ChangeKind::Structure, self.mesh_order.clone(), objects)
     }
 
     pub fn set_scene_keyform(&mut self, id: &str, f: SceneKeyform) -> EditResult {
@@ -2588,31 +2656,31 @@ impl Document {
                 }
             }
         }
-        if let Some(binding) = self.binding_for_scene(&os.part_id) {
-            let klen = binding.keyforms.len();
-            if !os.part_keyform_indices.is_empty() && os.part_keyform_indices.len() != klen {
+        let klen = self
+            .binding_for_scene(&os.part_id)
+            .map_or(1, |binding| binding.keyforms.len());
+        if !os.part_keyform_indices.is_empty() && os.part_keyform_indices.len() != klen {
+            return Status::error(
+                "INVALID_LENGTH",
+                format!(
+                    "{}: part_keyform_indices len ({}) != part keyforms len ({})",
+                    os.id,
+                    os.part_keyform_indices.len(),
+                    klen
+                ),
+            );
+        }
+        for &idx in &os.part_keyform_indices {
+            if idx >= 0 && (idx as usize) >= os.keyforms.len() {
                 return Status::error(
-                    "INVALID_LENGTH",
+                    "INDEX_OUT_OF_BOUNDS",
                     format!(
-                        "{}: part_keyform_indices len ({}) != part keyforms len ({})",
+                        "{}: keyform index {} exceeds offscreen keyforms len {}",
                         os.id,
-                        os.part_keyform_indices.len(),
-                        klen
+                        idx,
+                        os.keyforms.len()
                     ),
                 );
-            }
-            for &idx in &os.part_keyform_indices {
-                if idx >= 0 && (idx as usize) >= os.keyforms.len() {
-                    return Status::error(
-                        "INDEX_OUT_OF_BOUNDS",
-                        format!(
-                            "{}: keyform index {} exceeds offscreen keyforms len {}",
-                            os.id,
-                            idx,
-                            os.keyforms.len()
-                        ),
-                    );
-                }
             }
         }
         Status::ok()
@@ -2746,7 +2814,13 @@ impl Document {
             }
         }
         for (key, os) in &self.offscreens {
-            if os.part_id == id || os.masks.iter().any(|mask| mask == id) {
+            if os.part_id == id
+                || os.masks.iter().any(|mask| mask == id)
+                || (!os.part_keyform_indices.is_empty()
+                    && self
+                        .get_scene_binding(id)
+                        .is_some_and(|b| b.target_id == os.part_id))
+            {
                 refs.push(key.clone());
             }
         }

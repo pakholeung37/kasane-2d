@@ -26,14 +26,27 @@ fn index_of(ids: &[String], id: &str) -> i32 {
 }
 
 fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> Result<u16, Status> {
-    let index = mesh.vertex_ids.iter().position(|&v| v == vid)
-        .ok_or_else(|| Status::error("MISSING_VERTEX", format!("{}: Glue vertex {vid}", mesh.id)))?;
-    u16::try_from(index).map_err(|_| Status::error("CAPACITY", format!("{}: Glue index {index} exceeds u16", mesh.id)))
+    let index = mesh
+        .vertex_ids
+        .iter()
+        .position(|&v| v == vid)
+        .ok_or_else(|| {
+            Status::error("MISSING_VERTEX", format!("{}: Glue vertex {vid}", mesh.id))
+        })?;
+    u16::try_from(index).map_err(|_| {
+        Status::error(
+            "CAPACITY",
+            format!("{}: Glue index {index} exceeds u16", mesh.id),
+        )
+    })
 }
 
 fn write_id(l: &mut Layout, field: &str, value: &str) -> Result<(), Status> {
     if !is_representable(value) {
-        return Err(Status::error("UNREPRESENTABLE_ID", format!("{field}: requires 1..63 printable ASCII bytes")));
+        return Err(Status::error(
+            "UNREPRESENTABLE_ID",
+            format!("{field}: requires 1..63 printable ASCII bytes"),
+        ));
     }
     let bytes = l.field(field)?;
     let start = bytes.len();
@@ -66,8 +79,14 @@ fn write_bs_colors(
     let mul = multiply.unwrap_or([0.0, 0.0, 0.0]);
     let scr = screen.unwrap_or([0.0, 0.0, 0.0]);
     let offset = checked(l.field("keyform_mul_color_src.r")?.len() / 4, "colors")?;
-    l.integer(&format!("{prefix}.key_mul_color_off"), if multiply.is_some() { offset } else { -1 })?;
-    l.integer(&format!("{prefix}.key_scr_color_off"), if screen.is_some() { offset } else { -1 })?;
+    l.integer(
+        &format!("{prefix}.key_mul_color_off"),
+        if multiply.is_some() { offset } else { -1 },
+    )?;
+    l.integer(
+        &format!("{prefix}.key_scr_color_off"),
+        if screen.is_some() { offset } else { -1 },
+    )?;
     let channels = ["r", "g", "b"];
     for c in 0..3 {
         l.scalar(&format!("keyform_mul_color_src.{}", channels[c]), mul[c])?;
@@ -87,7 +106,9 @@ fn write_blend_binding(
     let kt_idx = bkt_indices
         .get(b.key_table_id.as_str())
         .copied()
-        .ok_or_else(|| Status::error("MISSING_KEY_TABLE", format!("{}: {}", b.id, b.key_table_id)))?;
+        .ok_or_else(|| {
+            Status::error("MISSING_KEY_TABLE", format!("{}: {}", b.id, b.key_table_id))
+        })?;
     l.integer("blend_binding_src.key_table_idx", kt_idx)?;
     l.integer("blend_binding_src.key_bs_off", key_bs_off)?;
     l.integer("blend_binding_src.key_bs_len", key_bs_len)?;
@@ -326,7 +347,10 @@ pub fn encode_moc3_with_version(
 
     for id in doc.glue_order() {
         if let Some(binding) = &doc.get_glue(id).unwrap().binding {
-            all_bindings.push(BindingView { id, axes: &binding.axes });
+            all_bindings.push(BindingView {
+                id,
+                axes: &binding.axes,
+            });
         }
     }
 
@@ -343,16 +367,34 @@ pub fn encode_moc3_with_version(
         l.counts[35] = doc.offscreen_count() as u32;
     }
 
-    let mut os_kf_map: HashMap<(&str, usize), i32> = HashMap::new();
+    // The runtime interpolates a contiguous window beginning at the owner's
+    // first Part key. Materialize document mappings (including neutral slots)
+    // in canonical Part order rather than exporting arbitrary local indices.
+    let mut os_key_bases: HashMap<&str, i32> = HashMap::new();
     if export_version >= 6 {
         for os_id in doc.offscreen_order() {
             let os = doc.get_offscreen(os_id).unwrap();
-            for (idx, kf) in os.keyforms.iter().enumerate() {
-                let global = l.counts[36] as i32;
-                l.scalar("offscreen_key_src.opacity", kf.opacity)?;
-                write_bs_colors(&mut l, "offscreen_key_src", kf.multiply, kf.screen)?;
+            let binding = doc.binding_for_scene(&os.part_id);
+            let count = binding.map_or(1, |b| b.keyforms.len());
+            let stored = binding.map_or(1, |b| count.max(1usize << b.axes.len()));
+            os_key_bases.insert(
+                os.id.as_str(),
+                checked(l.counts[36] as usize, "offscreen_keyforms")?,
+            );
+            for slot in 0..stored {
+                let key = os
+                    .keyform_index(slot.min(count - 1), binding.map(|b| b.keyforms.len()))?
+                    .map(|index| &os.keyforms[index]);
+                l.scalar("offscreen_key_src.opacity", key.map_or(1.0, |k| k.opacity))?;
+                // Ordinary colors are absolute values, unlike blendshape deltas.
+                // Both color pools must have a contiguous entry for every slot.
+                write_bs_colors(
+                    &mut l,
+                    "offscreen_key_src",
+                    Some(key.and_then(|k| k.multiply).unwrap_or([1.0; 3])),
+                    Some(key.and_then(|k| k.screen).unwrap_or([0.0; 3])),
+                )?;
                 l.counts[36] += 1;
-                os_kf_map.insert((os.id.as_str(), idx), global);
             }
         }
     }
@@ -560,7 +602,11 @@ pub fn encode_moc3_with_version(
 
         if export_version >= 6 {
             let os_idx = if let Some(os) = doc.offscreen_for_part(&part.id) {
-                doc.offscreen_order().iter().position(|id| id == &os.id).map(|i| i as i32).unwrap_or(-1)
+                doc.offscreen_order()
+                    .iter()
+                    .position(|id| id == &os.id)
+                    .map(|i| i as i32)
+                    .unwrap_or(-1)
             } else {
                 -1
             };
@@ -577,16 +623,7 @@ pub fn encode_moc3_with_version(
 
             if export_version >= 6 {
                 let key_idx = if let Some(os) = doc.offscreen_for_part(&part.id) {
-                    if (k as usize) < os.part_keyform_indices.len() {
-                        let os_kf_idx = os.part_keyform_indices[k as usize];
-                        if os_kf_idx >= 0 && (os_kf_idx as usize) < os.keyforms.len() {
-                            *os_kf_map.get(&(os.id.as_str(), os_kf_idx as usize)).unwrap_or(&-1)
-                        } else {
-                            -1
-                        }
-                    } else {
-                        -1
-                    }
+                    os_key_bases[os.id.as_str()] + k
                 } else {
                     -1
                 };
@@ -687,7 +724,11 @@ pub fn encode_moc3_with_version(
             if warp {
                 write_positions(&mut l, doc, "warp_key_src", &t.parent_id, &f.positions)?;
             } else {
-                let origin = kasane_core::evaluation::to_parent_origin(doc, &t.parent_id, f.rotation.origin)?;
+                let origin = kasane_core::evaluation::to_parent_origin(
+                    doc,
+                    &t.parent_id,
+                    f.rotation.origin,
+                )?;
                 l.scalar("rotation_key_src.origin_x", origin.x)?;
                 l.scalar("rotation_key_src.origin_y", origin.y)?;
                 l.scalar("rotation_key_src.angle", f.rotation.angle)?;
@@ -906,8 +947,15 @@ pub fn encode_moc3_with_version(
         let mesh_b = doc.get_mesh(&g.mesh_b_id).unwrap();
         let ma_idx = index_of(doc.mesh_order(), &g.mesh_a_id);
         let mb_idx = index_of(doc.mesh_order(), &g.mesh_b_id);
-        let b_idx = if g.binding.is_some() { binding_indices[g_id.as_str()] } else { 0 };
-        let key_off = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue key offset")?;
+        let b_idx = if g.binding.is_some() {
+            binding_indices[g_id.as_str()]
+        } else {
+            0
+        };
+        let key_off = checked(
+            l.field("glue_key_src.intensity")?.len() / 4,
+            "glue key offset",
+        )?;
         let key_len = g.binding.as_ref().map_or(1, |b| b.keyforms.len());
         write_id(&mut l, "glue_src.id", &g.runtime_id)?;
         l.integer("glue_src.binding_idx", b_idx)?;
@@ -920,8 +968,12 @@ pub fn encode_moc3_with_version(
         l.integer("glue_src.info_off", info_off)?;
         l.integer("glue_src.info_len", info_len)?;
         if let Some(binding) = &g.binding {
-            for key in &binding.keyforms { l.scalar("glue_key_src.intensity", key.intensity)?; }
-        } else { l.scalar("glue_key_src.intensity", g.intensity)?; }
+            for key in &binding.keyforms {
+                l.scalar("glue_key_src.intensity", key.intensity)?;
+            }
+        } else {
+            l.scalar("glue_key_src.intensity", g.intensity)?;
+        }
         for pair in &g.pairs {
             let pos_a = find_vertex_pos(mesh_a, pair.vertex_a)?;
             let pos_b = find_vertex_pos(mesh_b, pair.vertex_b)?;
@@ -933,7 +985,10 @@ pub fn encode_moc3_with_version(
         glue_info_count += info_len;
     }
     l.counts[21] = glue_info_count as u32;
-    l.counts[22] = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue keyforms")? as u32;
+    l.counts[22] = checked(
+        l.field("glue_key_src.intensity")?.len() / 4,
+        "glue keyforms",
+    )? as u32;
 
     // BlendShape Constraints
     let mut constraint_index_map: HashMap<&str, i32> = HashMap::new();
@@ -987,22 +1042,40 @@ pub fn encode_moc3_with_version(
         let b = doc.get_blend_binding(bid).unwrap();
         match b.target_kind {
             BlendShapeTargetKind::Warp => {
-                warp_targets.entry(b.target_id.as_str()).or_default().push(bid);
+                warp_targets
+                    .entry(b.target_id.as_str())
+                    .or_default()
+                    .push(bid);
             }
             BlendShapeTargetKind::Mesh => {
-                mesh_targets.entry(b.target_id.as_str()).or_default().push(bid);
+                mesh_targets
+                    .entry(b.target_id.as_str())
+                    .or_default()
+                    .push(bid);
             }
             BlendShapeTargetKind::Part => {
-                part_targets.entry(b.target_id.as_str()).or_default().push(bid);
+                part_targets
+                    .entry(b.target_id.as_str())
+                    .or_default()
+                    .push(bid);
             }
             BlendShapeTargetKind::Rotation => {
-                rot_targets.entry(b.target_id.as_str()).or_default().push(bid);
+                rot_targets
+                    .entry(b.target_id.as_str())
+                    .or_default()
+                    .push(bid);
             }
             BlendShapeTargetKind::Glue => {
-                glue_targets.entry(b.target_id.as_str()).or_default().push(bid);
+                glue_targets
+                    .entry(b.target_id.as_str())
+                    .or_default()
+                    .push(bid);
             }
             BlendShapeTargetKind::Offscreen => {
-                offscreen_targets.entry(b.target_id.as_str()).or_default().push(bid);
+                offscreen_targets
+                    .entry(b.target_id.as_str())
+                    .or_default()
+                    .push(bid);
             }
         }
     }
@@ -1017,7 +1090,12 @@ pub fn encode_moc3_with_version(
     sorted_part_targets.sort_by_key(|id| index_of(&parts, id));
 
     let mut sorted_rot_targets: Vec<&str> = rot_targets.keys().copied().collect();
-    sorted_rot_targets.sort_by_key(|id| rotation_local_indices.get(id).copied().unwrap_or(usize::MAX));
+    sorted_rot_targets.sort_by_key(|id| {
+        rotation_local_indices
+            .get(id)
+            .copied()
+            .unwrap_or(usize::MAX)
+    });
 
     let mut sorted_glue_targets: Vec<&str> = glue_targets.keys().copied().collect();
     sorted_glue_targets.sort_by_key(|id| index_of(doc.glue_order(), id));
@@ -1039,12 +1117,26 @@ pub fn encode_moc3_with_version(
             if let DeltaKeyforms::Warp(ref forms) = b.keyforms {
                 let key_bs_off = l.counts[7] as i32;
                 let key_bs_len = forms.len() as i32;
-                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                write_blend_binding(
+                    &mut l,
+                    b,
+                    key_bs_off,
+                    key_bs_len,
+                    &bkt_indices,
+                    &constraint_index_map,
+                )?;
                 l.counts[26] += 1;
                 let pt_count = ((warp.rows + 1) * (warp.columns + 1)) as usize;
                 for f in forms {
                     l.scalar("warp_key_src.opacity", f.opacity.unwrap_or(0.0))?;
-                    write_delta_positions(&mut l, doc, "warp_key_src", &warp.parent_id, &f.points, pt_count)?;
+                    write_delta_positions(
+                        &mut l,
+                        doc,
+                        "warp_key_src",
+                        &warp.parent_id,
+                        &f.points,
+                        pt_count,
+                    )?;
                     write_bs_colors(&mut l, "warp_key_src", f.multiply, f.screen)?;
                     l.counts[7] += 1;
                 }
@@ -1069,13 +1161,27 @@ pub fn encode_moc3_with_version(
             if let DeltaKeyforms::Mesh(ref forms) = b.keyforms {
                 let key_bs_off = l.counts[9] as i32;
                 let key_bs_len = forms.len() as i32;
-                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                write_blend_binding(
+                    &mut l,
+                    b,
+                    key_bs_off,
+                    key_bs_len,
+                    &bkt_indices,
+                    &constraint_index_map,
+                )?;
                 l.counts[26] += 1;
                 let vc = mesh.vertex_ids.len();
                 for f in forms {
                     l.scalar("art_mesh_key_src.opacity", f.opacity.unwrap_or(0.0))?;
                     l.scalar("art_mesh_key_src.draw_order", f.draw_order.unwrap_or(0.0))?;
-                    write_delta_positions(&mut l, doc, "art_mesh_key_src", &mesh.deformer_id, &f.positions, vc)?;
+                    write_delta_positions(
+                        &mut l,
+                        doc,
+                        "art_mesh_key_src",
+                        &mesh.deformer_id,
+                        &f.positions,
+                        vc,
+                    )?;
                     write_bs_colors(&mut l, "art_mesh_key_src", f.multiply, f.screen)?;
                     l.counts[9] += 1;
                 }
@@ -1099,7 +1205,14 @@ pub fn encode_moc3_with_version(
             if let DeltaKeyforms::Part(ref forms) = b.keyforms {
                 let key_bs_off = l.counts[6] as i32;
                 let key_bs_len = forms.len() as i32;
-                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                write_blend_binding(
+                    &mut l,
+                    b,
+                    key_bs_off,
+                    key_bs_len,
+                    &bkt_indices,
+                    &constraint_index_map,
+                )?;
                 l.counts[26] += 1;
                 for f in forms {
                     l.scalar("part_key_src.draw_order", f.draw_order)?;
@@ -1126,7 +1239,14 @@ pub fn encode_moc3_with_version(
             if let DeltaKeyforms::Rotation(ref forms) = b.keyforms {
                 let key_bs_off = l.counts[8] as i32;
                 let key_bs_len = forms.len() as i32;
-                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                write_blend_binding(
+                    &mut l,
+                    b,
+                    key_bs_off,
+                    key_bs_len,
+                    &bkt_indices,
+                    &constraint_index_map,
+                )?;
                 l.counts[26] += 1;
                 for f in forms {
                     l.scalar("rotation_key_src.opacity", f.opacity.unwrap_or(0.0))?;
@@ -1167,9 +1287,17 @@ pub fn encode_moc3_with_version(
         for &bid in binding_ids {
             let b = doc.get_blend_binding(bid).unwrap();
             if let DeltaKeyforms::Glue(ref forms) = b.keyforms {
-                let key_bs_off = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue_bs_off")?;
+                let key_bs_off =
+                    checked(l.field("glue_key_src.intensity")?.len() / 4, "glue_bs_off")?;
                 let key_bs_len = forms.len() as i32;
-                write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                write_blend_binding(
+                    &mut l,
+                    b,
+                    key_bs_off,
+                    key_bs_len,
+                    &bkt_indices,
+                    &constraint_index_map,
+                )?;
                 l.counts[26] += 1;
                 for f in forms {
                     l.scalar("glue_key_src.intensity", f.intensity)?;
@@ -1198,7 +1326,14 @@ pub fn encode_moc3_with_version(
                 if let DeltaKeyforms::Offscreen(ref forms) = b.keyforms {
                     let key_bs_off = l.counts[36] as i32;
                     let key_bs_len = forms.len() as i32;
-                    write_blend_binding(&mut l, b, key_bs_off, key_bs_len, &bkt_indices, &constraint_index_map)?;
+                    write_blend_binding(
+                        &mut l,
+                        b,
+                        key_bs_off,
+                        key_bs_len,
+                        &bkt_indices,
+                        &constraint_index_map,
+                    )?;
                     l.counts[26] += 1;
                     for f in forms {
                         l.scalar("offscreen_key_src.opacity", f.opacity)?;
@@ -1210,7 +1345,10 @@ pub fn encode_moc3_with_version(
         }
     }
 
-    l.counts[22] = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue keyforms")? as u32;
+    l.counts[22] = checked(
+        l.field("glue_key_src.intensity")?.len() / 4,
+        "glue keyforms",
+    )? as u32;
 
     l.counts[29] = checked(
         l.field("blend_constraint_idx_src.constraint_idx")?.len() / 4,

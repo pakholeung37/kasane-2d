@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 
-use kasane_core::{
-    evaluate_frame, BindingAxis, Canvas, DeltaKeyforms, DeltaMeshKeyform, Document,
-    DrawableFrame, ImageAsset, Mesh, MeshBinding, MeshKeyform, Parameter, ParameterKind,
-    Vec2,
+use kasane_core::types::{
+    BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind,
 };
-use kasane_core::types::{BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, BlendShapeTargetKind};
+use kasane_core::{
+    evaluate_frame, BindingAxis, Canvas, DeltaKeyforms, DeltaMeshKeyform, Document, DrawableFrame,
+    ImageAsset, Mesh, MeshBinding, MeshKeyform, Parameter, ParameterKind, Vec2,
+};
 
 fn id(n: i32) -> String {
     format!("{:08x}-1111-4111-8111-111111111111", n)
@@ -124,7 +125,10 @@ fn test_cyclic_min_max_and_boundaries() {
     let eval_param = frame.parameters.iter().find(|p| p.id == param_id).unwrap();
     assert_eq!(eval_param.requested, -1.0);
     assert_eq!(eval_param.value, -1.0);
-    assert!(!eval_param.clamped, "Repeat parameters must never flag clamped: true");
+    assert!(
+        !eval_param.clamped,
+        "Repeat parameters must never flag clamped: true"
+    );
 
     // 2. Center: 0.0
     preview.insert(param_id.clone(), 0.0);
@@ -189,12 +193,12 @@ fn test_cyclic_multi_period_positive_negative() {
 
     // Equivalent values across multiple positive and negative periods (period = 2.0)
     let test_values = [
-        0.5 + 1.0 * 2.0,  // +1 period: 2.5
-        0.5 + 2.0 * 2.0,  // +2 periods: 4.5
-        0.5 + 5.0 * 2.0,  // +5 periods: 10.5
-        0.5 - 1.0 * 2.0,  // -1 period: -1.5
-        0.5 - 2.0 * 2.0,  // -2 periods: -3.5
-        0.5 - 5.0 * 2.0,  // -5 periods: -9.5
+        0.5 + 1.0 * 2.0, // +1 period: 2.5
+        0.5 + 2.0 * 2.0, // +2 periods: 4.5
+        0.5 + 5.0 * 2.0, // +5 periods: 10.5
+        0.5 - 1.0 * 2.0, // -1 period: -1.5
+        0.5 - 2.0 * 2.0, // -2 periods: -3.5
+        0.5 - 5.0 * 2.0, // -5 periods: -9.5
     ];
 
     for &val in &test_values {
@@ -202,11 +206,19 @@ fn test_cyclic_multi_period_positive_negative() {
         preview.insert(param_id.clone(), val);
         assert!(evaluate_frame(&d, &preview, &mut frame).is_ok());
         let p = frame.parameters.iter().find(|p| p.id == param_id).unwrap();
-        assert!((p.value - 0.5).abs() < 1e-5, "val {} wrapped to {}", val, p.value);
+        assert!(
+            (p.value - 0.5).abs() < 1e-5,
+            "val {} wrapped to {}",
+            val,
+            p.value
+        );
         assert_eq!(p.requested, val);
         assert!(!p.clamped);
 
-        for (v1, v2) in base_positions.iter().zip(frame.drawables[0].positions.iter()) {
+        for (v1, v2) in base_positions
+            .iter()
+            .zip(frame.drawables[0].positions.iter())
+        {
             assert!((v1.x - v2.x).abs() < 1e-5);
             assert!((v1.y - v2.y).abs() < 1e-5);
         }
@@ -227,7 +239,10 @@ fn test_cyclic_fixed_param_repeated_frames() {
         let mut frame = DrawableFrame::default();
         assert!(evaluate_frame(&d, &preview, &mut frame).is_ok());
         assert_eq!(frame.parameters[0].value, first_frame.parameters[0].value);
-        assert_eq!(frame.drawables[0].positions, first_frame.drawables[0].positions);
+        assert_eq!(
+            frame.drawables[0].positions,
+            first_frame.drawables[0].positions
+        );
     }
 }
 
@@ -261,7 +276,10 @@ fn test_cyclic_seam_a_b_a() {
         let expected = &forward_frames[forward_idx];
 
         assert_eq!(frame.parameters[0].value, expected.parameters[0].value);
-        assert_eq!(frame.drawables[0].positions, expected.drawables[0].positions);
+        assert_eq!(
+            frame.drawables[0].positions,
+            expected.drawables[0].positions
+        );
     }
 }
 
@@ -321,14 +339,22 @@ fn test_cyclic_constraint_and_blendshape_combination() {
             constraint_ids: vec![c_id],
             keyforms: DeltaKeyforms::Mesh(vec![
                 DeltaMeshKeyform {
-                    positions: vec![Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0), Vec2::new(10.0, 10.0)],
+                    positions: vec![
+                        Vec2::new(10.0, 10.0),
+                        Vec2::new(10.0, 10.0),
+                        Vec2::new(10.0, 10.0)
+                    ],
                     opacity: None,
                     draw_order: None,
                     multiply: None,
                     screen: None,
                 },
                 DeltaMeshKeyform {
-                    positions: vec![Vec2::new(50.0, 50.0), Vec2::new(50.0, 50.0), Vec2::new(50.0, 50.0)],
+                    positions: vec![
+                        Vec2::new(50.0, 50.0),
+                        Vec2::new(50.0, 50.0),
+                        Vec2::new(50.0, 50.0)
+                    ],
                     opacity: None,
                     draw_order: None,
                     multiply: None,
@@ -352,14 +378,20 @@ fn test_cyclic_constraint_and_blendshape_combination() {
         let mut frame = DrawableFrame::default();
         preview.insert(cyclic_param_id.clone(), val);
         assert!(evaluate_frame(&d, &preview, &mut frame).is_ok());
-        assert_eq!(frame.drawables[0].positions, frame_base.drawables[0].positions);
+        assert_eq!(
+            frame.drawables[0].positions,
+            frame_base.drawables[0].positions
+        );
     }
 
     // When cyclic parameter is at 1.0 (weight 0.0 in constraint), delta is gated to zero
     preview.insert(cyclic_param_id.clone(), 1.0); // wraps to -1.0, where constraint weight is 0.0
     let mut frame_gated = DrawableFrame::default();
     assert!(evaluate_frame(&d, &preview, &mut frame_gated).is_ok());
-    assert_ne!(frame_gated.drawables[0].positions, frame_base.drawables[0].positions);
+    assert_ne!(
+        frame_gated.drawables[0].positions,
+        frame_base.drawables[0].positions
+    );
 }
 
 #[test]
@@ -373,5 +405,41 @@ fn test_cyclic_rejects_non_finite_and_invalid_ranges() {
         let err = evaluate_frame(&d, &preview, &mut frame);
         assert!(!err.is_ok());
         assert_eq!(err.code, "NON_FINITE");
+    }
+}
+
+#[test]
+fn finite_extreme_cyclic_inputs_never_produce_nan() {
+    for (minimum, maximum, requested) in [
+        (-3.0e38, -2.0e38, 3.0e38),
+        (0.0, 1.0e-20, f32::MAX),
+        (0.0, 1.0e-20, -f32::MAX),
+    ] {
+        let mut doc = Document::new();
+        assert!(doc
+            .initialize(
+                id(1),
+                Canvas::new(200.0, 200.0, Vec2::new(100.0, 100.0), 100.0)
+            )
+            .is_ok());
+        assert!(doc
+            .create_parameter(Parameter {
+                id: id(2),
+                runtime_id: "Repeat".into(),
+                minimum,
+                maximum,
+                default_value: minimum,
+                repeat: true,
+                ..Default::default()
+            })
+            .status
+            .is_ok());
+        let mut frame = DrawableFrame::default();
+        assert!(evaluate_frame(&doc, &HashMap::from([(id(2), requested)]), &mut frame).is_ok());
+        let value = frame.parameters[0].value;
+        assert!(
+            value.is_finite() && value >= minimum && value < maximum,
+            "{value}"
+        );
     }
 }

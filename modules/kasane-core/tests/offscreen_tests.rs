@@ -465,3 +465,198 @@ fn test_offscreen_render_orders_and_hierarchical_render_plan() {
         ]
     );
 }
+
+#[test]
+fn offscreen_indices_are_checked_without_a_part_binding() {
+    let mut doc = create_base_doc();
+    let os = Offscreen {
+        id: id(10),
+        runtime_id: "Offscreen".into(),
+        part_id: id(3),
+        part_keyform_indices: vec![2],
+        keyforms: vec![OffscreenKeyform {
+            opacity: 0.3,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(doc.create_offscreen(os).status.code, "INDEX_OUT_OF_BOUNDS");
+}
+
+#[test]
+fn static_offscreen_honors_explicit_mapping_and_sentinel() {
+    let mut doc = create_base_doc();
+    let mut os = Offscreen {
+        id: id(10),
+        runtime_id: "Offscreen".into(),
+        part_id: id(3),
+        part_keyform_indices: vec![1],
+        keyforms: vec![
+            OffscreenKeyform {
+                opacity: 0.3,
+                ..Default::default()
+            },
+            OffscreenKeyform {
+                opacity: 0.7,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(os.clone()).status.is_ok());
+    let mut frame = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    assert_eq!(frame.offscreens[0].opacity, 0.7);
+    os.part_keyform_indices = vec![-1];
+    assert!(doc.replace_offscreen(os).status.is_ok());
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    assert_eq!(frame.offscreens[0].opacity, 1.0);
+}
+
+#[test]
+fn part_binding_edits_preserve_offscreen_mapping_invariants() {
+    let mut doc = create_base_doc();
+    assert!(doc
+        .create_parameter(Parameter {
+            id: id(20),
+            runtime_id: "Param".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let binding = SceneBinding {
+        id: id(30),
+        target_id: id(3),
+        axes: vec![BindingAxis {
+            parameter_id: id(20),
+            keys: vec![-1.0, 1.0],
+        }],
+        keyforms: vec![
+            SceneKeyform {
+                keys: vec![-1.0],
+                ..Default::default()
+            },
+            SceneKeyform {
+                keys: vec![1.0],
+                ..Default::default()
+            },
+        ],
+    };
+    assert!(doc.create_scene_binding(binding.clone()).status.is_ok());
+    assert!(doc
+        .create_offscreen(Offscreen {
+            id: id(10),
+            runtime_id: "Offscreen".into(),
+            part_id: id(3),
+            part_keyform_indices: vec![0, 0],
+            keyforms: vec![OffscreenKeyform {
+                opacity: 0.3,
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let revision = doc.revision();
+    let mut shorter = binding.clone();
+    shorter.axes[0].keys.pop();
+    shorter.keyforms.pop();
+    assert!(!doc.replace_scene_binding(shorter).status.is_ok());
+    assert_eq!(doc.revision(), revision);
+    assert_eq!(doc.get_scene_binding(&id(30)), Some(&binding));
+    assert!(!doc.erase_object(&id(30)).status.is_ok());
+}
+
+#[test]
+fn joint_part_offscreen_edit_is_atomic_and_snapshot_safe() {
+    let mut doc = create_base_doc();
+    assert!(doc
+        .create_parameter(Parameter {
+            id: id(20),
+            runtime_id: "Param".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut binding = SceneBinding {
+        id: id(30),
+        target_id: id(3),
+        axes: vec![BindingAxis {
+            parameter_id: id(20),
+            keys: vec![-1.0, 1.0],
+        }],
+        keyforms: vec![
+            SceneKeyform {
+                keys: vec![-1.0],
+                ..Default::default()
+            },
+            SceneKeyform {
+                keys: vec![1.0],
+                ..Default::default()
+            },
+        ],
+    };
+    assert!(doc.create_scene_binding(binding.clone()).status.is_ok());
+    let mut os = Offscreen {
+        id: id(10),
+        runtime_id: "OS".into(),
+        part_id: id(3),
+        part_keyform_indices: vec![0, 1],
+        keyforms: vec![
+            OffscreenKeyform {
+                opacity: 0.2,
+                ..Default::default()
+            },
+            OffscreenKeyform {
+                opacity: 0.8,
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(os.clone()).status.is_ok());
+    let before = doc.clone();
+    binding.axes[0].keys.insert(1, 0.0);
+    binding.keyforms.insert(
+        1,
+        SceneKeyform {
+            keys: vec![0.0],
+            ..Default::default()
+        },
+    );
+    assert!(!doc
+        .replace_part_binding_with_offscreen(binding.clone(), os.clone())
+        .status
+        .is_ok());
+    assert_eq!(doc.revision(), before.revision());
+    os.keyforms.push(OffscreenKeyform {
+        opacity: 0.6,
+        ..Default::default()
+    });
+    os.part_keyform_indices = vec![0, 2, 1];
+    let mut invalid = os.clone();
+    invalid.keyforms[2].opacity = f32::NAN;
+    assert!(!doc
+        .replace_part_binding_with_offscreen(binding.clone(), invalid)
+        .status
+        .is_ok());
+    assert_eq!(
+        doc.get_scene_binding(&id(30)),
+        before.get_scene_binding(&id(30))
+    );
+    assert_eq!(doc.revision(), before.revision());
+    assert!(doc
+        .replace_part_binding_with_offscreen(binding.clone(), os.clone())
+        .status
+        .is_ok());
+    assert_eq!(doc.revision(), before.revision() + 1);
+    let after = doc.clone();
+    let mut frame = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::from([(id(20), 0.0)]), &mut frame).is_ok());
+    assert_eq!(frame.offscreens[0].opacity, 0.6);
+    doc.restore_from(&before);
+    assert_eq!(doc.get_offscreen(&id(10)), before.get_offscreen(&id(10)));
+    doc.restore_from(&after);
+    assert_eq!(doc.get_scene_binding(&id(30)), Some(&binding));
+    assert_eq!(doc.get_offscreen(&id(10)), Some(&os));
+}

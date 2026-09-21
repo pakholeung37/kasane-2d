@@ -56,3 +56,16 @@
 检查失败后当前 Document 未被部分替换，既有工程和导出产物完整。直接脚本错误前已完成的写入按脚本契约保留，与文件操作的原子性分别测试。
 
 MOC3 导出兼容验收同时要求 PurismCore 与官方 Core 加载、驱动通过。外部资产按现有方式在本地提供，报告记录校验和，不提交不可分发素材。缺少 SDK、外部模型或 GPU 时保留未验收项，不能把跳过当作通过。
+
+## M3C 证据报告
+
+M3C S0–S6 报告采用 `checks` 明细和 `acceptance_evidence.finalize` 计算状态，不能直接手写阶段通过。每个必需项应记录类型、状态、未执行原因、证据文件和 SHA-256。复用报告前还需校验源码 revision、工作区内容指纹和子模块状态。真实模型、构造 fixture、数值和 GPU 证据不能互相替代。
+
+新增回归入口：
+
+```sh
+python3 -m unittest discover -s tools -p test_validate_m3c.py
+KASANE_MOC3_DISABLE_CORE_VALIDATION=1 cargo test -p kasane-moc3 --no-default-features --test safety_tests --locked
+```
+
+详情见 [M3C-optimization.md](M3C-optimization.md)。

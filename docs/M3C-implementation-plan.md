@@ -1,6 +1,6 @@
 # M3C 分阶段实施与验收计划
 
-状态：**S0、S1、S2、S3、S4 已通过，S5 待进入**。日期：2026-09-21。
+状态：**S0–S6 已有实现；S2 真实外部 4.2 验收未运行，S7 未运行，M3C 总体验收未完成**。日期：2026-09-21。代码复审及修正见 [review 记录](M3C-code-review.md)。
 
 范围、源码证据和数据契约以 [总体设计](M3C-moc3-version-coverage.md) 为准。此前 Rice 改动与 M3B 完成记录属于基线，不代表本计划已通过。实施时逐阶段将状态更新为 `in_progress / passed / failed / not_run` 并链接实际报告。
 
@@ -188,7 +188,7 @@ python3 tools/validate_m3b.py --help
 python3 tools/validate_gpu.py --help
 ```
 
-新增入口 **尚不存在，S0 起实施**。建议 CLI 为：
+统一入口已实现；必需项目为 `not_run` 时应返回非零退出码。CLI 为：
 
 ```text
 python3 tools/validate_m3c.py --manifest <local-manifest.json> --stage S1 --output <report-dir>
@@ -213,9 +213,14 @@ python3 tools/validate_m3c.py --manifest <local-manifest.json> --stage all --out
 |---|---|---|---|---|
 | S0 | passed | tools/probes/project_runtime_probe.cpp, tools/validate_m3c.py | [s0_baseline_report.json](../target/kasane/m3c/s0_baseline_report.json), [baseline_manifest.json](../target/kasane/m3c/baseline_manifest.json) | 真实 4.2、循环参数及 BlendShape Glue 外部资产待后续接入 |
 | S1 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, tools/validate_m3c.py | [s1_report.json](../target/kasane/m3c/s1_report.json) | 无；Hiyori 4 个无面网格及 Glue 引用完整保留，Rice/Hiyori/Mark 导入与求值通过，v4/v6 安全门禁已建立 |
-| S2 | passed | modules/kasane-moc3, modules/kasane-project, tools/create_v42_external_fixture.py, tools/validate_m3c.py | [s2_report.json](../target/kasane/m3c/s2_report.json) | 代码及构造用例交付完成；真实外部 4.2 样本验收保持 not_run |
+| S2 | not_run | modules/kasane-moc3, modules/kasane-project, tools/create_v42_external_fixture.py, tools/validate_m3c.py | [s2_report.json](../target/kasane/m3c/s2_report.json) | 代码及构造用例交付完成；真实外部 4.2 样本验收保持 not_run |
 | S3 | passed | modules/kasane-core, modules/kasane-godot, modules/kasane-moc3, modules/kasane-project, tools/create_cyclic_fixture.py, tools/validate_m3c.py | [s3_report.json](../target/kasane/m3c/s3_report.json) | 无；循环参数、wrap 数值与跨周期求值、工程 v4 迁移与未实现集合拦截、双 Core 验证通过 |
 | S4 | passed | modules/kasane-core, modules/kasane-project, modules/kasane-moc3, tools/validate_m3c.py | [s4_report.json](../target/kasane/m3c/s4_report.json) | 无；BlendShape Glue 增量强度求值、[0, 1] 钳制、decoder/encoder bs_glue_src、删除引用保护、工程 v4 往返与双 Core 0 误差通过 |
 | S5 | passed | modules/kasane-core, modules/kasane-project, modules/kasane-moc3, tools/validate_m3c.py | [s5_report.json](../target/kasane/m3c/s5_report.json) | 无；Offscreen 与 raw_blend_mode 语义、v6 480 偏移布局 (5824 头部预留)、Part 映射与求值、工程 v4 编解码、Auto/强制 5.0/5.3 预检及双 Core 24 个 Offscreen 零误差一致通过 |
 | S6 | passed | kasane-core / kasane-godot / kasane-moc3、正式 Editor、tools/validate_s6.py 与官方 Framework GPU probe | [s6_report.json](../target/kasane/m3c/s6_report.json)、[实现与验收记录](S6-offscreen-composition-fix.md) | 无；9 项门禁通过：2,160 个混合样本、106 项生命周期、103 项 Editor 官方图像检查、M4/M3B 回归及约 552 MiB 渲染资源峰值。当前源码 Editor + debug GDExtension 已验证；S7 独立打包另行验收 |
 | S7 | not_run | — | — | 全矩阵与独立应用 |
+
+
+## Review 后续优化（2026-09-21）
+
+五项已接受建议的实现与验证见 [M3C-optimization.md](M3C-optimization.md)：Part/Offscreen 联合编辑、键选择与连续导出、预览器职责拆分、证据驱动验收、版本布局与无 Core 边界回归。阶段完成状态以新的证据报告为准；构造 fixture 不替代真实外部素材，S7 不因这些改进自动通过。
