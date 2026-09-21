@@ -14,6 +14,7 @@
 #include <iomanip>
 #include <iostream>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -46,7 +47,20 @@ int main(int argc, char **argv) {
         int samples;
         if (!(std::cin >> samples) || samples <= 0)
             throw std::runtime_error("Missing samples");
-        std::cout << "{\"core_version\":" << csmGetVersion() << ",\"samples\":[";
+        int offscreen_count = csmGetOffscreenCount(model);
+        std::cout << "{\"core_version\":" << csmGetVersion()
+                  << ",\"offscreen_count\":" << offscreen_count;
+        if (offscreen_count > 0) {
+            auto part_offs = csmGetPartOffscreenIndices(model);
+            int part_count = csmGetPartCount(model);
+            std::cout << ",\"part_offscreen_indices\":[";
+            for (int p = 0; p < part_count; ++p) {
+                std::cout << (p ? "," : "") << (part_offs ? part_offs[p] : -1);
+            }
+            std::cout << "]";
+        }
+        std::cout << ",\"samples\":[";
+        std::vector<std::string> offscreen_records;
         for (int sample = 0; sample < samples; ++sample) {
             for (int i = 0; i < csmGetParameterCount(model); ++i)
                 if (!(std::cin >> csmGetParameterValues(model)[i]))
@@ -89,8 +103,44 @@ int main(int argc, char **argv) {
                 std::cout << "]}";
             }
             std::cout << "]";
+            if (offscreen_count > 0) {
+                std::ostringstream oss;
+                oss << std::setprecision(17) << "[";
+                for (int o = 0; o < offscreen_count; ++o) {
+                    auto b_mode = csmGetOffscreenBlendModes(model)[o];
+                    auto op = csmGetOffscreenOpacities(model)[o];
+                    auto owner = csmGetOffscreenOwnerIndices(model)[o];
+                    auto mul = csmGetOffscreenMultiplyColors(model)[o];
+                    auto scr = csmGetOffscreenScreenColors(model)[o];
+                    auto flags = csmGetOffscreenConstantFlags(model)[o];
+                    int m_count = csmGetOffscreenMaskCounts(model)[o];
+                    auto masks = csmGetOffscreenMasks(model)[o];
+                    oss << (o ? "," : "") << "{\"index\":" << o
+                        << ",\"owner_index\":" << owner
+                        << ",\"blend_mode\":" << b_mode
+                        << ",\"opacity\":" << op
+                        << ",\"flags\":" << (int)flags
+                        << ",\"multiply_color\":[" << mul.X << "," << mul.Y << "," << mul.Z << "," << mul.W << "]"
+                        << ",\"screen_color\":[" << scr.X << "," << scr.Y << "," << scr.Z << "," << scr.W << "]"
+                        << ",\"mask_indices\":[";
+                    for (int k = 0; k < m_count; ++k) {
+                        oss << (k ? "," : "") << masks[k];
+                    }
+                    oss << "]}";
+                }
+                oss << "]";
+                offscreen_records.push_back(oss.str());
+            }
         }
-        std::cout << "]}\n";
+        std::cout << "]";
+        if (offscreen_count > 0) {
+            std::cout << ",\"offscreen_samples\":[";
+            for (size_t s = 0; s < offscreen_records.size(); ++s) {
+                std::cout << (s ? "," : "") << offscreen_records[s];
+            }
+            std::cout << "]";
+        }
+        std::cout << "}\n";
         return 0;
     } catch (const std::exception &error) {
         std::cerr << error.what() << '\n';
