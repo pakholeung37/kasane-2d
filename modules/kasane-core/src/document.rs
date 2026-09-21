@@ -900,6 +900,131 @@ impl Document {
         self.changed(ChangeKind::Structure, vec![mesh_id.clone()], vec![mesh_id, binding_id])
     }
 
+    /// Replace a mesh and every geometry dependency in one revision. Stable object
+    /// IDs and collection order are preserved; failure leaves this document untouched.
+    pub fn replace_mesh_topology(
+        &mut self,
+        mesh: Mesh,
+        binding: Option<MeshBinding>,
+        blend_bindings: Vec<BlendShapeBinding>,
+        glues: Vec<Glue>,
+        vertex_mapping: HashMap<VertexId, Option<VertexId>>,
+    ) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &mesh.id));
+        }
+        let Some(previous) = self.get_mesh(&mesh.id) else {
+            return self.failed(Status::error("MISSING_MESH", &mesh.id));
+        };
+        let old_ids: HashSet<_> = previous.vertex_ids.iter().copied().collect();
+        let new_ids: HashSet<_> = mesh.vertex_ids.iter().copied().collect();
+        let mapped: Vec<_> = vertex_mapping.values().flatten().copied().collect();
+        if vertex_mapping.keys().copied().collect::<HashSet<_>>() != old_ids
+            || mapped.iter().any(|v| !new_ids.contains(v))
+            || mapped.iter().copied().collect::<HashSet<_>>().len() != mapped.len()
+        {
+            return self.failed(Status::error("INVALID_VERTEX_MAPPING", &mesh.id));
+        }
+        if self.binding_for_mesh(&mesh.id).map(|b| b.id.as_str())
+            != binding.as_ref().map(|b| b.id.as_str())
+            || binding.as_ref().is_some_and(|b| b.mesh_id != mesh.id)
+        {
+            return self.failed(Status::error(
+                "INVALID_BINDING",
+                "Supply the existing ordinary binding",
+            ));
+        }
+        let expected_blends: HashSet<_> = self
+            .blend_bindings
+            .values()
+            .filter(|b| b.target_id == mesh.id)
+            .map(|b| b.id.clone())
+            .collect();
+        let expected_glues: HashSet<_> = self
+            .glues_for_mesh(&mesh.id)
+            .iter()
+            .map(|g| g.id.clone())
+            .collect();
+        if blend_bindings
+            .iter()
+            .map(|b| b.id.clone())
+            .collect::<HashSet<_>>()
+            != expected_blends
+            || blend_bindings.len() != expected_blends.len()
+            || blend_bindings
+                .iter()
+                .any(|b| b.target_id != mesh.id || b.target_kind != BlendShapeTargetKind::Mesh)
+            || glues.iter().map(|g| g.id.clone()).collect::<HashSet<_>>() != expected_glues
+            || glues.len() != expected_glues.len()
+        {
+            return self.failed(Status::error("INCOMPLETE_DEPENDENCIES", &mesh.id));
+        }
+        let ordinary_id = binding.as_ref().map(|b| b.id.clone());
+        let mut candidate = self.clone();
+        if let Some(b) = &binding {
+            candidate.bindings.remove(&b.id);
+        }
+        for id in &expected_blends {
+            candidate.blend_bindings.remove(id);
+        }
+        for id in &expected_glues {
+            candidate.glues.remove(id);
+        }
+        // Remove only temporary map entries; order arrays are restored on commit.
+        candidate
+            .binding_order
+            .retain(|id| candidate.bindings.contains_key(id));
+        let result = candidate.replace_mesh(mesh);
+        if !result.status.is_ok() {
+            return self.failed(result.status);
+        }
+        if let Some(mut b) = binding {
+            let status = candidate.canonicalize_binding(&mut b);
+            if !status.is_ok() {
+                return self.failed(status);
+            }
+            candidate.bindings.insert(b.id.clone(), b);
+        }
+        for b in blend_bindings {
+            let status = candidate.validate_blend_binding(&b);
+            if !status.is_ok() {
+                return self.failed(status);
+            }
+            candidate.blend_bindings.insert(b.id.clone(), b);
+        }
+        for g in glues {
+            let status = candidate.validate_glue(&g);
+            if !status.is_ok() {
+                return self.failed(status);
+            }
+            // Reuse replacement validation, including runtime-ID uniqueness.
+            candidate
+                .glues
+                .insert(g.id.clone(), self.glues[&g.id].clone());
+            let result = candidate.replace_glue(g);
+            if !result.status.is_ok() {
+                return self.failed(result.status);
+            }
+        }
+        self.meshes = candidate.meshes;
+        self.vertex_slots = candidate.vertex_slots;
+        self.bindings = candidate.bindings;
+        self.blend_bindings = candidate.blend_bindings;
+        self.glues = candidate.glues;
+        self.changed(
+            ChangeKind::Structure,
+            self.mesh_order.clone(),
+            result
+                .changes
+                .mesh_ids
+                .into_iter()
+                .chain(ordinary_id)
+                .chain(expected_blends)
+                .chain(expected_glues)
+                .collect(),
+        )
+    }
+
     pub fn render_indices(&self, id: &str) -> Result<Vec<u32>, Status> {
         let mesh = self
             .get_mesh(id)
@@ -1217,6 +1342,13 @@ impl Document {
                 if !status.is_ok() {
                     return self.failed(status);
                 }
+                meshes = self.mesh_order.clone();
+            }
+        }
+        for glue in self.glues.values() {
+            if glue.binding.as_ref().is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == p.id)) {
+                let status = candidate.validate_glue(glue);
+                if !status.is_ok() { return self.failed(status); }
                 meshes = self.mesh_order.clone();
             }
         }
@@ -2158,17 +2290,48 @@ impl Document {
                 );
             }
         }
-        if !glue.intensity.is_finite() || glue.intensity < 0.0 {
+        if !glue.intensity.is_finite() {
             return Status::error(
                 "INVALID_INTENSITY",
-                format!("{}: intensity must be finite and non-negative", glue.id),
+                format!("{}: intensity must be finite", glue.id),
             );
         }
-        if glue.binding_id.is_some() {
-            return Status::error(
-                "UNSUPPORTED_FEATURE",
-                format!("{}: animated Glue intensity requires a dedicated Glue binding", glue.id),
-            );
+        if let Some(binding) = &glue.binding {
+            if binding.axes.is_empty() || binding.axes.len() > 16 {
+                return Status::error("INVALID_BINDING", "Glue requires 1..16 axes");
+            }
+            let mut total = 1usize;
+            let mut seen = HashSet::new();
+            for axis in &binding.axes {
+                let Some(p) = self.get_parameter(&axis.parameter_id) else {
+                    return Status::error("MISSING_PARAMETER", &axis.parameter_id);
+                };
+                if p.kind != ParameterKind::Normal {
+                    return Status::error("INVALID_PARAMETER_KIND", &p.id);
+                }
+                if !seen.insert(&axis.parameter_id) {
+                    return Status::error("DUPLICATE_AXIS", &p.id);
+                }
+                if axis.keys.is_empty() || axis.keys.len() > i32::MAX as usize / total {
+                    return Status::error("INVALID_KEYS", &glue.id);
+                }
+                total *= axis.keys.len();
+                for (i, &key) in axis.keys.iter().enumerate() {
+                    if !key.is_finite()
+                        || key < p.minimum
+                        || key > p.maximum
+                        || (i > 0 && key <= axis.keys[i - 1])
+                    {
+                        return Status::error("INVALID_KEYS", &p.id);
+                    }
+                }
+            }
+            if binding.keyforms.len() != total {
+                return Status::error("INCOMPLETE_KEYFORMS", &glue.id);
+            }
+            if binding.keyforms.iter().any(|k| !k.intensity.is_finite()) {
+                return Status::error("INVALID_GLUE", "Glue keyform intensity must be finite");
+            }
         }
         Status::ok()
     }
@@ -2301,7 +2464,7 @@ impl Document {
             }
         }
         for (key, g) in &self.glues {
-            if g.mesh_a_id == id || g.mesh_b_id == id || g.binding_id.as_deref() == Some(id) {
+            if g.mesh_a_id == id || g.mesh_b_id == id || g.binding.as_ref().is_some_and(|b| b.axes.iter().any(|a| a.parameter_id == id)) {
                 refs.push(key.clone());
             }
         }

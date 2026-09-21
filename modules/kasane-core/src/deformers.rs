@@ -61,22 +61,23 @@ impl PsmVec2 {
     }
 
     #[inline(always)]
+    // Use explicit fused operations to keep Core arithmetic stable across builds.
     pub fn bary3(a: Self, b: Self, c: Self, wa: f32, wb: f32, wc: f32) -> Self {
         Self::new(
-            wc * c.x + (wb * b.x + wa * a.x),
-            wc * c.y + (wb * b.y + wa * a.y),
+            wc.mul_add(c.x, wb.mul_add(b.x, wa * a.x)),
+            wc.mul_add(c.y, wb.mul_add(b.y, wa * a.y)),
         )
     }
 
     #[inline(always)]
     pub fn bilinear(p00: Self, p10: Self, p01: Self, p11: Self, u: f32, v: f32) -> Self {
         let inv_u = 1.0 - u;
-        let x0 = u * p10.x + inv_u * p00.x;
-        let y0 = u * p10.y + inv_u * p00.y;
-        let x1 = u * p11.x + inv_u * p01.x;
-        let y1 = u * p11.y + inv_u * p01.y;
+        let x0 = u.mul_add(p10.x, inv_u * p00.x);
+        let y0 = u.mul_add(p10.y, inv_u * p00.y);
+        let x1 = u.mul_add(p11.x, inv_u * p01.x);
+        let y1 = u.mul_add(p11.y, inv_u * p01.y);
         let inv_v = 1.0 - v;
-        Self::new(v * x1 + inv_v * x0, v * y1 + inv_v * y0)
+        Self::new(v.mul_add(x1, inv_v * x0), v.mul_add(y1, inv_v * y0))
     }
 }
 
@@ -350,9 +351,11 @@ pub fn rotation_points(
 
     for i in 0..count {
         let p = v2_load(inputs, i);
+        // Accumulate the linear part before translation. Interleaving origin
+        // loses low bits that nested rotation-parent angle estimation amplifies.
         let r = PsmVec2::new(
-            origin.x + m00 * p.x + m01 * p.y,
-            origin.y + m10 * p.x + m11 * p.y,
+            m00.mul_add(p.x, m01 * p.y) + origin.x,
+            m10.mul_add(p.x, m11 * p.y) + origin.y,
         );
         v2_store(outputs, i, r);
     }

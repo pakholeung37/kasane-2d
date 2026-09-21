@@ -111,3 +111,43 @@ Raw requests are `requests/<id>.json` with `{id,app_id,generation,script_path,ob
 Results are atomically published to `results/<id>.json`: `ok`, `code`, `phase` (request/compile/runtime/business/observation), `executed`, start/end generation and revision, original script_path, compiler error code when applicable, errors `{file,line,function,message,type}`, captured logs, and the script's `business` Dictionary. JSON output normalizes packed arrays, Vector2 and Color to numeric arrays. UI shows a bounded summary and the complete result-file path.
 
 `observe:true` waits for M4's exact render submission, rejects state changes, then writes a clean PNG with selection overlays hidden. Result metadata includes document generation/revision, actual/requested preview parameters, camera, viewport and output dimensions, crop rectangle, SHA-256 and renderer ready/submission state. `object_id` crops the selected mesh's evaluated bounds. Headless, missing textures, failed evaluation, offscreen crop, changed state and file-write failures return explicit failure; no old PNG is reused as the current result. Images remain local; this protocol has no upload transport.
+
+### BlendShape, constraints, Glue and complete topology (M3B)
+
+`get_document_summary()` now includes `blend_key_tables`, `blend_constraints`,
+`blend_bindings`, and `glues`, in document order. `workspace.find_object(id)` and
+Hierarchy/Inspector expose these objects and their target/parameter/constraint links.
+
+Each collection has `get_<type>_snapshot(id)` and
+`write_<type>(description: Dictionary, replace: bool = false)`, where `<type>` is
+`blend_key_table`, `blend_constraint`, `blend_binding`, or `glue`.
+Use `erase_object(id)` and `references_to(id)` for reference-safe deletion.
+Writes validate before mutation, emit `changed`, and participate in
+`workspace.begin_action/end_action` undo/redo. Snapshots are detached values.
+
+- Key table: `{id, parameter_id, keys: Array[float], base_key_idx: int}`. The parameter must be BlendShape.
+- Constraint: `{id, parameter_id, keys: Array[float], weights: Array[float]}`. Either parameter kind is allowed; weights are in `[0,1]`.
+- Blend binding: `{id, target_id, target_kind: "mesh"|"warp"|"rotation"|"part", key_table_id, constraint_ids: Array[String], keyforms: {type: same target kind, items: Array[Dictionary]}}`.
+  Each delta item follows the snapshot: mesh `positions`, warp `points`, rotation `origin/angle/scale`, part `draw_order`; supported appearance fields are `opacity/multiply/screen`. Optional values are `null` when absent. Do not replace an absent color with zero: those have different interpolation semantics.
+- Glue: `{id, runtime_id, name, mesh_a_id, mesh_b_id, pairs: [{vertex_a, vertex_b, weight_a, weight_b}], intensity, binding?: {axes: [{parameter_id, keys}], keyforms: [{intensity}]}}`.
+  Axes reference Normal parameters. The first axis varies fastest in the Cartesian keyform grid. Binding intensity overrides the static intensity; all intensities must be finite. Vertex IDs refer to stable mesh IDs, not array indices. Pair order and weights are preserved.
+
+New structured snapshots represent points as `{x,y}`; writes also accept `Vector2`.
+Use ordinary Arrays or the corresponding packed arrays. Numeric IDs and indices must
+be integers; invalid types, incomplete key grids and dangling references return errors.
+
+`get_mesh_topology_snapshot(mesh_id)` returns `{mesh, binding, blend_bindings, glues,
+vertex_mapping}`. Edit this complete snapshot and submit it with
+`replace_mesh_topology(description)`. `vertex_mapping` contains `[old_id, new_id]`
+(or `[old_id, null]` for removal) for every old vertex. Preserve binding/Glue IDs,
+update all ordinary/delta geometry, and replace every affected Glue pair reference.
+The method requires the exact dependency set, preserves collection order, and commits
+one revision; failure leaves all collections unchanged. Wrap it in one workspace Action
+for a single Undo step.
+
+Project writes use format v3 for dedicated Glue intensity bindings; v1/v2 remain readable.
+Old non-null `binding_id` MeshBinding references are rejected instead of flattened.
+
+Rotation 原点的作者坐标在 v3 中使用双精度保存，保证 root 的 runtime→像素→runtime 往返可逆。普通 pose Dictionary 的 `origin: [x,y]` 保留 f64；使用 Vector2 输入会采用该输入本身的 f32 精度。运行时求值仍为 f32。
+
+Preview 的 `refresh()` 重新校验磁盘资源；`refresh_geometry()` 复用已验证纹理，仅提交几何/外观/遮罩更新。参数和相机信号使用后者，截图前仍显式执行完整 refresh。

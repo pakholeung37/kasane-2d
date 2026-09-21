@@ -54,7 +54,7 @@ fn test_hierarchical_transforms_and_warp() {
         kind: TransformKind::Rotation,
         base_angle: 0.0,
         rotation: RotationPose {
-            origin: Vec2::new(320.0, 240.0),
+            origin: Vec2::new(320.0, 240.0).into(),
             angle: 0.0,
             scale: 1.0,
             reflect_x: false,

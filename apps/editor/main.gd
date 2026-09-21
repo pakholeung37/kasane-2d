@@ -206,7 +206,7 @@ func refresh_document(_change: Dictionary = {}) -> void:
 func show_selection() -> void:
 	var summary: Dictionary = workspace.document.get_document_summary()
 	var value: Dictionary = {}
-	for group in [summary.get("parts", []), summary.get("meshes", []), summary.get("transforms", [])]:
+	for group in [summary.get("parts", []), summary.get("meshes", []), summary.get("transforms", []), summary.get("blend_key_tables", []), summary.get("blend_constraints", []), summary.get("blend_bindings", []), summary.get("glues", []), summary.get("parameters", [])]:
 		for entry in group:
 			if entry.get("id") == selected_id:
 				value = entry
@@ -222,16 +222,31 @@ func show_selection() -> void:
 		value = value.duplicate(true)
 		var bindings: Array = []
 		value.bindings = []
-		for binding in summary.get("bindings", []) + summary.get("scene_bindings", []):
-			if binding.get("mesh_id", binding.get("target_id", "")) == selected_id:
+		for binding in summary.get("bindings", []) + summary.get("scene_bindings", []) + summary.get("blend_bindings", []):
+			if binding.get("mesh_id", binding.get("target_id", "")) == selected_id or binding.id == selected_id:
 				bindings.append(binding)
 				var metadata: Dictionary = binding.duplicate()
-				metadata.erase("keyforms")
+				if metadata.get("keyforms") is Dictionary:
+					metadata.keyforms = metadata.keyforms.get("items", [])
+					metadata.label = "BlendShape · " + str(binding.get("target_kind", ""))
+					for table in summary.get("blend_key_tables", []):
+						if table.id == binding.key_table_id:
+							for i in metadata.keyforms.size():
+								metadata.keyforms[i] = metadata.keyforms[i].duplicate(true)
+								metadata.keyforms[i].keys = [table.keys[i]]
+				else:
+					metadata.label = "Normal · " + str(binding.id)
 				value.bindings.append(metadata)
+
+		if value.get("binding") is Dictionary:
+			var glue_binding: Dictionary = value.binding.duplicate(true)
+			glue_binding.id = "Glue intensity"
+			bindings.append(glue_binding)
+			value.bindings.append(glue_binding)
 
 		if not bindings.is_empty():
 			binding_index = clampi(binding_index, 0, bindings.size() - 1)
-			var forms: Array = bindings[binding_index].get("keyforms", [])
+			var forms: Array = value.bindings[binding_index].get("keyforms", [])
 			if not forms.is_empty():
 				keyform_index = clampi(keyform_index, 0, forms.size() - 1)
 				value.selected_keyform = forms[keyform_index]

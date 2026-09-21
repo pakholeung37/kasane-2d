@@ -124,9 +124,28 @@ impl Default for Appearance {
     }
 }
 
+/// Authoring-space origins need f64: adding a pixel-space canvas origin to an
+/// imported f32 runtime position must remain reversible before evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, Default)]
+pub struct PreciseVec2 {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl PreciseVec2 {
+    pub fn new(x: f64, y: f64) -> Self {
+        Self { x, y }
+    }
+}
+impl From<Vec2> for PreciseVec2 {
+    fn from(p: Vec2) -> Self {
+        Self::new(p.x as f64, p.y as f64)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RotationPose {
-    pub origin: Vec2,
+    pub origin: PreciseVec2,
     pub angle: f32,
     pub scale: f32,
     pub reflect_x: bool,
@@ -136,7 +155,7 @@ pub struct RotationPose {
 impl Default for RotationPose {
     fn default() -> Self {
         Self {
-            origin: Vec2::default(),
+            origin: PreciseVec2::default(),
             angle: 0.0,
             scale: 1.0,
             reflect_x: false,
@@ -431,7 +450,20 @@ pub struct Glue {
     pub pairs: Vec<GlueVertexPair>,
     pub intensity: f32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub binding_id: Option<String>,
+    pub binding: Option<GlueBinding>,
+}
+
+/// Ordinary parameter grid for Glue intensity, owned and edited atomically with its Glue.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GlueBinding {
+    pub axes: Vec<BindingAxis>,
+    /// First axis varies fastest, as in MOC3 ordinary bindings.
+    pub keyforms: Vec<GlueKeyform>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GlueKeyform {
+    pub intensity: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

@@ -43,7 +43,7 @@ fn fixture() -> Document {
             Canvas {
                 width: 640.0,
                 height: 480.0,
-                origin: Vec2::new(271.0, 193.0),
+                origin: Vec2::new(271.0, 193.0).into(),
                 pixels_per_unit: 100.0,
                 flag: 1,
             }
@@ -498,7 +498,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             TransformKind::Rotation
         },
         rotation: RotationPose {
-            origin: Vec2::new(312.0, 207.0),
+            origin: Vec2::new(312.0, 207.0).into(),
             angle: 13.0,
             scale: 1.17,
             reflect_x: true,
@@ -540,7 +540,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             TransformKind::Warp
         },
         rotation: RotationPose {
-            origin: Vec2::new(0.37, 0.63),
+            origin: Vec2::new(0.37, 0.63).into(),
             angle: -24.0,
             scale: 0.86,
             reflect_x: false,
@@ -590,7 +590,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             };
             f.rotation.angle += key * 17.0;
             f.rotation.scale += key * 0.13;
-            f.rotation.origin.x += key * if t.parent_id.is_empty() { 11.0 } else { 0.07 };
+            f.rotation.origin.x += key as f64 * if t.parent_id.is_empty() { 11.0 } else { 0.07 };
             f.appearance.opacity += key * 0.05;
             if t.kind == TransformKind::Warp {
                 f.positions = t.points.clone();

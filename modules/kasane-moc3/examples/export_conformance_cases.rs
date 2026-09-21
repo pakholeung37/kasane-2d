@@ -52,7 +52,7 @@ fn base_doc() -> Document {
             Canvas {
                 width: 640.0,
                 height: 480.0,
-                origin: Vec2::new(271.0, 193.0),
+                origin: Vec2::new(271.0, 193.0).into(),
                 pixels_per_unit: 100.0,
                 flag: 1,
             }
@@ -416,7 +416,7 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
         parent_id: String::new(),
         kind: TransformKind::Rotation,
         rotation: RotationPose {
-            origin: Vec2::new(271.0, 193.0),
+            origin: Vec2::new(271.0, 193.0).into(),
             angle: 0.0,
             scale: 1.0,
             reflect_x: false,
@@ -490,7 +490,7 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
                 SceneKeyform {
                     keys: vec![-1.0],
                     rotation: RotationPose {
-                        origin: Vec2::new(271.0, 193.0),
+                        origin: Vec2::new(271.0, 193.0).into(),
                         angle: -30.0,
                         scale: 0.8,
                         reflect_x: false,
@@ -501,7 +501,7 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
                 SceneKeyform {
                     keys: vec![0.0],
                     rotation: RotationPose {
-                        origin: Vec2::new(271.0, 193.0),
+                        origin: Vec2::new(271.0, 193.0).into(),
                         angle: 0.0,
                         scale: 1.0,
                         reflect_x: false,
@@ -512,7 +512,7 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
                 SceneKeyform {
                     keys: vec![1.0],
                     rotation: RotationPose {
-                        origin: Vec2::new(271.0, 193.0),
+                        origin: Vec2::new(271.0, 193.0).into(),
                         angle: 30.0,
                         scale: 1.2,
                         reflect_x: false,

@@ -3,6 +3,10 @@ import copy
 import importlib.util
 from pathlib import Path
 import unittest
+import tempfile
+import json
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 
 spec = importlib.util.spec_from_file_location(
     "validate_m3b", Path(__file__).resolve().parents[1] / "tools/validate_m3b.py"
@@ -43,8 +47,41 @@ class ConformanceThresholdTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "duplicated"):
             validation.compare_samples(expected, actual, 1, "ids")
 
+    def test_vectorized_and_scalar_metrics_agree(self):
+        expected = self.sample() * 2
+        actual = copy.deepcopy(expected)
+        actual[1][0]["positions"][0][0] = 1e-6
+        self.assertEqual(validation.compare_samples(expected, actual, 5800, "fast"),
+                         validation.compare_samples_scalar(expected, actual, 5800, "scalar"))
+
+    def test_nan_cannot_pass_comparison(self):
+        expected = self.sample()
+        actual = copy.deepcopy(expected)
+        actual[0][0]["opacity"] = float("nan")
+        with self.assertRaisesRegex(RuntimeError, "non-finite"):
+            validation.compare_samples(expected, actual, 1, "nan")
+
     def test_equal_samples_pass(self):
         self.assertEqual(validation.compare_samples(self.sample(), self.sample(), 5800, "same")["max_pixel_error"], 0)
+
+
+class AcceptanceEvidenceTests(unittest.TestCase):
+    def test_missing_gate_and_wrong_model_cannot_complete_milestone(self):
+        spec = importlib.util.spec_from_file_location("m3b_acceptance", Path(__file__).resolve().parents[1] / "tools/m3b_acceptance.py")
+        evidence = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(evidence)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            numeric = {"numerical_status":"passed", "cases":[{"inputs":{"orig":{"sha256":"model"}}}]}
+            self.assertEqual(evidence.collect(copy.deepcopy(numeric), root/'baseline', root/'editor', root/'gpu')['status'], 'failed')
+            (root/'baseline').write_text(json.dumps({'status':'passed', 'model':{'moc3_sha256':'model'}}))
+            (root/'gpu').write_text(json.dumps({'status':'passed'}))
+            editor = {'status':'passed', 'source_sha256':'wrong', 'gates':{name:{'status':'passed'} for name in ['gpu_comparison','packaged_editor_workflow','detached_texture_project','new_feature_edit_roundtrips']}}
+            (root/'editor').write_text(json.dumps(editor))
+            self.assertEqual(evidence.collect(copy.deepcopy(numeric), root/'baseline', root/'editor', root/'gpu')['status'], 'failed')
+            editor['source_sha256'] = 'model'
+            (root/'editor').write_text(json.dumps(editor))
+            self.assertEqual(evidence.collect(copy.deepcopy(numeric), root/'baseline', root/'editor', root/'gpu')['status'], 'passed')
 
 
 if __name__ == "__main__":

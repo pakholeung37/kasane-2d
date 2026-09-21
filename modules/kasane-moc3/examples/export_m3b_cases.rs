@@ -110,6 +110,52 @@ fn sample_parameters_mao(doc: &Document) -> Vec<Vec<f32>> {
             samples.push(sample);
         }
     }
+    // Pairwise shared-target and constraint interactions, plus a normal-deformer
+    // driver in the same dependency chain. Every combination is deterministic.
+    let internal_index: HashMap<&str, usize> = params.iter().enumerate().map(|(i, p)| (p.id.as_str(), i)).collect();
+    for id in doc.blend_binding_order() {
+        let binding = doc.get_blend_binding(id).unwrap();
+        let table = doc.get_blend_key_table(&binding.key_table_id).unwrap();
+        let driver = internal_index[table.parameter_id.as_str()];
+        let mut dependencies = Vec::new();
+        for constraint_id in &binding.constraint_ids {
+            dependencies.push(doc.get_blend_constraint(constraint_id).unwrap().parameter_id.as_str());
+        }
+        for other in doc.blend_bindings_for_target(&binding.target_id) {
+            dependencies.push(doc.get_blend_key_table(&other.key_table_id).unwrap().parameter_id.as_str());
+        }
+        let mut normal = Vec::new();
+        if let Some(b) = doc.binding_for_mesh(&binding.target_id) {
+            normal.extend(b.axes.iter().map(|a| a.parameter_id.as_str()));
+        }
+        let mut target = binding.target_id.as_str();
+        if let Some(mesh) = doc.get_mesh(target) { target = &mesh.deformer_id; }
+        while let Some(transform) = doc.get_transform(target) {
+            if let Some(b) = doc.binding_for_scene(target) {
+                normal.extend(b.axes.iter().map(|a| a.parameter_id.as_str()));
+            }
+            target = &transform.parent_id;
+        }
+        dependencies.sort(); dependencies.dedup();
+        normal.sort(); normal.dedup();
+        dependencies.extend(normal.iter().copied());
+        for dependency in dependencies {
+            let index = internal_index[dependency];
+            if index == driver { continue; }
+            for dv in [params[driver].minimum, (params[driver].minimum + params[driver].maximum) * 0.5, params[driver].maximum] {
+                for cv in [params[index].minimum, (params[index].minimum + params[index].maximum) * 0.5, params[index].maximum] {
+                    let mut sample = defaults.clone(); sample[driver] = dv; sample[index] = cv;
+                    samples.push(sample.clone());
+                    if let Some(&normal_id) = normal.first() {
+                        let ni = internal_index[normal_id];
+                        if ni != index && ni != driver { sample[ni] = params[ni].maximum; samples.push(sample); }
+                    }
+                }
+            }
+        }
+    }
+    samples.push(params.iter().map(|p| p.minimum).collect());
+    samples.push(params.iter().map(|p| p.maximum).collect());
     let mut seen = std::collections::HashSet::new();
     samples.retain(|s| seen.insert(s.iter().map(|v| v.to_bits()).collect::<Vec<_>>()));
     samples
@@ -194,13 +240,22 @@ fn main() {
     let decoded = import_from_bare_moc3(&mao_bytes, &HashMap::new()).expect("Import failed");
     let orig_doc = &decoded.document;
 
-    // Serialize to Project v2 format
+    // Serialize to Project v3 format
     let project_json = kasane_project::encode_project(orig_doc).expect("encode_project failed");
+    if env::args().any(|a| a == "--focus-inkdrop") { fs::write(out_dir.join("project.json"), &project_json).unwrap(); }
 
     // Deserialize to fresh, completely detached Document
     let detached_doc = kasane_project::decode_project(&project_json).expect("decode_project failed");
 
-    let all_samples = sample_parameters_mao(&detached_doc);
+    let all_samples = if env::args().any(|a| a == "--focus-inkdrop") {
+        vec![detached_doc.parameter_order().iter().map(|id| {
+            let p = detached_doc.get_parameter(id).unwrap();
+            if p.runtime_id == "ParamInkDrop" { 30.0 } else { p.default_value }
+        }).collect()]
+    } else if env::args().any(|a| a == "--focus-extremes") {
+        vec![detached_doc.parameter_order().iter().map(|id| detached_doc.get_parameter(id).unwrap().minimum).collect(),
+             detached_doc.parameter_order().iter().map(|id| detached_doc.get_parameter(id).unwrap().maximum).collect()]
+    } else { sample_parameters_mao(&detached_doc) };
     let re_export_artifact = encode_moc3(&detached_doc).expect("encode_moc3 failed");
     let mut case_names = Vec::new();
     for (batch, samples) in all_samples.chunks(24).enumerate() {

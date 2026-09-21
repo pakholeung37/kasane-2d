@@ -85,7 +85,7 @@ impl INode2D for KasaneDocumentPreview {
         let scale = (x_len.max(y_len) as f64).max(0.0001);
         if (scale - self.mask_scale).abs() > 0.00001 {
             if self.document.is_some() {
-                self.refresh();
+                self.refresh_geometry();
             } else if let Some(frame) = self.runtime_frame.clone() {
                 let textures = self.runtime_textures.clone();
                 self.render_frame(&frame, &textures);
@@ -114,7 +114,7 @@ impl KasaneDocumentPreview {
         }
         if let Some(mut old_doc) = self.document.take() {
             let changed_callable = self.to_gd().callable("_document_changed");
-            let refresh_callable = self.to_gd().callable("refresh");
+            let refresh_callable = self.to_gd().callable("refresh_geometry");
             old_doc.disconnect("changed", &changed_callable);
             old_doc.disconnect("preview_changed", &refresh_callable);
         }
@@ -124,7 +124,7 @@ impl KasaneDocumentPreview {
         self.document = doc.clone();
         if let Some(mut new_doc) = doc {
             let changed_callable = self.to_gd().callable("_document_changed");
-            let refresh_callable = self.to_gd().callable("refresh");
+            let refresh_callable = self.to_gd().callable("refresh_geometry");
             new_doc.connect("changed", &changed_callable);
             new_doc.connect("preview_changed", &refresh_callable);
         }
@@ -251,6 +251,17 @@ impl KasaneDocumentPreview {
 
     #[func]
     pub fn refresh(&mut self) -> Dictionary {
+        self.refresh_inner(true)
+    }
+
+    /// Preview values and camera changes cannot mutate asset data. Explicit
+    /// refresh/document/texture changes still revalidate resources from disk.
+    #[func]
+    pub fn refresh_geometry(&mut self) -> Dictionary {
+        self.refresh_inner(false)
+    }
+
+    fn refresh_inner(&mut self, reload_assets: bool) -> Dictionary {
         let Some(doc) = self.document.clone() else {
             self.clear_views();
             let res = error_dict("MISSING_DOCUMENT", "Attach a Document.");
@@ -258,7 +269,7 @@ impl KasaneDocumentPreview {
             return res;
         };
 
-        if !doc.bind().session().root().as_os_str().is_empty() {
+        if reload_assets && !doc.bind().session().root().as_os_str().is_empty() {
             let diags = doc.bind().session().diagnose();
             if !diags.is_empty() {
                 self.clear_views();
@@ -298,7 +309,11 @@ impl KasaneDocumentPreview {
 
         let mut resolved = HashMap::new();
         for d in &frame.drawables {
-            if !doc.bind().session().root().as_os_str().is_empty() {
+            // Shared atlas assets must be validated/decoded once per refresh, not
+            // once per mesh. Explicit refresh still detects disk edits.
+            if resolved.contains_key(&d.texture_asset_id) { continue; }
+            let missing_texture = textures.bind().get_texture(GString::from(d.texture_asset_id.as_str())).is_none();
+            if (reload_assets || missing_texture) && !doc.bind().session().root().as_os_str().is_empty() {
                 let s = textures.bind_mut().resolve_asset(
                     Some(doc.clone()),
                     GString::from(d.texture_asset_id.as_str()),

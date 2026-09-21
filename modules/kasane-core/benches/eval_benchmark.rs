@@ -103,7 +103,7 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
         parent_id: String::new(),
         kind: TransformKind::Rotation,
         rotation: RotationPose {
-            origin: Vec2::new(640.0, 360.0),
+            origin: Vec2::new(640.0, 360.0).into(),
             angle: 0.0,
             scale: 1.0,
             reflect_x: false,

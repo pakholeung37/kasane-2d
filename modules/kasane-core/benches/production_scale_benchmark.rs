@@ -90,7 +90,7 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
             parent_id: String::new(),
             kind: TransformKind::Rotation,
             rotation: RotationPose {
-                origin: Vec2::new(1920.0, 1080.0),
+                origin: Vec2::new(1920.0, 1080.0).into(),
                 angle: 0.0,
                 scale: 1.0,
                 reflect_x: false,
@@ -135,7 +135,7 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
             parent_id: warp_l2.clone(),
             kind: TransformKind::Rotation,
             rotation: RotationPose {
-                origin: Vec2::new(1920.0, 1080.0),
+                origin: Vec2::new(1920.0, 1080.0).into(),
                 angle: 0.0,
                 scale: 1.0,
                 reflect_x: false,

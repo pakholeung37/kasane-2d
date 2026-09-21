@@ -30,6 +30,7 @@ var draw_order_val: Label
 var masks_val: Label
 
 # Bindings & Keyforms Card
+var reference_links: VBoxContainer
 var binding_choice: OptionButton
 var keyform_choice: OptionButton
 
@@ -96,6 +97,9 @@ func _ready() -> void:
 	deform_parent_btn.disabled = true
 	deform_parent_btn.pressed.connect(_on_deform_parent_pressed)
 	deform_row.add_child(deform_parent_btn)
+
+	reference_links = VBoxContainer.new()
+	hier_box.add_child(reference_links)
 
 	# --- Section 3: Render Properties ---
 	render_card = _create_section_card("渲染属性")
@@ -208,6 +212,11 @@ func update_selection(data: Dictionary, binding_idx: int, keyform_idx: int) -> v
 	id_val.tooltip_text = str(data.get("id", ""))
 	kind_val.text = str(data.get("kind", "Mesh" if data.has("vertex_ids") else ("Part" if data.has("parent_id") and not data.has("points") else "Transform")))
 
+	if data.has("pairs"): kind_val.text = "Glue · %d pairs · intensity %s" % [data.pairs.size(), str(data.intensity)]
+	elif data.has("base_key_idx"): kind_val.text = "BlendShape table · base %d" % data.base_key_idx
+	elif data.has("weights"): kind_val.text = "BlendShape constraint"
+	elif data.has("target_kind"): kind_val.text = "BlendShape · " + str(data.target_kind)
+
 	# Hierarchy
 	org_parent_val.text = str(data.get("organization_parent", data.get("parent_id", "无")))
 	var parent_id: String = data.get("deform_parent", data.get("parent_id", "") if data.has("kind") else "")
@@ -220,6 +229,24 @@ func update_selection(data: Dictionary, binding_idx: int, keyform_idx: int) -> v
 		deform_parent_btn.tooltip_text = "点击跳转至父变形器: " + parent_id
 		deform_parent_btn.disabled = false
 		deform_parent_btn.set_meta("target", parent_id)
+
+	for child in reference_links.get_children():
+		child.queue_free()
+	for field in ["mesh_a_id", "mesh_b_id", "parameter_id", "target_id", "key_table_id"]:
+		if data.has(field) and not str(data[field]).is_empty():
+			var target := str(data[field])
+			var link := Button.new()
+			link.text = field + ": " + target
+			link.clip_text = true
+			link.tooltip_text = target
+			link.pressed.connect(func(): jump_to_object_requested.emit(target))
+			reference_links.add_child(link)
+	for target in data.get("constraint_ids", []):
+		var link := Button.new()
+		link.text = "Constraint: " + str(target)
+		link.clip_text = true
+		link.pressed.connect(func(): jump_to_object_requested.emit(str(target)))
+		reference_links.add_child(link)
 
 	# Render Properties
 	var props: Dictionary = data.get("properties", {})
@@ -242,7 +269,7 @@ func update_selection(data: Dictionary, binding_idx: int, keyform_idx: int) -> v
 
 	var bindings: Array = data.get("bindings", [])
 	for b in bindings:
-		binding_choice.add_item(str(b.get("id", "")))
+		binding_choice.add_item(str(b.get("label", b.get("id", ""))))
 
 	if not bindings.is_empty():
 		var b_idx := clampi(binding_idx, 0, bindings.size() - 1)

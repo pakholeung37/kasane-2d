@@ -195,12 +195,18 @@ pub fn pose_from_dict(d: &Dictionary) -> Result<RotationPose, Status> {
         Some(v) => v,
         None => return Err(fail()),
     };
-    let xy = extract_floats(&origin_val)?;
-    if xy.len() != 2 {
-        return Err(fail());
-    }
+    let xy: Vec<f64> = if let Ok(array) = origin_val.try_to::<Array>() {
+        array.iter_shared().map(|v| match v.get_type() {
+            VariantType::FLOAT => Ok(v.to::<f64>()),
+            VariantType::INT => Ok(v.to::<i64>() as f64),
+            _ => Err(fail()),
+        }).collect::<Result<_, _>>()?
+    } else if let Ok(point) = origin_val.try_to::<Vector2>() {
+        vec![point.x as f64, point.y as f64]
+    } else { extract_floats(&origin_val)?.into_iter().map(f64::from).collect() };
+    if xy.len() != 2 { return Err(fail()); }
     Ok(RotationPose {
-        origin: Vec2::new(xy[0], xy[1]),
+        origin: kasane_core::types::PreciseVec2::new(xy[0], xy[1]),
         angle,
         scale,
         reflect_x,
@@ -668,4 +674,123 @@ pub fn project_result_dict(res: &ProjectResult) -> Dictionary {
     }
     out.set("warnings", &warnings);
     out
+}
+
+// Structured Dictionaries for the M3B data model. No JSON text crosses the API;
+// integer IDs stay integers and Vector2 inputs retain the usual Godot convention.
+pub fn structured_from_dict<T: serde::de::DeserializeOwned>(d: &Dictionary) -> Result<T, Status> {
+    fn value(v: &Variant) -> Result<serde_json::Value, Status> {
+        use serde_json::{Map, Number, Value};
+        Ok(match v.get_type() {
+            VariantType::NIL => Value::Null,
+            VariantType::BOOL => Value::Bool(v.to::<bool>()),
+            VariantType::INT => Value::Number(v.to::<i64>().into()),
+            VariantType::FLOAT => Value::Number(Number::from_f64(v.to::<f64>()).ok_or_else(fail)?),
+            VariantType::STRING => Value::String(v.to::<GString>().to_string()),
+            VariantType::STRING_NAME => Value::String(v.to::<StringName>().to_string()),
+            VariantType::VECTOR2 => {
+                let p = v.to::<Vector2>();
+                if !p.is_finite() {
+                    return Err(fail());
+                }
+                serde_json::json!({"x": p.x, "y": p.y})
+            }
+            VariantType::DICTIONARY => {
+                let d = v.to::<Dictionary>();
+                let mut object = Map::new();
+                for (k, v) in d.iter_shared() {
+                    let key = match k.get_type() {
+                        VariantType::STRING => k.to::<GString>().to_string(),
+                        VariantType::STRING_NAME => k.to::<StringName>().to_string(),
+                        _ => {
+                            return Err(Status::error(
+                                "INVALID_FIELD",
+                                "Dictionary keys must be strings",
+                            ))
+                        }
+                    };
+                    let converted = value(&v)
+                        .map_err(|s| Status::error(s.code, format!("{key}: {}", s.message)))?;
+                    object.insert(key, converted);
+                }
+                Value::Object(object)
+            }
+            VariantType::ARRAY => Value::Array(
+                v.to::<Array>()
+                    .iter_shared()
+                    .map(|v| value(&v))
+                    .collect::<Result<_, _>>()?,
+            ),
+            VariantType::PACKED_FLOAT32_ARRAY => Value::Array(
+                v.to::<PackedFloat32Array>()
+                    .as_slice()
+                    .iter()
+                    .map(|&v| value(&(v as f64).to_variant()))
+                    .collect::<Result<_, _>>()?,
+            ),
+            VariantType::PACKED_INT64_ARRAY => Value::Array(
+                v.to::<PackedInt64Array>()
+                    .as_slice()
+                    .iter()
+                    .map(|&v| Value::Number(v.into()))
+                    .collect(),
+            ),
+            VariantType::PACKED_VECTOR2_ARRAY => Value::Array(
+                v.to::<PackedVector2Array>()
+                    .as_slice()
+                    .iter()
+                    .map(|v| value(&v.to_variant()))
+                    .collect::<Result<_, _>>()?,
+            ),
+            VariantType::PACKED_STRING_ARRAY => Value::Array(
+                v.to::<PackedStringArray>()
+                    .as_slice()
+                    .iter()
+                    .map(|v| Value::String(v.to_string()))
+                    .collect(),
+            ),
+            _ => {
+                return Err(Status::error(
+                    "INVALID_FIELD",
+                    format!("Unsupported field type: {:?}", v.get_type()),
+                ))
+            }
+        })
+    }
+    serde_json::from_value(value(&d.to_variant())?)
+        .map_err(|e| Status::error("INVALID_FIELD", e.to_string()))
+}
+
+pub fn structured_to_dict<T: serde::Serialize>(data: &T) -> Dictionary {
+    fn variant(v: serde_json::Value) -> Variant {
+        use serde_json::Value;
+        match v {
+            Value::Null => Variant::nil(),
+            Value::Bool(v) => v.to_variant(),
+            Value::Number(v) => {
+                if let Some(i) = v.as_i64() {
+                    i.to_variant()
+                } else {
+                    v.as_f64().unwrap().to_variant()
+                }
+            }
+            Value::String(v) => GString::from(&v).to_variant(),
+            Value::Array(v) => {
+                let mut a = Array::new();
+                for item in v {
+                    a.push(&variant(item));
+                }
+                a.to_variant()
+            }
+            Value::Object(v) => {
+                let mut d = Dictionary::new();
+                for (key, val) in v {
+                    d.set(key.as_str(), &variant(val));
+                }
+                d.to_variant()
+            }
+        }
+    }
+    variant(serde_json::to_value(data).expect("validated document is serializable"))
+        .to::<Dictionary>()
 }

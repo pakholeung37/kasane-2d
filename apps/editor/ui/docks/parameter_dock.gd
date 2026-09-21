@@ -74,6 +74,7 @@ func rebuild(summary: Dictionary, selected_id: String = "") -> void:
 	for p in params:
 		var p_id: String = p.get("id", "")
 		var p_name: String = p.get("name", p_id)
+		if p.get("kind", "normal") == "blend_shape": p_name += " · BlendShape"
 		var p_min: float = p.get("minimum", -1.0)
 		var p_max: float = p.get("maximum", 1.0)
 		var p_def: float = p.get("default_value", 0.0)
@@ -122,6 +123,18 @@ func _gather_keys_for_object(summary: Dictionary, object_id: String) -> Dictiona
 				for k in axis.get("keys", []):
 					if not result[pid].has(k):
 						result[pid].append(k)
+	for b in summary.get("blend_bindings", []):
+		if b.target_id != object_id and b.id != object_id:
+			continue
+		for table in summary.get("blend_key_tables", []):
+			if table.id == b.key_table_id:
+				if not result.has(table.parameter_id): result[table.parameter_id] = []
+				for key in table.keys:
+					if not result[table.parameter_id].has(key): result[table.parameter_id].append(key)
+	for glue in summary.get("glues", []):
+		if glue.id == object_id and glue.get("binding") is Dictionary:
+			for axis in glue.binding.axes:
+				result[axis.parameter_id] = axis.keys
 	return result
 
 func update_values() -> void:

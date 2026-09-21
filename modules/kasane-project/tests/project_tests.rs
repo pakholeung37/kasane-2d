@@ -47,7 +47,7 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
             Canvas {
                 width: 640.0,
                 height: 480.0,
-                origin: Vec2::new(271.0, 193.0),
+                origin: Vec2::new(271.0, 193.0).into(),
                 pixels_per_unit: 100.0,
                 flag: 1,
             }
@@ -111,7 +111,7 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
         part_id: sid(1),
         kind: TransformKind::Rotation,
         rotation: RotationPose {
-            origin: Vec2::new(320.0, 240.0),
+            origin: Vec2::new(320.0, 240.0).into(),
             angle: 0.0,
             scale: 1.0,
             reflect_x: false,
@@ -196,7 +196,7 @@ fn test_project_encode_decode_roundtrip() {
 
     let encoded = encode_project(&before).expect("encode_project failed");
     assert!(encoded.contains("\"format\": \"kasane-directory-project\""));
-    assert!(encoded.contains("\"format_version\": 2"));
+    assert!(encoded.contains("\"format_version\": 3"));
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(before.same_content(&decoded));
@@ -1297,6 +1297,11 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
         .status
         .is_ok());
 
+    let glue_parameter = id(105);
+    assert!(doc.create_parameter(Parameter {
+        id: glue_parameter.clone(), runtime_id: "GlueStrength".into(), minimum: 0.0,
+        maximum: 1.0, default_value: 0.0, ..Default::default()
+    }).status.is_ok());
     let glue_id = id(104);
     assert!(doc
         .create_glue(Glue {
@@ -1312,13 +1317,16 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
                 weight_b: 0.5,
             }],
             intensity: 1.0,
-            binding_id: None,
+            binding: Some(kasane_core::types::GlueBinding {
+                axes: vec![BindingAxis { parameter_id: glue_parameter, keys: vec![0.0, 1.0] }],
+                keyforms: vec![kasane_core::types::GlueKeyform { intensity: 0.0 }, kasane_core::types::GlueKeyform { intensity: 1.0 }],
+            }),
         })
         .status
         .is_ok());
 
     let encoded = encode_project(&doc).expect("encode_project failed");
-    assert!(encoded.contains("\"format_version\": 2"));
+    assert!(encoded.contains("\"format_version\": 3"));
     assert!(encoded.contains("blend_key_tables"));
     assert!(encoded.contains("blend_constraints"));
     assert!(encoded.contains("blend_bindings"));
@@ -1333,20 +1341,20 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
 }
 
 #[test]
-fn test_project_v1_migration_to_v2() {
+fn test_project_v1_migration_to_v3() {
     let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
     let doc_v1 = fixture_doc(sha1, sha2);
 
-    // Encode to v2, then manually rewrite format_version to 1 and remove blend/glue fields to simulate a v1 project
+    // Encode to v3, then manually rewrite format_version to 1 and remove blend/glue fields to simulate a v1 project
     let mut encoded_v1 = encode_project(&doc_v1).unwrap();
-    encoded_v1 = encoded_v1.replace("\"format_version\": 2", "\"format_version\": 1");
+    encoded_v1 = encoded_v1.replace("\"format_version\": 3", "\"format_version\": 1");
 
     let decoded = decode_project(&encoded_v1).expect("Failed to decode v1 project");
     assert_eq!(decoded.blend_key_table_order().len(), 0);
     assert_eq!(decoded.glue_order().len(), 0);
 
-    // Saving the decoded v1 project automatically upgrades it to v2
+    // Saving the decoded v1 project automatically upgrades it to v3
     let re_encoded = encode_project(&decoded).expect("Failed to re-encode project");
-    assert!(re_encoded.contains("\"format_version\": 2"));
+    assert!(re_encoded.contains("\"format_version\": 3"));
 }

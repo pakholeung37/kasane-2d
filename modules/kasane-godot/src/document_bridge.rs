@@ -437,6 +437,222 @@ impl KasaneDocumentBridge {
     }
 
     #[func]
+    pub fn write_blend_key_table(
+        &mut self,
+        description: Dictionary,
+        #[opt(default = false)] replace: bool,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let value = match crate::conversions::structured_from_dict::<
+            kasane_core::types::BlendShapeKeyTable,
+        >(&description)
+        {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let edit = if replace {
+            self.session.document_mut().replace_blend_key_table(value)
+        } else {
+            self.session.document_mut().create_blend_key_table(value)
+        };
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn get_blend_key_table_snapshot(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        match self.session.document().get_blend_key_table(&id.to_string()) {
+            Some(value) => crate::conversions::structured_to_dict(value),
+            None => error_dict("MISSING_OBJECT", &id.to_string()),
+        }
+    }
+
+    #[func]
+    pub fn write_blend_constraint(
+        &mut self,
+        description: Dictionary,
+        #[opt(default = false)] replace: bool,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let value = match crate::conversions::structured_from_dict::<
+            kasane_core::types::BlendShapeConstraint,
+        >(&description)
+        {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let edit = if replace {
+            self.session.document_mut().replace_blend_constraint(value)
+        } else {
+            self.session.document_mut().create_blend_constraint(value)
+        };
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn get_blend_constraint_snapshot(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        match self
+            .session
+            .document()
+            .get_blend_constraint(&id.to_string())
+        {
+            Some(value) => crate::conversions::structured_to_dict(value),
+            None => error_dict("MISSING_OBJECT", &id.to_string()),
+        }
+    }
+
+    #[func]
+    pub fn write_blend_binding(
+        &mut self,
+        description: Dictionary,
+        #[opt(default = false)] replace: bool,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let value = match crate::conversions::structured_from_dict::<
+            kasane_core::types::BlendShapeBinding,
+        >(&description)
+        {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let edit = if replace {
+            self.session.document_mut().replace_blend_binding(value)
+        } else {
+            self.session.document_mut().create_blend_binding(value)
+        };
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn get_blend_binding_snapshot(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        match self.session.document().get_blend_binding(&id.to_string()) {
+            Some(value) => crate::conversions::structured_to_dict(value),
+            None => error_dict("MISSING_OBJECT", &id.to_string()),
+        }
+    }
+
+    #[func]
+    pub fn write_glue(
+        &mut self,
+        description: Dictionary,
+        #[opt(default = false)] replace: bool,
+    ) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let value = match crate::conversions::structured_from_dict::<kasane_core::types::Glue>(
+            &description,
+        ) {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let edit = if replace {
+            self.session.document_mut().replace_glue(value)
+        } else {
+            self.session.document_mut().create_glue(value)
+        };
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn get_glue_snapshot(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        match self.session.document().get_glue(&id.to_string()) {
+            Some(value) => crate::conversions::structured_to_dict(value),
+            None => error_dict("MISSING_OBJECT", &id.to_string()),
+        }
+    }
+
+    #[func]
+    pub fn replace_mesh_topology(&mut self, description: Dictionary) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        #[derive(serde::Deserialize)]
+        struct Replacement {
+            mesh: Mesh,
+            binding: Option<kasane_core::types::MeshBinding>,
+            blend_bindings: Vec<kasane_core::types::BlendShapeBinding>,
+            glues: Vec<kasane_core::types::Glue>,
+            vertex_mapping: Vec<(u32, Option<u32>)>,
+        }
+        let value = match crate::conversions::structured_from_dict::<Replacement>(&description) {
+            Ok(value) => value,
+            Err(status) => return status_to_dict(&status),
+        };
+        let mapping: HashMap<_, _> = value.vertex_mapping.iter().copied().collect();
+        if mapping.len() != value.vertex_mapping.len() {
+            return error_dict("INVALID_VERTEX_MAPPING", "Duplicate source vertex");
+        }
+        let edit = self.session.document_mut().replace_mesh_topology(
+            value.mesh,
+            value.binding,
+            value.blend_bindings,
+            value.glues,
+            mapping,
+        );
+        self.apply(edit)
+    }
+
+    #[func]
+    pub fn get_mesh_topology_snapshot(&self, id: GString) -> Dictionary {
+        if !is_main_thread() {
+            return error_dict("WRONG_THREAD", "Document requires the main thread.");
+        }
+        let doc = self.session.document();
+        let id = id.to_string();
+        let Some(mesh) = doc.get_mesh(&id) else {
+            return error_dict("MISSING_MESH", &id);
+        };
+        let mut out = Dictionary::new();
+        out.set("mesh", &crate::conversions::structured_to_dict(mesh));
+        out.set(
+            "binding",
+            &doc.binding_for_mesh(&id)
+                .map(|b| crate::conversions::structured_to_dict(b).to_variant())
+                .unwrap_or_else(Variant::nil),
+        );
+        let mut bindings = Array::new();
+        for bid in doc.blend_binding_order() {
+            let b = doc.get_blend_binding(bid).unwrap();
+            if b.target_id == id {
+                bindings.push(&crate::conversions::structured_to_dict(b));
+            }
+        }
+        out.set("blend_bindings", &bindings);
+        let mut glues = Array::new();
+        for g in doc.glues_for_mesh(&id) {
+            glues.push(&crate::conversions::structured_to_dict(g));
+        }
+        out.set("glues", &glues);
+        let mut mapping = Array::new();
+        for &id in &mesh.vertex_ids {
+            let mut pair = Array::new();
+            pair.push(id as i64);
+            pair.push(id as i64);
+            mapping.push(&pair);
+        }
+        out.set("vertex_mapping", &mapping);
+        out
+    }
+
+    #[func]
     pub fn set_mesh_keyform(
         &mut self,
         binding_id: GString,
@@ -504,7 +720,7 @@ impl KasaneDocumentBridge {
             kind: TransformKind::Rotation,
             base_angle: 0.0,
             rotation: RotationPose {
-                origin: Vec2::new(center.x, center.y),
+                origin: Vec2::new(center.x, center.y).into(),
                 angle: angle as f32,
                 scale: 1.0,
                 reflect_x: false,
@@ -578,7 +794,7 @@ impl KasaneDocumentBridge {
             return error_dict("WRONG_TRANSFORM_KIND", "Use a Rotation deformer.");
         }
         let mut t = old.clone();
-        t.rotation.origin = Vec2::new(center.x, center.y);
+        t.rotation.origin = Vec2::new(center.x, center.y).into();
         t.rotation.angle = angle as f32;
         let edit = self.session.document_mut().replace_transform(t);
         self.apply(edit)
@@ -673,7 +889,7 @@ impl KasaneDocumentBridge {
         if t.kind == TransformKind::Rotation {
             out.set(
                 "center",
-                Vector2::new(t.rotation.origin.x, t.rotation.origin.y),
+                Vector2::new(t.rotation.origin.x as f32, t.rotation.origin.y as f32),
             );
             out.set("angle_degrees", t.rotation.angle as f64);
         } else {
@@ -1234,6 +1450,27 @@ impl KasaneDocumentBridge {
             }
         }
         out.set("scene_bindings", &scene_bindings);
+        let mut items = Array::new();
+        for id in doc.blend_key_table_order() {
+            items.push(&crate::conversions::structured_to_dict(doc.get_blend_key_table(id).unwrap()));
+        }
+        out.set("blend_key_tables", &items);
+        let mut items = Array::new();
+        for id in doc.blend_constraint_order() {
+            items.push(&crate::conversions::structured_to_dict(doc.get_blend_constraint(id).unwrap()));
+        }
+        out.set("blend_constraints", &items);
+        let mut items = Array::new();
+        for id in doc.blend_binding_order() {
+            items.push(&crate::conversions::structured_to_dict(doc.get_blend_binding(id).unwrap()));
+        }
+        out.set("blend_bindings", &items);
+        let mut items = Array::new();
+        for id in doc.glue_order() {
+            items.push(&crate::conversions::structured_to_dict(doc.get_glue(id).unwrap()));
+        }
+        out.set("glues", &items);
+
 
         out.set(
             "canvas_origin",

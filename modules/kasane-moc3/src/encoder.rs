@@ -25,14 +25,10 @@ fn index_of(ids: &[String], id: &str) -> i32 {
     }
 }
 
-fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> u16 {
-    if vid >= 1 && (vid as usize) <= mesh.vertex_ids.len() {
-        let idx = (vid - 1) as usize;
-        if mesh.vertex_ids[idx] == vid {
-            return idx as u16;
-        }
-    }
-    mesh.vertex_ids.iter().position(|&v| v == vid).unwrap_or(0) as u16
+fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> Result<u16, Status> {
+    let index = mesh.vertex_ids.iter().position(|&v| v == vid)
+        .ok_or_else(|| Status::error("MISSING_VERTEX", format!("{}: Glue vertex {vid}", mesh.id)))?;
+    u16::try_from(index).map_err(|_| Status::error("CAPACITY", format!("{}: Glue index {index} exceeds u16", mesh.id)))
 }
 
 fn write_id(l: &mut Layout, field: &str, value: &str) -> Result<(), Status> {
@@ -91,7 +87,7 @@ fn write_blend_binding(
     let kt_idx = bkt_indices
         .get(b.key_table_id.as_str())
         .copied()
-        .unwrap_or(0);
+        .ok_or_else(|| Status::error("MISSING_KEY_TABLE", format!("{}: {}", b.id, b.key_table_id)))?;
     l.integer("blend_binding_src.key_table_idx", kt_idx)?;
     l.integer("blend_binding_src.key_bs_off", key_bs_off)?;
     l.integer("blend_binding_src.key_bs_len", key_bs_len)?;
@@ -109,7 +105,7 @@ fn write_blend_binding(
         let ci = constraint_index_map
             .get(cid.as_str())
             .copied()
-            .unwrap_or(0);
+            .ok_or_else(|| Status::error("MISSING_CONSTRAINT", format!("{}: {cid}", b.id)))?;
         l.integer("blend_constraint_idx_src.constraint_idx", ci)?;
     }
     Ok(())
@@ -270,6 +266,12 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             id,
             axes: &doc.get_scene_binding(id).unwrap().axes,
         });
+    }
+
+    for id in doc.glue_order() {
+        if let Some(binding) = &doc.get_glue(id).unwrap().binding {
+            all_bindings.push(BindingView { id, axes: &binding.axes });
+        }
     }
 
     let mut l = Layout::new();
@@ -584,9 +586,9 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
             if warp {
                 write_positions(&mut l, doc, "warp_key_src", &t.parent_id, &f.positions)?;
             } else {
-                let origin = to_parent_positions(doc, &t.parent_id, &[f.rotation.origin])?;
-                l.scalar("rotation_key_src.origin_x", origin[0].x)?;
-                l.scalar("rotation_key_src.origin_y", origin[0].y)?;
+                let origin = kasane_core::evaluation::to_parent_origin(doc, &t.parent_id, f.rotation.origin)?;
+                l.scalar("rotation_key_src.origin_x", origin.x)?;
+                l.scalar("rotation_key_src.origin_y", origin.y)?;
                 l.scalar("rotation_key_src.angle", f.rotation.angle)?;
                 l.scalar("rotation_key_src.scale", f.rotation.scale)?;
                 l.integer(
@@ -788,31 +790,31 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
     // Glues
     l.counts[20] = checked(doc.glue_order().len(), "glues")? as u32;
     let mut glue_info_count = 0;
-    for (g_idx, g_id) in doc.glue_order().iter().enumerate() {
+    for g_id in doc.glue_order() {
         let g = doc.get_glue(g_id).unwrap();
         let mesh_a = doc.get_mesh(&g.mesh_a_id).unwrap();
         let mesh_b = doc.get_mesh(&g.mesh_b_id).unwrap();
         let ma_idx = index_of(doc.mesh_order(), &g.mesh_a_id);
         let mb_idx = index_of(doc.mesh_order(), &g.mesh_b_id);
-        let b_idx = if let Some(ref bid) = g.binding_id {
-            binding_indices.get(bid.as_str()).copied().unwrap_or(0)
-        } else {
-            0
-        };
+        let b_idx = if g.binding.is_some() { binding_indices[g_id.as_str()] } else { 0 };
+        let key_off = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue key offset")?;
+        let key_len = g.binding.as_ref().map_or(1, |b| b.keyforms.len());
         write_id(&mut l, "glue_src.id", &g.runtime_id)?;
         l.integer("glue_src.binding_idx", b_idx)?;
-        l.integer("glue_src.keyform_off", g_idx as i32)?;
-        l.integer("glue_src.key_len", 1)?;
+        l.integer("glue_src.keyform_off", key_off)?;
+        l.integer("glue_src.key_len", checked(key_len, "glue key count")?)?;
         l.integer("glue_src.art_mesh_idx_a", ma_idx)?;
         l.integer("glue_src.art_mesh_idx_b", mb_idx)?;
         let info_off = glue_info_count;
         let info_len = checked(g.pairs.len() * 2, "glue_info_len")?;
         l.integer("glue_src.info_off", info_off)?;
         l.integer("glue_src.info_len", info_len)?;
-        l.scalar("glue_key_src.intensity", g.intensity)?;
+        if let Some(binding) = &g.binding {
+            for key in &binding.keyforms { l.scalar("glue_key_src.intensity", key.intensity)?; }
+        } else { l.scalar("glue_key_src.intensity", g.intensity)?; }
         for pair in &g.pairs {
-            let pos_a = find_vertex_pos(mesh_a, pair.vertex_a);
-            let pos_b = find_vertex_pos(mesh_b, pair.vertex_b);
+            let pos_a = find_vertex_pos(mesh_a, pair.vertex_a)?;
+            let pos_b = find_vertex_pos(mesh_b, pair.vertex_b)?;
             l.scalar("glue_info_src.weight", pair.weight_a)?;
             l.short("glue_info_src.pos_idx", pos_a)?;
             l.scalar("glue_info_src.weight", pair.weight_b)?;
@@ -821,7 +823,7 @@ pub fn encode_moc3(doc: &Document) -> Result<Moc3Artifact, Status> {
         glue_info_count += info_len;
     }
     l.counts[21] = glue_info_count as u32;
-    l.counts[22] = doc.glue_order().len() as u32;
+    l.counts[22] = checked(l.field("glue_key_src.intensity")?.len() / 4, "glue keyforms")? as u32;
 
     // BlendShape Constraints
     let mut constraint_index_map: HashMap<&str, i32> = HashMap::new();

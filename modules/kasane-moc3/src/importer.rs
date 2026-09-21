@@ -101,6 +101,12 @@ pub fn import_from_model3_json(
         }
     }
 
+    for key in ["Groups", "HitAreas", "Layout"] {
+        if let Some(value) = root.get(key) {
+            unimported.push(format!("{key}: {value}"));
+        }
+    }
+
     // Inspect MOC3 before building textures
     let inspection = inspect_moc3(&moc_bytes)?;
 

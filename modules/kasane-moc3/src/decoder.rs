@@ -670,9 +670,9 @@ pub fn decode_moc3(
                 };
 
                 let origin = if is_root {
-                    Vec2::new(ox * ppu + canvas.origin.x, canvas.origin.y - oy * ppu)
+                    kasane_core::types::PreciseVec2::new(ox as f64 * ppu as f64 + canvas.origin.x as f64, canvas.origin.y as f64 - oy as f64 * ppu as f64)
                 } else {
-                    Vec2::new(ox, oy)
+                    kasane_core::types::PreciseVec2::new(ox as f64, oy as f64)
                 };
 
                 let mut appearance = get_colors(106, local_idx, k)?;
@@ -1322,12 +1322,7 @@ pub fn decode_moc3(
         let id = stable_id(&doc_id, "glue", g_idx, &runtime_id);
 
         let binding_idx = read_i32(bytes, offsets[91] as usize + g_idx * 4)?;
-        if !get_binding_axes(binding_idx)?.is_empty() {
-            return Err(Status::error(
-                "UNSUPPORTED_FEATURE",
-                format!("Glue '{runtime_id}': animated intensity is not yet supported; import would lose its binding"),
-            ));
-        }
+        let axes = get_binding_axes(binding_idx)?;
         let keyform_off = read_i32(bytes, offsets[92] as usize + g_idx * 4)?;
         let key_len = read_i32(bytes, offsets[93] as usize + g_idx * 4)?;
         let mesh_idx_a = read_i32(bytes, offsets[94] as usize + g_idx * 4)?;
@@ -1418,7 +1413,15 @@ pub fn decode_moc3(
             mesh_b_id,
             pairs,
             intensity,
-            binding_id: None,
+            binding: if axes.is_empty() { None } else {
+                let mut keyforms = Vec::new();
+                for k in 0..key_len as usize {
+                    keyforms.push(kasane_core::types::GlueKeyform {
+                        intensity: read_f32(bytes, offsets[100] as usize + (keyform_off as usize + k) * 4)?,
+                    });
+                }
+                Some(kasane_core::types::GlueBinding { axes, keyforms })
+            },
         };
         check_status!(doc.create_glue(glue).status);
         mapping.glue_by_index.push(id);

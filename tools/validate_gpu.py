@@ -73,7 +73,7 @@ def main():
         (project/'project.godot').write_text('config_version=5\n[application]\nconfig/name="Kasane GPU Regression"\n[display]\nwindow/size/viewport_width=640\nwindow/size/viewport_height=480\n[rendering]\nrenderer/rendering_method="gl_compatibility"\ntextures/default_filters/use_nearest_mipmap_filter=false\n')
         (project/'.godot').mkdir(exist_ok=True)
         (project/'.godot/extension_list.cfg').write_text('res://kasane.gdextension\nres://addons/gd_cubism/gd_cubism.gdextension\n')
-        run([args.godot, '--headless', '--path', project, '--editor', '--import'], project/'import.log')
+        run([args.godot, '--path', project, '--editor', '--import'], project/'import.log')
         run([args.godot, '--path', project, '--rendering-method', 'gl_compatibility', '--resolution', '640x480', '--script', 'res://test.gd', '--', project], project/'run.log')
         from compare_gpu_images import compare
         report = compare(project)

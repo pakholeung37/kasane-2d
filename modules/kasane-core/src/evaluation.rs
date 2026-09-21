@@ -93,6 +93,52 @@ pub fn to_parent_positions(
     }
 }
 
+pub fn to_parent_origin(
+    doc: &Document,
+    parent: &str,
+    origin: crate::types::PreciseVec2,
+) -> Result<Vec2, Status> {
+    let canvas = doc.canvas();
+    let p = if parent.is_empty() {
+        Vec2::new(
+            ((origin.x - canvas.origin.x as f64) / canvas.pixels_per_unit as f64) as f32,
+            ((canvas.origin.y as f64 - origin.y) / canvas.pixels_per_unit as f64) as f32,
+        )
+    } else {
+        Vec2::new(origin.x as f32, origin.y as f32)
+    };
+    let status = validate_positions(&[p]);
+    if !status.is_ok() {
+        return Err(status);
+    }
+    Ok(p)
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeRotationPose {
+    origin: Vec2,
+    angle: f32,
+    scale: f32,
+    reflect_x: bool,
+    reflect_y: bool,
+}
+impl From<RotationPose> for RuntimeRotationPose {
+    fn from(p: RotationPose) -> Self {
+        Self {
+            origin: Vec2::new(p.origin.x as f32, p.origin.y as f32),
+            angle: p.angle,
+            scale: p.scale,
+            reflect_x: p.reflect_x,
+            reflect_y: p.reflect_y,
+        }
+    }
+}
+impl Default for RuntimeRotationPose {
+    fn default() -> Self {
+        RotationPose::default().into()
+    }
+}
+
 fn find_vertex_index(mesh: &Mesh, vid: VertexId) -> Option<usize> {
     if vid >= 1 && (vid as usize) <= mesh.vertex_ids.len() {
         let idx = (vid - 1) as usize;
@@ -302,7 +348,7 @@ where
 #[derive(Debug, Clone)]
 struct TransformState<'a> {
     source: &'a Transform,
-    pose: RotationPose,
+    pose: RuntimeRotationPose,
     points: Vec<f32>,
     appearance: Appearance,
     inherited_scale: f32,
@@ -425,7 +471,7 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
         let t = doc.get_transform(id).unwrap();
         let mut state = TransformState {
             source: t,
-            pose: t.rotation,
+            pose: t.rotation.into(),
             points: Vec::new(),
             appearance: t.appearance,
             inherited_scale: 1.0,
@@ -447,20 +493,20 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                 let sel = selection.as_ref().unwrap();
                 state.appearance = blend_appearance(sel, |i| b_ref.keyforms[i].appearance);
                 if t.kind == TransformKind::Rotation {
-                    state.pose = RotationPose::default();
+                    state.pose = RuntimeRotationPose::default();
                     state.pose.scale = 0.0;
                     let first = b_ref.keyforms[sel.indices[0]].rotation;
                     state.pose.reflect_x = first.reflect_x;
                     state.pose.reflect_y = first.reflect_y;
                     for k in 0..sel.indices.len() {
                         let p = b_ref.keyforms[sel.indices[k]].rotation;
-                        let origin = match to_parent_positions(doc, &t.parent_id, &[p.origin]) {
+                        let origin = match to_parent_origin(doc, &t.parent_id, p.origin) {
                             Ok(orig) => orig,
                             Err(s) => return s,
                         };
                         let w = sel.weights[k];
-                        state.pose.origin.x += origin[0].x * w;
-                        state.pose.origin.y += origin[0].y * w;
+                        state.pose.origin.x += origin.x * w;
+                        state.pose.origin.y += origin.y * w;
                         state.pose.angle += p.angle * w;
                         state.pose.scale += p.scale * w;
                     }
@@ -485,11 +531,11 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                     Err(s) => return s,
                 }
             } else if b.is_none() {
-                let origin = match to_parent_positions(doc, &t.parent_id, &[t.rotation.origin]) {
+                let origin = match to_parent_origin(doc, &t.parent_id, t.rotation.origin) {
                     Ok(orig) => orig,
                     Err(s) => return s,
                 };
-                state.pose.origin = origin[0];
+                state.pose.origin = origin;
             }
 
             let bs_list = doc.blend_bindings_for_target(id);
@@ -803,7 +849,12 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
 
         for gid in glue_order {
             if let Some(glue) = doc.get_glue(gid) {
-                if glue.intensity == 0.0 {
+                let intensity = if let Some(binding) = &glue.binding {
+                    let selection = select(doc, &values, &binding.axes);
+                    selection.indices.iter().zip(&selection.weights)
+                        .map(|(&i, &w)| binding.keyforms[i].intensity * w).sum()
+                } else { glue.intensity };
+                if intensity == 0.0 {
                     continue;
                 }
                 let slot_a = match mesh_slots.get(glue.mesh_a_id.as_str()) {
@@ -838,18 +889,18 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
                         let p0 = frame.drawables[slot_a].positions[idx_a];
                         let p1 = frame.drawables[slot_a].positions[idx_b];
                         let d = Vec2::new(p1.x - p0.x, p1.y - p0.y);
-                        frame.drawables[slot_a].positions[idx_a].x += d.x * (glue.intensity * pair.weight_a);
-                        frame.drawables[slot_a].positions[idx_a].y += d.y * (glue.intensity * pair.weight_a);
-                        frame.drawables[slot_a].positions[idx_b].x -= d.x * (glue.intensity * pair.weight_b);
-                        frame.drawables[slot_a].positions[idx_b].y -= d.y * (glue.intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_a].x += d.x * (intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_a].y += d.y * (intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_b].x -= d.x * (intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_b].y -= d.y * (intensity * pair.weight_b);
                     } else {
                         let p0 = frame.drawables[slot_a].positions[idx_a];
                         let p1 = frame.drawables[slot_b].positions[idx_b];
                         let d = Vec2::new(p1.x - p0.x, p1.y - p0.y);
-                        frame.drawables[slot_a].positions[idx_a].x += d.x * (glue.intensity * pair.weight_a);
-                        frame.drawables[slot_a].positions[idx_a].y += d.y * (glue.intensity * pair.weight_a);
-                        frame.drawables[slot_b].positions[idx_b].x -= d.x * (glue.intensity * pair.weight_b);
-                        frame.drawables[slot_b].positions[idx_b].y -= d.y * (glue.intensity * pair.weight_b);
+                        frame.drawables[slot_a].positions[idx_a].x += d.x * (intensity * pair.weight_a);
+                        frame.drawables[slot_a].positions[idx_a].y += d.y * (intensity * pair.weight_a);
+                        frame.drawables[slot_b].positions[idx_b].x -= d.x * (intensity * pair.weight_b);
+                        frame.drawables[slot_b].positions[idx_b].y -= d.y * (intensity * pair.weight_b);
                     }
                 }
             }

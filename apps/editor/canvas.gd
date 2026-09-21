@@ -55,7 +55,7 @@ func update_camera() -> void:
 	viewport.size = Vector2i(maxi(1, int(size.x)), maxi(1, int(size.y)))
 	preview.position = size / 2.0 + offset
 	preview.scale = Vector2.ONE * zoom
-	preview.refresh()
+	preview.refresh_geometry()
 	queue_redraw()
 	view_changed.emit(zoom, offset)
 
@@ -81,6 +81,8 @@ func bounds_for(id: String = "") -> Dictionary:
 	var bounds := Rect2()
 	var populated := false
 	for drawable in frame.drawables:
+		if id.is_empty() and not drawable.get("visible", false):
+			continue
 		if not id.is_empty() and drawable.id != id:
 			continue
 		for p in drawable.positions:
@@ -129,7 +131,13 @@ func observe(path: String, object_id: String = "") -> Dictionary:
 	if requested.generation != current.generation or requested.revision != current.revision or requested_values != workspace.document.get_frame().get("parameters", []) or requested_camera != Vector3(zoom, offset.x, offset.y):
 		selection.show()
 		observing = false
-		return workspace.failure("OBSERVATION_CHANGED", "Document changed while layout settled.")
+		var failure: Dictionary = workspace.failure("OBSERVATION_CHANGED", "Document, preview values or camera changed while layout settled.")
+		failure.requested_revision = requested.revision
+		failure.current_revision = current.revision
+		failure.camera_before = [requested_camera.x, requested_camera.y, requested_camera.z]
+		failure.camera_after = [zoom, offset.x, offset.y]
+		failure.parameters_changed = requested_values != workspace.document.get_frame().get("parameters", [])
+		return failure
 	var expected := fingerprint()
 	var refreshed: Dictionary = preview.refresh()
 	var result: Dictionary = refreshed
@@ -137,10 +145,22 @@ func observe(path: String, object_id: String = "") -> Dictionary:
 		result = workspace.failure("FRAME_NOT_READY", "The renderer did not finish the requested state.")
 		for _frame in 120:
 			await get_tree().process_frame
-			if fingerprint() != expected:
+			var actual := fingerprint()
+			if actual != expected:
 				result = workspace.failure("OBSERVATION_CHANGED", "Document, parameters or camera changed during capture.")
+				result.changed_fields = []
+				for field in expected:
+					if expected[field] != actual[field]:
+						result.changed_fields.append(field)
+				result.camera_before = expected.camera
+				result.camera_after = actual.camera
+				result.size_before = expected.image_size
+				result.size_after = actual.image_size
 				break
 			var state: Dictionary = preview.get_observation_state()
+			result.renderer = state
+			result.expected_revision = expected.revision
+			result.viewport_size = [viewport.size.x, viewport.size.y]
 			if not state.ok:
 				result = state
 				break

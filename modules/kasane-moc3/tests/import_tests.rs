@@ -1202,7 +1202,7 @@ fn blend_colors_and_fractional_orders_match_core_and_roundtrip() {
 }
 
 #[test]
-fn animated_glue_import_is_rejected_instead_of_flattened() {
+fn animated_glue_roundtrips_and_matches_core() {
     use kasane_core::types::{Glue, GlueVertexPair};
     let mut doc = create_m1_fixture_doc();
     let mesh_id = doc.mesh_order()[0].clone();
@@ -1221,7 +1221,7 @@ fn animated_glue_import_is_rejected_instead_of_flattened() {
                 weight_b: 0.8
             }],
             intensity: 1.0,
-            binding_id: None,
+            binding: None,
         })
         .status
         .is_ok());
@@ -1243,13 +1243,111 @@ fn animated_glue_import_is_rejected_instead_of_flattened() {
         bytes[data_off + i * 4..data_off + (i + 1) * 4].copy_from_slice(&v.to_le_bytes());
     }
     let inspection = kasane_moc3::inspect_moc3_safety(&bytes).unwrap();
-    assert!(inspection
-        .unsupported_features
-        .iter()
-        .any(|f| f.category == "animated_glue"));
-    let error = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap_err();
-    assert_eq!(error.code, "UNSUPPORTED_FEATURE");
-    assert!(error.message.contains("ReviewGlue"));
+    assert!(inspection.unsupported_features.is_empty());
+    let imported = import_from_bare_moc3(&bytes, &HashMap::new())
+        .unwrap()
+        .document;
+    let glue = imported.get_glue(&imported.glue_order()[0]).unwrap();
+    let binding = glue.binding.as_ref().unwrap();
+    assert_eq!(
+        binding
+            .keyforms
+            .iter()
+            .map(|k| k.intensity)
+            .collect::<Vec<_>>(),
+        vec![0.0, 0.5, 1.0]
+    );
+    let exported = encode_moc3(&imported).unwrap().bytes;
+    let mut original_core = PurismModelInstance::new(&bytes);
+    let mut exported_core = PurismModelInstance::new(&exported);
+    let parameter = imported
+        .get_parameter(&binding.axes[0].parameter_id)
+        .unwrap();
+    for value in [
+        parameter.minimum,
+        parameter.default_value,
+        parameter.maximum,
+        (parameter.maximum + parameter.default_value) * 0.5,
+        parameter.minimum,
+    ] {
+        original_core.set_parameter(&parameter.runtime_id, value);
+        exported_core.set_parameter(&parameter.runtime_id, value);
+        original_core.update();
+        exported_core.update();
+        let mut frame = DrawableFrame::default();
+        assert!(evaluate_frame(
+            &imported,
+            &HashMap::from([(parameter.id.clone(), value)]),
+            &mut frame
+        )
+        .is_ok());
+        for actual in &frame.drawables {
+            let expected = original_core.get_drawable(&actual.runtime_id).unwrap();
+            let roundtrip = exported_core.get_drawable(&actual.runtime_id).unwrap();
+            for ((a, e), r) in actual
+                .positions
+                .iter()
+                .zip(&expected.positions)
+                .zip(&roundtrip.positions)
+            {
+                near(a.x, e.x, imported.canvas().pixels_per_unit);
+                near(a.y, e.y, imported.canvas().pixels_per_unit);
+                near(r.x, e.x, imported.canvas().pixels_per_unit);
+                near(r.y, e.y, imported.canvas().pixels_per_unit);
+            }
+        }
+    }
+    // A second ordinary axis exercises the dedicated encoder grid and ordering.
+    let mut multi = imported.clone();
+    assert!(multi
+        .create_parameter(kasane_core::types::Parameter {
+            id: id(411),
+            runtime_id: "GlueSecondAxis".into(),
+            minimum: 0.0,
+            maximum: 1.0,
+            default_value: 0.0,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut glue = multi.get_glue(&multi.glue_order()[0]).unwrap().clone();
+    let grid = glue.binding.as_mut().unwrap();
+    grid.axes.push(kasane_core::types::BindingAxis {
+        parameter_id: id(411),
+        keys: vec![0.0, 1.0],
+    });
+    grid.keyforms.extend(
+        [0.25, 0.75, 1.25]
+            .into_iter()
+            .map(|intensity| kasane_core::types::GlueKeyform { intensity }),
+    );
+    assert!(multi.replace_glue(glue).status.is_ok());
+    let encoded = encode_moc3(&multi).unwrap();
+    let mut runtime = PurismModelInstance::new(&encoded.bytes);
+    for (a, b) in [
+        (parameter.minimum, 0.0),
+        (parameter.default_value, 0.5),
+        (parameter.maximum, 1.0),
+        (parameter.minimum, 0.0),
+    ] {
+        runtime.set_parameter(&parameter.runtime_id, a);
+        runtime.set_parameter("GlueSecondAxis", b);
+        runtime.update();
+        let mut frame = DrawableFrame::default();
+        assert!(evaluate_frame(
+            &multi,
+            &HashMap::from([(parameter.id.clone(), a), (id(411), b)]),
+            &mut frame
+        )
+        .is_ok());
+        for actual in frame.drawables {
+            let expected = runtime.get_drawable(&actual.runtime_id).unwrap();
+            for (a, e) in actual.positions.iter().zip(&expected.positions) {
+                near(a.x, e.x, multi.canvas().pixels_per_unit);
+                near(a.y, e.y, multi.canvas().pixels_per_unit);
+            }
+        }
+    }
     let mut glue = doc.get_glue(&id(410)).unwrap().clone();
     glue.runtime_id = "x".repeat(64);
     assert!(doc.replace_glue(glue).status.is_ok());

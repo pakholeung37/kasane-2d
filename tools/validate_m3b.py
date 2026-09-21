@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M3B numerical regression checks; not a complete milestone acceptance.
+"""M3B numerical and complete application acceptance gates.
 
 Validates:
 1. Mao 5.0 MOC3 full import:
@@ -7,8 +7,8 @@ Validates:
    - 33 BlendShape parameters, 124 BlendBindings, 33 BlendKeyTables, 7 Constraints
    - 7 Glues (161 vertex pairs)
    - 260 ArtMeshes, 175 Deformers, 31 Parts
-2. Lossless Document and Project v2 persistence:
-   - Saving .kasane (Project v2)
+2. Lossless Document and Project v3 persistence:
+   - Saving .kasane (Project v3)
    - Complete detachment & reopening
 3. 5.0 MOC3 re-export:
    - Preserves all Glue and BlendShape sections
@@ -93,11 +93,23 @@ def get_git_info():
 
 
 def compare_samples(expected, actual, ppu, label):
+    try:
+        from m3b_numeric import compare, np
+    except ImportError:
+        np = None
+    if np is not None:
+        return compare(expected, actual, ppu, label)
+    return compare_samples_scalar(expected, actual, ppu, label)
+
+
+def compare_samples_scalar(expected, actual, ppu, label):
     if len(expected) != len(actual):
         raise RuntimeError(f"{label}: sample count mismatch")
     metrics = {"max_pixel_error": 0.0, "max_uv_error": 0.0, "max_float_error": 0.0}
 
     def scalar(e, a, context, position=False, uv=False):
+        if not math.isfinite(e) or not math.isfinite(a):
+            raise RuntimeError(f"{context}: non-finite value")
         diff = abs(e - a)
         metrics["max_float_error"] = max(metrics["max_float_error"], diff)
         if position:
@@ -170,9 +182,20 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=ROOT / "target/kasane/m3b")
     parser.add_argument("--numerical-only", action="store_true",
                         help="Return success for numerical checks only; milestone status remains incomplete")
+    parser.add_argument("--application", type=Path, default=ROOT / "dist/editor/Kasane-Editor.zip")
+    parser.add_argument("--godot", type=Path, default=ROOT / "target/godot-tools/standard/Godot.app/Contents/MacOS/Godot")
+    parser.add_argument("--collect-acceptance", action="store_true",
+                        help="Combine existing reports in output-dir without rerunning their checks")
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
     report_file = args.output_dir / "report.json"
+    if args.collect_acceptance:
+        from m3b_acceptance import collect
+        report = collect(json.loads(report_file.read_text()), args.output_dir / "baseline.json",
+                         args.output_dir / "editor/report.json", args.output_dir / "gpu/report.json")
+        report_file.write_text(json.dumps(report, indent=2) + "\n")
+        print(f"M3B acceptance {report['status']}: {report_file}")
+        return 0 if report["status"] == "passed" else 1
     report = {
         "status": "failed",
         "milestone": "M3B",
@@ -191,7 +214,7 @@ def main():
             "python": platform.python_version(),
             "git": get_git_info(),
         },
-        "scope": "Mao 5.0 editable import, Project v2 persistence, 5.0 re-export, dual-core numerical parity",
+        "scope": "Mao 5.0 editable import, Project v3 persistence, 5.0 re-export, dual-core numerical parity",
     }
     report_file.write_text(json.dumps(report, indent=2) + "\n")
     try:
@@ -211,7 +234,7 @@ def main():
 
         # Step 2: Export conformance cases
         fixtures = args.output_dir / "fixtures"
-        print(run(["cargo", "run", "-p", "kasane-moc3", "--example", "export_m3b_cases", "--", fixtures]))
+        print(run(["cargo", "run", "--release", "-p", "kasane-moc3", "--example", "export_m3b_cases", "--", fixtures]))
         case_names = json.loads((fixtures / "cases.json").read_text())
         if not case_names:
             raise RuntimeError("No M3B conformance cases")
@@ -288,13 +311,37 @@ def main():
                 (m["max_float_error"] for c in report["cases"] for m in c["comparisons"].values() if "max_float_error" in m), default=None
             ),
         }
+        if not args.numerical_only:
+            from m3b_acceptance import collect
+            acceptance_commands = [
+                [sys.executable, ROOT / "tools/m3b_baseline.py", "--output-dir", args.output_dir],
+                [sys.executable, ROOT / "tools/validate_m3b_editor.py", "--application", args.application,
+                 "--godot", args.godot, "--output-dir", args.output_dir / "editor"],
+                [sys.executable, ROOT / "tools/validate_gpu.py", "--godot", args.godot,
+                 "--library", ROOT / "target/release/libkasane_godot.dylib", "--output-dir", args.output_dir / "gpu"],
+            ]
+            acceptance_reports = [args.output_dir / "baseline.json", args.output_dir / "editor/report.json",
+                                  args.output_dir / "gpu/report.json"]
+            for index, command in enumerate(acceptance_commands):
+                # A failed process must never reuse a previous successful report.
+                acceptance_reports[index].unlink(missing_ok=True)
+                result = subprocess.run(list(map(str, command)), cwd=ROOT, text=True,
+                                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=600)
+                (args.output_dir / f"acceptance-{index}.log").write_text(result.stdout)
+                if result.returncode:
+                    acceptance_reports[index].write_text(json.dumps({
+                        "status": "failed", "returncode": result.returncode,
+                        "log": str(args.output_dir / f"acceptance-{index}.log"),
+                    }) + "\n")
+            report = collect(report, args.output_dir / "baseline.json", args.output_dir / "editor/report.json", args.output_dir / "gpu/report.json")
     except Exception as error:
+        report["status"] = "failed"
         report["error"] = str(error)
         raise
     finally:
         report_file.write_text(json.dumps(report, indent=2) + "\n")
     print(f"M3B numerical checks {report['numerical_status']}; milestone acceptance is {report['status']}: {report_file}")
-    return 0 if args.numerical_only and report["numerical_status"] == "passed" else 1
+    return 0 if report["status"] == "passed" or (args.numerical_only and report["numerical_status"] == "passed") else 1
 
 
 if __name__ == "__main__":

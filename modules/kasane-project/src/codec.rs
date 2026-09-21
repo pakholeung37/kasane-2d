@@ -170,7 +170,7 @@ impl From<AppearanceWire> for Appearance {
 
 #[derive(Clone, Serialize, Deserialize)]
 struct RotationPoseWire {
-    origin: [f32; 2],
+    origin: [f64; 2],
     angle: f32,
     scale: f32,
     reflect_x: bool,
@@ -192,7 +192,7 @@ impl From<&RotationPose> for RotationPoseWire {
 impl From<RotationPoseWire> for RotationPose {
     fn from(r: RotationPoseWire) -> Self {
         Self {
-            origin: Vec2::new(r.origin[0], r.origin[1]),
+            origin: kasane_core::types::PreciseVec2::new(r.origin[0], r.origin[1]),
             angle: r.angle,
             scale: r.scale,
             reflect_x: r.reflect_x,
@@ -377,6 +377,8 @@ struct GlueWire {
     mesh_b_id: String,
     pairs: Vec<GlueVertexPairWire>,
     intensity: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    binding: Option<kasane_core::types::GlueBinding>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     binding_id: Option<String>,
 }
@@ -652,7 +654,8 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
             mesh_b_id: g.mesh_b_id.clone(),
             pairs,
             intensity: g.intensity,
-            binding_id: g.binding_id.clone(),
+            binding: g.binding.clone(),
+            binding_id: None,
         });
     }
 
@@ -663,7 +666,7 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
 
     let project = ProjectWire {
         format: "kasane-directory-project".to_string(),
-        format_version: 2,
+        format_version: 3,
         document: DocumentWire {
             id: document.id().to_string(),
             canvas: [c.width, c.height],
@@ -730,7 +733,7 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if root.format_version != 1 && root.format_version != 2 {
+    if !(1..=3).contains(&root.format_version) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -1103,6 +1106,9 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
     }
 
     for g in doc.glues {
+        if g.binding_id.is_some() {
+            return Err(Status::error("INVALID_GLUE_BINDING", "Legacy MeshBinding references cannot represent Glue intensity"));
+        }
         let pairs = g
             .pairs
             .into_iter()
@@ -1121,7 +1127,7 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
             mesh_b_id: g.mesh_b_id,
             pairs,
             intensity: g.intensity,
-            binding_id: g.binding_id,
+            binding: g.binding,
         });
         if !res.status.is_ok() {
             return Err(res.status);

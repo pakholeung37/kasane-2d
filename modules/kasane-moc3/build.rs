@@ -11,6 +11,9 @@ fn main() {
         return;
     }
 
+    println!("cargo:rerun-if-changed=../purism-core/include");
+    println!("cargo:rerun-if-changed=../purism-core/src");
+
     let sources = [
         "src/core.c",
         "src/debug.c",

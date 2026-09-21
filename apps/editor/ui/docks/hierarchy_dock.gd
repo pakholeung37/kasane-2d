@@ -78,6 +78,17 @@ func populate(summary: Dictionary, workspace: RefCounted) -> void:
 		item.set_metadata(0, def.id)
 		id_to_tree_item[def.id] = item
 
+	for group in ["blend_key_tables", "blend_constraints", "blend_bindings", "glues"]:
+		var folder := tree.create_item(root)
+		folder.set_text(0, group + " (%d)" % summary.get(group, []).size())
+		folder.set_metadata(0, "")
+		folder.collapsed = true
+		for entry in summary.get(group, []):
+			var item := tree.create_item(folder)
+			item.set_text(0, str(entry.get("name", entry.id)))
+			item.set_metadata(0, entry.id)
+			id_to_tree_item[entry.id] = item
+
 	if not current_selected_id.is_empty():
 		select_id(current_selected_id)
 

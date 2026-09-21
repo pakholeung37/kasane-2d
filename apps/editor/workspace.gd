@@ -129,7 +129,7 @@ func create_rectangle(asset_id: String, crop_offset: Vector2 = Vector2.ZERO, nam
 
 func find_object(id: String) -> Dictionary:
 	var summary: Dictionary = document.get_document_summary()
-	for group in ["assets", "parts", "parameters", "transforms", "bindings", "scene_bindings"]:
+	for group in ["assets", "parts", "parameters", "transforms", "bindings", "scene_bindings", "blend_key_tables", "blend_constraints", "blend_bindings", "glues"]:
 		for item in summary[group]:
 			if item.id == id:
 				return {"ok": true, "kind": group, "data": item}
