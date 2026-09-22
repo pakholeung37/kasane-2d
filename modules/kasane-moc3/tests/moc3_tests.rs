@@ -689,7 +689,6 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             .push(PartKeyform {
                 keys: vec![key],
                 draw_order: key * 20.0 + 20.0,
-                ..Default::default()
             });
     }
     assert!(doc.create_scene_binding(part_binding).status.is_ok());

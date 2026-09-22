@@ -182,12 +182,10 @@ fn test_offscreen_evaluation_and_blendshapes() {
                 PartKeyform {
                     keys: vec![0.0],
                     draw_order: 0.0,
-                    ..Default::default()
                 },
                 PartKeyform {
                     keys: vec![1.0],
                     draw_order: 10.0,
-                    ..Default::default()
                 },
             ],
         },
