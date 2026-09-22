@@ -1,4 +1,6 @@
-use kasane_core::{Canvas, ChangeKind, Document, ImageAsset, Mesh, Vec2, VertexPositionUpdate};
+use kasane_core::{
+    Canvas, ChangeKind, Document, DocumentEdit, ImageAsset, Mesh, Vec2, VertexPositionUpdate,
+};
 
 const DOC: &str = "11111111-1111-4111-8111-111111111111";
 const ASSET: &str = "22222222-2222-4222-8222-222222222222";
@@ -220,6 +222,32 @@ fn test_core_lifecycle_and_topology() {
     assert_eq!(
         doc.get_mesh(MESH).unwrap().base_positions[3],
         Vec2::new(20.0, 25.0)
+    );
+
+    // Different edit kinds share the same atomic boundary and inverse receipt.
+    assert!(doc.begin_transaction().is_ok());
+    assert!(doc
+        .stage_edit(DocumentEdit::MeshName {
+            mesh_id: MESH.to_string(),
+            name: "transaction name".to_string(),
+        })
+        .is_ok());
+    assert!(doc
+        .stage_vertex_positions(VertexPositionUpdate {
+            mesh_id: MESH.to_string(),
+            vertex_ids: vec![40],
+            positions: vec![Vec2::new(-30.0, 35.0)],
+        })
+        .is_ok());
+    let mixed_revision = doc.revision();
+    let mixed = doc.commit_transaction();
+    assert!(mixed.status.is_ok());
+    assert_eq!(mixed.changes.kind, ChangeKind::Structure);
+    assert_eq!(doc.revision(), mixed_revision + 1);
+    assert_eq!(doc.get_mesh(MESH).unwrap().name, "transaction name");
+    assert_eq!(
+        doc.get_mesh(MESH).unwrap().base_positions[0],
+        Vec2::new(-30.0, 35.0)
     );
 
     // Validation happens before any source write

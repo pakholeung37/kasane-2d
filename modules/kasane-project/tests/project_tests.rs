@@ -261,6 +261,7 @@ fn test_project_encode_decode_roundtrip() {
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(before.same_content(&decoded));
+    assert_eq!(decoded.revision(), 1, "decode publishes one batch revision");
 
     // Both documents evaluate to identical frames
     let mut p = HashMap::new();
@@ -1026,7 +1027,10 @@ fn package_postcommit_sync_error_is_a_warning_not_a_failed_export() {
 #[test]
 fn package_writes_the_same_bytes_that_were_verified() {
     let tmp = TestDirectory::new();
-    let session = tmp.saved_session();
+    let mut session = tmp.saved_session();
+    let mut mesh = session.document().get_mesh(&id(4)).unwrap().clone();
+    mesh.raw_blend_mode = Some(262);
+    assert!(session.document_mut().replace_mesh(mesh).status.is_ok());
     let asset = session.document().get_asset(&id(2)).unwrap();
     let source = session.root().join(&asset.source);
     let before = fs::read(&source).unwrap();
@@ -1036,7 +1040,9 @@ fn package_writes_the_same_bytes_that_were_verified() {
         destination: destination.clone(),
         validate: Some(Box::new(move |_| {
             fs::write(&source, b"changed after verification").unwrap();
-            Ok(())
+            Ok(kasane_project::ArtifactValidation::structural(
+                kasane_project::RuntimeValidation::NotPerformed,
+            ))
         })),
     };
     kasane_project::publish_package(session.document(), &options).unwrap();
@@ -1044,6 +1050,13 @@ fn package_writes_the_same_bytes_that_were_verified() {
         fs::read(destination.join("textures/0.png")).unwrap(),
         before
     );
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(destination.join("export-report.json")).unwrap()).unwrap();
+    assert_eq!(report["status"], "published");
+    assert_eq!(report["encoding"], "passed");
+    assert_eq!(report["structural_validation"], "passed");
+    assert_eq!(report["runtime_validation"], "not_performed");
+    assert_eq!(report["moc_version"], 6);
 }
 
 #[test]

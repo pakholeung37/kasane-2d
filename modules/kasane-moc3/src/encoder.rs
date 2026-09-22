@@ -8,6 +8,7 @@ use kasane_core::types::{
 use kasane_core::Document;
 
 use crate::layout::{checked, Layout};
+use crate::schema::section;
 use crate::types::{Moc3Artifact, TextureSlot};
 
 fn is_representable(id: &str) -> bool {
@@ -41,14 +42,14 @@ fn find_vertex_pos(mesh: &kasane_core::types::Mesh, vid: VertexId) -> Result<u16
     })
 }
 
-fn write_id(l: &mut Layout, field: &str, value: &str) -> Result<(), Status> {
+fn write_id(l: &mut Layout, field: usize, field_name: &str, value: &str) -> Result<(), Status> {
     if !is_representable(value) {
         return Err(Status::error(
             "UNREPRESENTABLE_ID",
-            format!("{field}: requires 1..63 printable ASCII bytes"),
+            format!("{field_name}: requires 1..63 printable ASCII bytes"),
         ));
     }
-    let bytes = l.field(field)?;
+    let bytes = l.section(field)?;
     let start = bytes.len();
     bytes.extend_from_slice(value.as_bytes());
     bytes.resize(start + 64, 0);
@@ -407,7 +408,7 @@ pub fn encode_moc3_with_version(
 
     let c = doc.canvas();
     {
-        let canvas = l.field("canvas_info")?;
+        let canvas = l.section(section::CANVAS_INFO)?;
         canvas.extend_from_slice(&c.pixels_per_unit.to_le_bytes());
         canvas.extend_from_slice(&c.origin.x.to_le_bytes());
         canvas.extend_from_slice(&(c.height - c.origin.y).to_le_bytes());
@@ -588,7 +589,12 @@ pub fn encode_moc3_with_version(
             1
         };
 
-        write_id(&mut l, "part_src.id", &part.runtime_id)?;
+        write_id(
+            &mut l,
+            section::PART_SRC_ID,
+            "part_src.id",
+            &part.runtime_id,
+        )?;
         l.integer(
             "part_src.binding_idx",
             if let Some(b) = b {
@@ -658,7 +664,12 @@ pub fn encode_moc3_with_version(
             1
         };
 
-        write_id(&mut l, "deformer_src.id", &t.runtime_id)?;
+        write_id(
+            &mut l,
+            section::DEFORMER_SRC_ID,
+            "deformer_src.id",
+            &t.runtime_id,
+        )?;
         l.integer(
             "deformer_src.binding_idx",
             if let Some(b) = b {
@@ -967,7 +978,7 @@ pub fn encode_moc3_with_version(
             "glue key offset",
         )?;
         let key_len = g.binding.as_ref().map_or(1, |b| b.keyforms.len());
-        write_id(&mut l, "glue_src.id", &g.runtime_id)?;
+        write_id(&mut l, section::GLUE_SRC_ID, "glue_src.id", &g.runtime_id)?;
         l.integer("glue_src.binding_idx", b_idx)?;
         l.integer("glue_src.keyform_off", key_off)?;
         l.integer("glue_src.key_len", checked(key_len, "glue key count")?)?;

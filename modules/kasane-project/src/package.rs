@@ -8,7 +8,39 @@ use kasane_moc3::{encode_moc3, Moc3Artifact};
 use crate::filesystem::{self as io, FileSystem, NativeFileSystem, Publication};
 use crate::store::{asset_path, read_project_asset};
 
-pub type ArtifactValidator = Box<dyn Fn(&Moc3Artifact) -> Result<(), Status>>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeValidation {
+    Passed,
+    Unavailable,
+    NotPerformed,
+}
+
+impl RuntimeValidation {
+    fn report_value(self) -> &'static str {
+        match self {
+            Self::Passed => "passed",
+            Self::Unavailable => "unavailable",
+            Self::NotPerformed => "not_performed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArtifactValidation {
+    pub structural: bool,
+    pub runtime: RuntimeValidation,
+}
+
+impl ArtifactValidation {
+    pub const fn structural(runtime: RuntimeValidation) -> Self {
+        Self {
+            structural: true,
+            runtime,
+        }
+    }
+}
+
+pub type ArtifactValidator = Box<dyn Fn(&Moc3Artifact) -> Result<ArtifactValidation, Status>>;
 
 pub struct PackageOptions {
     pub asset_root: PathBuf,
@@ -62,6 +94,9 @@ pub(crate) fn publish_with_filesystem(
     }
 
     let artifact = encode_moc3(doc)?;
+    // Structural validity is an invariant of publication, not something a
+    // caller-supplied validator may accidentally omit or mislabel.
+    kasane_moc3::inspect_moc3_safety(&artifact.bytes)?;
     // Verify even unused project assets, as in the existing DocumentSession contract.
     // The bytes checked here are the exact bytes written below; never reopen after validation.
     let mut verified = std::collections::HashMap::new();
@@ -69,7 +104,17 @@ pub(crate) fn publish_with_filesystem(
         let data = read_project_asset(&options.asset_root, doc.get_asset(id).unwrap())?;
         verified.insert(id.as_str(), data.bytes);
     }
-    validator(&artifact)?;
+    let validation = validator(&artifact)?;
+    if !validation.structural {
+        return Err(Status::error(
+            "INVALID_VALIDATION_RESULT",
+            "Publication requires successful structural validation",
+        ));
+    }
+    let moc_version =
+        artifact.bytes.get(4).copied().ok_or_else(|| {
+            Status::error("EMPTY_MOC3", "Encoder returned no versioned MOC3 bytes")
+        })?;
     fs::create_dir_all(parent).map_err(io::io_error)?;
     let _lock = io::lock(parent)?;
     io::reject_symlink(&destination)?;
@@ -99,8 +144,11 @@ pub(crate) fn publish_with_filesystem(
             .map_err(io::io_error)?;
     }
     let report = serde_json::json!({
-        "status": "passed",
-        "moc_version": 5,
+        "status": "published",
+        "encoding": "passed",
+        "structural_validation": "passed",
+        "runtime_validation": validation.runtime.report_value(),
+        "moc_version": moc_version,
         "source_revision": doc.revision(),
         "textures": artifact.textures.iter().map(|slot| serde_json::json!({
             "asset_id": slot.asset_id, "source": slot.source,

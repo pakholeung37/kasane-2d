@@ -879,6 +879,10 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
     }
 
     let mut candidate = Document::new();
+    let s = candidate.begin_batch_build();
+    if !s.is_ok() {
+        return Err(s);
+    }
     let canvas = Canvas::with_flag(
         doc.canvas[0],
         doc.canvas[1],
@@ -1323,6 +1327,10 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         }
     }
 
+    let status = candidate.finish_batch_build();
+    if !status.is_ok() {
+        return Err(status);
+    }
     candidate.mark_saved();
     Ok(candidate)
 }

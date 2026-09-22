@@ -32,7 +32,7 @@ impl EditDelta {
             .entry(Field::Vertex(id.into(), vertex))
             .or_insert(Value::Position(before));
     }
-    fn merge(&mut self, other: Self) {
+    pub(crate) fn merge(&mut self, other: Self) {
         // Keep the value before the FIRST write. The current document owns the latest value.
         for (key, value) in other.values {
             self.values.entry(key).or_insert(value);

@@ -847,3 +847,13 @@ pub struct VertexPositionUpdate {
     pub vertex_ids: Vec<VertexId>,
     pub positions: Vec<Vec2>,
 }
+
+/// A validated edit that can be staged in a document transaction.
+///
+/// New atomic edit kinds can be added here without adding another parallel
+/// transaction API. A failed commit applies none of the staged edits.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum DocumentEdit {
+    VertexPositions(VertexPositionUpdate),
+    MeshName { mesh_id: String, name: String },
+}

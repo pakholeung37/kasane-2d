@@ -1,4 +1,6 @@
 use kasane_core::types::Status;
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use crate::schema::SCHEMA;
 
@@ -33,12 +35,26 @@ impl Layout {
     }
 
     pub fn field_index(&self, name: &str) -> Result<usize, Status> {
-        let index = SCHEMA
-            .iter()
-            .position(|s| s.name == name)
+        static FIELDS: OnceLock<HashMap<&'static str, usize>> = OnceLock::new();
+        let fields = FIELDS.get_or_init(|| {
+            SCHEMA
+                .iter()
+                .enumerate()
+                .map(|(index, section)| (section.name, index))
+                .collect()
+        });
+        let index = fields
+            .get(name)
+            .copied()
             .ok_or_else(|| Status::error("CODEC_LAYOUT", format!("Unknown MOC3 field: {name}")))?;
         crate::schema::VersionLayout::new(self.version)?.require(index)?;
         Ok(index)
+    }
+
+    /// Typed access for encoder call sites that already know their schema slot.
+    pub fn section(&mut self, index: usize) -> Result<&mut Vec<u8>, Status> {
+        crate::schema::VersionLayout::new(self.version)?.require(index)?;
+        Ok(&mut self.data[index])
     }
 
     pub fn field(&mut self, name: &str) -> Result<&mut Vec<u8>, Status> {
@@ -52,15 +68,31 @@ impl Layout {
         Ok(())
     }
 
+    pub fn integer_at(&mut self, index: usize, v: i32) -> Result<(), Status> {
+        self.section(index)?
+            .extend_from_slice(&(v as u32).to_le_bytes());
+        Ok(())
+    }
+
     pub fn scalar(&mut self, name: &str, v: f32) -> Result<(), Status> {
         let buf = self.field(name)?;
         buf.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
 
+    pub fn scalar_at(&mut self, index: usize, v: f32) -> Result<(), Status> {
+        self.section(index)?.extend_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
+
     pub fn short(&mut self, name: &str, v: u16) -> Result<(), Status> {
         let buf = self.field(name)?;
         buf.extend_from_slice(&v.to_le_bytes());
+        Ok(())
+    }
+
+    pub fn short_at(&mut self, index: usize, v: u16) -> Result<(), Status> {
+        self.section(index)?.extend_from_slice(&v.to_le_bytes());
         Ok(())
     }
 

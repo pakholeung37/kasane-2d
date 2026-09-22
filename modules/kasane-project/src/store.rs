@@ -10,7 +10,9 @@ use kasane_core::Document;
 use kasane_moc3::{import_from_bare_moc3, import_from_model3_json, ImportReport};
 
 use crate::codec::{decode_project, encode_project};
-use crate::package::{publish_with_filesystem, PackageOptions};
+use crate::package::{
+    publish_with_filesystem, ArtifactValidation, PackageOptions, RuntimeValidation,
+};
 use crate::resources::{content_sha256, decode_png, AssetData};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -683,12 +685,14 @@ impl DocumentSession {
         let options = PackageOptions {
             asset_root: self.root(),
             destination: destination.to_path_buf(),
-            validate: Some(Box::new(|artifact| {
-                if artifact.bytes.is_empty() {
-                    Err(Status::error("EMPTY_MOC3", "Encoder returned no bytes"))
-                } else {
-                    Ok(())
-                }
+            validate: Some(Box::new(|_artifact| {
+                Ok(ArtifactValidation::structural(
+                    if kasane_moc3::HAS_CORE_VALIDATION {
+                        RuntimeValidation::Passed
+                    } else {
+                        RuntimeValidation::Unavailable
+                    },
+                ))
             })),
         };
         match publish_with_filesystem(&self.document, &options, self.store.filesystem.as_ref()) {
