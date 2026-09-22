@@ -1,6 +1,5 @@
 # 当前架构与渲染边界
 
-目标与里程碑以 [工程路线图](ROADMAP.md) 为准。Kasane 的编辑模型、MOC3 编解码及 Godot 绑定已经迁移到 Rust；历史 C++ 实现不再是后续模块复用的基线。
 
 ```text
 Document (kasane-core) ──> DrawableFrame ──> kasane-godot Rust renderer ──> Editor 预览
