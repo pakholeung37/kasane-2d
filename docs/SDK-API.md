@@ -93,4 +93,6 @@ Python `Session.mesh_properties` 与 `Edit.update_mesh_properties` 已覆盖 mes
 
 `TransformSnapshot` 现包含 appearance，可传给 `Edit.replace_transform` 进行完整 rotation/warp 替换；runtime ID 由现存对象继承。清单更新至 97/116 项 Python 绑定、1 项 Rust 专用、18 项待绑定。
 
+Python 可创建、读取和替换 Offscreen，包括 keyform 颜色、Part 槽映射和遮罩字段；`Edit.replace_part_binding_with_offscreen` 同时调整 Part 参数表及 Offscreen 索引。清单更新至 101/116 项 Python 绑定、1 项 Rust 专用、14 项待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

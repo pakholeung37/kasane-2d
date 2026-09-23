@@ -25,6 +25,7 @@ WARP = "00000000-0000-4000-8000-000000000009"
 SCENE_PART = "00000000-0000-4000-8000-000000000010"
 SCENE_ROTATION = "00000000-0000-4000-8000-000000000011"
 SCENE_WARP = "00000000-0000-4000-8000-000000000012"
+OFFSCREEN = "00000000-0000-4000-8000-000000000013"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -444,6 +445,85 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(model.version, version)
         model.undo()
         self.assertEqual(model.transform(ROTATION).name, original.name)
+
+    def test_offscreen_create_replace_and_rollback(self):
+        model = session()
+        with model.edit("part and offscreen") as edit:
+            edit.create_part(PART, "owner")
+            edit.create_offscreen(kasane.OffscreenSpec(
+                OFFSCREEN, "layer", PART, keyforms=[kasane.OffscreenKeyform(0.5)],
+            ))
+        original = model.offscreen(OFFSCREEN)
+        self.assertEqual(original.runtime_id, OFFSCREEN)
+        self.assertEqual(original.keyforms[0].opacity, 0.5)
+        original.keyforms[0] = kasane.OffscreenKeyform(0)
+        self.assertEqual(model.offscreen(OFFSCREEN).keyforms[0].opacity, 0.5)
+        with model.edit("replace offscreen") as edit:
+            edit.replace_offscreen(original._replace(
+                name="soft layer", flags=0, part_keyform_indices=[0],
+                keyforms=[kasane.OffscreenKeyform(0.75, (0.8, 1, 1), (0, 0.1, 0))],
+            ))
+        replaced = model.offscreen(OFFSCREEN)
+        self.assertEqual(replaced.name, "soft layer")
+        self.assertEqual(replaced.runtime_id, OFFSCREEN)
+        self.assertEqual(replaced.part_keyform_indices, [0])
+        self.assertAlmostEqual(replaced.keyforms[0].opacity, 0.75)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.offscreen(OFFSCREEN).part_keyform_indices, [0])
+        version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("invalid index") as edit:
+                edit.replace_offscreen(replaced._replace(part_keyform_indices=[9]))
+        self.assertEqual(error.exception.code, "INDEX_OUT_OF_BOUNDS")
+        self.assertEqual(model.version, version)
+        model.undo()
+        self.assertEqual(model.offscreen(OFFSCREEN).name, "layer")
+
+    def test_part_binding_and_offscreen_resize_atomically(self):
+        model = session()
+        with model.edit("base") as edit:
+            edit.create_parameter(PARAMETER, "switch", 0, 1, 0)
+            edit.create_part(PART, "owner")
+            edit.create_scene_binding(
+                SCENE_PART, "part", PART, [kasane.Axis(PARAMETER, [0, 1])], [
+                    kasane.ScenePartKeyform([0], 0),
+                    kasane.ScenePartKeyform([1], 10),
+                ],
+            )
+            edit.create_offscreen(kasane.OffscreenSpec(
+                OFFSCREEN, "layer", PART, part_keyform_indices=[0, 1],
+                keyforms=[kasane.OffscreenKeyform(0.5), kasane.OffscreenKeyform(1)],
+            ))
+        binding = model.scene_binding(SCENE_PART)
+        offscreen = model.offscreen(OFFSCREEN)
+        resized_binding = binding._replace(
+            axes=[kasane.Axis(PARAMETER, [0, 0.5, 1])],
+            keyforms=[
+                kasane.ScenePartKeyform([0], 0),
+                kasane.ScenePartKeyform([0.5], 5),
+                kasane.ScenePartKeyform([1], 10),
+            ],
+        )
+        resized_offscreen = offscreen._replace(part_keyform_indices=[0, -1, 1])
+        old_version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("invalid independent resize") as edit:
+                edit.replace_scene_binding(
+                    resized_binding.id, resized_binding.kind, resized_binding.target_id,
+                    resized_binding.axes, resized_binding.keyforms,
+                )
+        self.assertEqual(error.exception.code, "INVALID_LENGTH")
+        self.assertEqual(model.version, old_version)
+        with model.edit("joint resize") as edit:
+            edit.replace_part_binding_with_offscreen(resized_binding, resized_offscreen)
+        self.assertEqual(len(model.scene_binding(SCENE_PART).keyforms), 3)
+        self.assertEqual(model.offscreen(OFFSCREEN).part_keyform_indices, [0, -1, 1])
+        model.undo()
+        self.assertEqual(len(model.scene_binding(SCENE_PART).keyforms), 2)
+        self.assertEqual(model.offscreen(OFFSCREEN).part_keyform_indices, [0, 1])
 
     def test_png_base_relocation_and_replacement(self):
         model = session()

@@ -211,6 +211,36 @@ class TransformSnapshot(NamedTuple):
     version: Version
 
 
+class OffscreenKeyform(NamedTuple):
+    opacity: float
+    multiply: tuple[float, float, float] | None = None
+    screen: tuple[float, float, float] | None = None
+
+
+class OffscreenSpec(NamedTuple):
+    id: str
+    name: str
+    part_id: str
+    blend_mode: int = 0
+    flags: int = 4
+    masks: Sequence[str] = ()
+    part_keyform_indices: Sequence[int] = ()
+    keyforms: Sequence[OffscreenKeyform] = ()
+
+
+class OffscreenSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    name: str
+    part_id: str
+    blend_mode: int
+    flags: int
+    masks: list[str]
+    part_keyform_indices: list[int]
+    keyforms: list[OffscreenKeyform]
+    version: Version
+
+
 class ResourceIssue(NamedTuple):
     asset_id: str
     code: str
@@ -373,6 +403,25 @@ class Edit:
         self._call(lambda: self._native.replace_transform(
             transform.id, transform.name, transform.part_id, transform.parent_id,
             transform.kind, rotation, warp, transform.enabled, tuple(transform.appearance),
+        ))
+
+    def create_offscreen(self, offscreen: OffscreenSpec) -> None:
+        self._call(lambda: self._native.create_offscreen(_offscreen_data(offscreen)))
+
+    def replace_offscreen(self, offscreen: OffscreenSnapshot) -> None:
+        self._call(lambda: self._native.replace_offscreen(_offscreen_data(offscreen)))
+
+    def replace_part_binding_with_offscreen(
+        self, binding: SceneBindingSnapshot, offscreen: OffscreenSnapshot,
+    ) -> None:
+        if binding.kind != "part":
+            self._native.abort()
+            raise ValueError("Expected a Part scene binding")
+        self._call(lambda: self._native.replace_part_binding_with_offscreen(
+            binding.id, binding.target_id,
+            [(axis.parameter_id, list(axis.keys)) for axis in binding.axes],
+            [_scene_form_tuple("part", form) for form in binding.keyforms],
+            _offscreen_data(offscreen),
         ))
 
     def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
@@ -722,6 +771,16 @@ class Session:
         warp_data = WarpData(*warp) if warp is not None else None
         return TransformSnapshot(id, runtime_id, name, part_id, parent_id, kind, rotation_data, warp_data, enabled, Appearance(*appearance), version)
 
+    def offscreen(self, offscreen_id: str) -> OffscreenSnapshot | None:
+        raw = self._native.offscreen(offscreen_id)
+        if raw is None:
+            return None
+        id, runtime_id, name, part_id, blend_mode, flags, masks, indices, forms, version = raw
+        return OffscreenSnapshot(
+            id, runtime_id, name, part_id, blend_mode, flags, masks, indices,
+            [OffscreenKeyform(*form) for form in forms], version,
+        )
+
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)
 
@@ -860,6 +919,14 @@ def _mesh_form_tuple(form: MeshKeyform):
     )
 
 
+def _offscreen_data(value: OffscreenSpec | OffscreenSnapshot):
+    return (
+        value.id, value.name, value.part_id, value.blend_mode, value.flags,
+        list(value.masks), list(value.part_keyform_indices),
+        [(form.opacity, form.multiply, form.screen) for form in value.keyforms],
+    )
+
+
 def _rotation_tuple(rotation: RotationData):
     pose = rotation.pose
     return (rotation.base_angle, (
@@ -936,6 +1003,9 @@ __all__ = [
     "MeshBindingSnapshot",
     "MeshKeyform",
     "ObjectHandle",
+    "OffscreenKeyform",
+    "OffscreenSpec",
+    "OffscreenSnapshot",
     "ParameterSample",
     "ParameterSnapshot",
     "PartSnapshot",

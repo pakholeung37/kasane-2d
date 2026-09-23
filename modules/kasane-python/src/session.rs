@@ -391,6 +391,13 @@ impl NativeSession {
             .map(|transform| transform_tuple(transform, session.version())))
     }
 
+    fn offscreen(&self, id: &str) -> PyResult<Option<OffscreenTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .offscreen(id)
+            .map(|value| offscreen_tuple(value, session.version())))
+    }
+
     fn scene_binding(&self, id: &str) -> PyResult<Option<SceneBindingTuple>> {
         let session = self.inner.lock().map_err(|_| poisoned())?;
         Ok(session

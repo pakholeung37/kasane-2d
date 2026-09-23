@@ -32,7 +32,9 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Edit.create_offscreen": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_offscreen",
+    "test": "test_offscreen_create_replace_and_rollback"
   },
   "Edit.create_parameter": {
     "status": "bound",
@@ -100,7 +102,9 @@
     "status": "pending"
   },
   "Edit.replace_offscreen": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_offscreen",
+    "test": "test_offscreen_create_replace_and_rollback"
   },
   "Edit.replace_parameter": {
     "status": "bound",
@@ -113,7 +117,9 @@
     "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.replace_part_binding_with_offscreen": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_part_binding_with_offscreen",
+    "test": "test_part_binding_and_offscreen_resize_atomically"
   },
   "Edit.replace_scene_binding": {
     "status": "bound",
@@ -381,7 +387,9 @@
     "test": "test_new_project_rejects_stale_version_and_resets_session"
   },
   "Session.offscreen": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.offscreen",
+    "test": "test_offscreen_create_replace_and_rollback"
   },
   "Session.offscreen_ids": {
     "status": "bound",

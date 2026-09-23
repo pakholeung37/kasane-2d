@@ -38,6 +38,9 @@ enum Command {
     ReplacePart(Part),
     CreateTransform(Transform),
     ReplaceTransform(Transform),
+    CreateOffscreen(kasane_core::Offscreen),
+    ReplaceOffscreen(kasane_core::Offscreen),
+    ReplacePartBindingWithOffscreen(SceneBinding, kasane_core::Offscreen),
     UpdateRotation(String, RotationTransform),
     UpdateWarpPoints(String, Vec<Vec2>),
     ReplaceAsset(kasane_core::ImageAsset),
@@ -278,6 +281,59 @@ impl NativeEdit {
             enabled,
             appearance: appearance_from_tuple(appearance),
         }));
+        Ok(())
+    }
+
+    fn create_offscreen(&mut self, py: Python<'_>, data: OffscreenDataTuple) -> PyResult<()> {
+        self.ensure_open(py, "create_offscreen")?;
+        let runtime_id = data.0.clone();
+        self.commands
+            .push(Command::CreateOffscreen(offscreen_from_tuple(
+                data, runtime_id,
+            )));
+        Ok(())
+    }
+
+    fn replace_offscreen(&mut self, py: Python<'_>, data: OffscreenDataTuple) -> PyResult<()> {
+        self.ensure_open(py, "replace_offscreen")?;
+        let original = self
+            .session
+            .lock()
+            .map_err(|_| poisoned())?
+            .offscreen(&data.0);
+        let runtime_id = original
+            .map(|value| value.runtime_id)
+            .unwrap_or_else(|| data.0.clone());
+        self.commands
+            .push(Command::ReplaceOffscreen(offscreen_from_tuple(
+                data, runtime_id,
+            )));
+        Ok(())
+    }
+
+    fn replace_part_binding_with_offscreen(
+        &mut self,
+        py: Python<'_>,
+        binding_id: String,
+        target_id: String,
+        axes: Vec<(String, Vec<f32>)>,
+        forms: Vec<SceneFormTuple>,
+        offscreen_data: OffscreenDataTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_part_binding_with_offscreen")?;
+        let binding = scene_binding_from_tuples(binding_id, "part", target_id, axes, forms)?;
+        let original = self
+            .session
+            .lock()
+            .map_err(|_| poisoned())?
+            .offscreen(&offscreen_data.0);
+        let runtime_id = original
+            .map(|value| value.runtime_id)
+            .unwrap_or_else(|| offscreen_data.0.clone());
+        self.commands.push(Command::ReplacePartBindingWithOffscreen(
+            binding,
+            offscreen_from_tuple(offscreen_data, runtime_id),
+        ));
         Ok(())
     }
 
@@ -777,6 +833,11 @@ impl NativeEdit {
                         Command::CreateTransform(transform) => edit.create_transform(transform)?,
                         Command::ReplaceTransform(transform) => {
                             edit.replace_transform(transform)?
+                        }
+                        Command::CreateOffscreen(value) => edit.create_offscreen(value)?,
+                        Command::ReplaceOffscreen(value) => edit.replace_offscreen(value)?,
+                        Command::ReplacePartBindingWithOffscreen(binding, value) => {
+                            edit.replace_part_binding_with_offscreen(binding, value)?
                         }
                         Command::UpdateRotation(id, rotation) => {
                             edit.update_rotation(&id, rotation)?

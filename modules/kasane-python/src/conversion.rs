@@ -1,8 +1,8 @@
 //! Value conversion at the Python/Rust boundary.
 use kasane_core::{
-    Appearance, BindingAxis, BlendMode, DrawableFrame, MeshBinding, PartKeyform, PreciseVec2,
-    RotationKeyform, RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack,
-    Transform, TransformData, Vec2, WarpKeyform,
+    Appearance, BindingAxis, BlendMode, DrawableFrame, MeshBinding, Offscreen, OffscreenKeyform,
+    PartKeyform, PreciseVec2, RotationKeyform, RotationPose, RotationTransform, SceneBinding,
+    SceneKeyform, SceneTrack, Transform, TransformData, Vec2, WarpKeyform,
 };
 use kasane_sdk::{ObjectKind, Version};
 use pyo3::exceptions::PyValueError;
@@ -91,6 +91,76 @@ pub(crate) type MeshPropertiesTuple = (
     Vec<String>,
     VersionTuple,
 );
+pub(crate) type OffscreenFormTuple = (f32, Option<Point3Tuple>, Option<Point3Tuple>);
+pub(crate) type OffscreenDataTuple = (
+    String,
+    String,
+    String,
+    u32,
+    u8,
+    Vec<String>,
+    Vec<i32>,
+    Vec<OffscreenFormTuple>,
+);
+pub(crate) type OffscreenTuple = (
+    String,
+    String,
+    String,
+    String,
+    u32,
+    u8,
+    Vec<String>,
+    Vec<i32>,
+    Vec<OffscreenFormTuple>,
+    VersionTuple,
+);
+
+pub(crate) fn offscreen_from_tuple(data: OffscreenDataTuple, runtime_id: String) -> Offscreen {
+    let (id, name, part_id, blend_mode, flags, masks, indices, keyforms) = data;
+    Offscreen {
+        id,
+        runtime_id,
+        name,
+        part_id,
+        blend_mode,
+        flags,
+        masks,
+        part_keyform_indices: indices,
+        keyforms: keyforms
+            .into_iter()
+            .map(|(opacity, multiply, screen)| OffscreenKeyform {
+                opacity,
+                multiply: multiply.map(|(r, g, b)| [r, g, b]),
+                screen: screen.map(|(r, g, b)| [r, g, b]),
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn offscreen_tuple(value: Offscreen, version: Version) -> OffscreenTuple {
+    (
+        value.id,
+        value.runtime_id,
+        value.name,
+        value.part_id,
+        value.blend_mode,
+        value.flags,
+        value.masks,
+        value.part_keyform_indices,
+        value
+            .keyforms
+            .into_iter()
+            .map(|form| {
+                (
+                    form.opacity,
+                    form.multiply.map(|rgb| (rgb[0], rgb[1], rgb[2])),
+                    form.screen.map(|rgb| (rgb[0], rgb[1], rgb[2])),
+                )
+            })
+            .collect(),
+        version_tuple(version),
+    )
+}
 
 pub(crate) fn blend_mode_from_name(name: &str) -> PyResult<BlendMode> {
     match name {
