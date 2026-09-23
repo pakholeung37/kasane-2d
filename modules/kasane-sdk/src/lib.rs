@@ -1,10 +1,10 @@
-//! In-memory Rust authoring SDK. Project IO and external harnesses are later stages.
+//! Engine-independent Rust authoring SDK with project open/save and checkpoint history.
 mod diagnostics;
 
 pub use diagnostics::{GeometryBounds, GeometryChecks, GeometryDiagnostic, GeometryDiagnosticKind};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -18,7 +18,9 @@ use kasane_core::{
     RotationTransform, SceneBinding, SceneKeyform, Status, Transform, TransformData, TransformId,
     Vec2, VertexId,
 };
-use kasane_project::{decode_png, DocumentSession};
+use kasane_project::{
+    decode_png, is_valid_asset_path, DocumentSession, ProjectResult, ResourceDiagnostic,
+};
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -83,6 +85,15 @@ pub struct EditReceipt {
     pub kind: ChangeKind,
     pub object_ids: Vec<String>,
     pub changed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SaveReceipt {
+    pub before: Version,
+    pub after: Version,
+    pub manifest: PathBuf,
+    pub warnings: Vec<String>,
+    pub durable: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -186,6 +197,7 @@ struct HistoryEntry {
     label: String,
     checkpoint: DocumentCheckpoint,
     identity_keys: HashSet<ObjectKey>,
+    root: PathBuf,
 }
 
 impl HistoryEntry {
@@ -199,6 +211,7 @@ impl HistoryEntry {
                 .iter()
                 .map(|key| key.id.capacity())
                 .sum::<usize>()
+            + self.root.as_os_str().len()
     }
 }
 
@@ -315,8 +328,124 @@ impl AuthoringSession {
         Ok(self.version())
     }
 
+    /// Open a saved project. Missing or corrupt texture files are reported in
+    /// the successful ProjectResult diagnostics without discarding the document.
+    pub fn open_project(
+        &mut self,
+        path: &Path,
+        expected: Option<Version>,
+    ) -> Result<ProjectResult, SdkError> {
+        if !path.is_absolute() {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "Project path must be absolute",
+                "open_project",
+            ));
+        }
+        let current = self.version();
+        if let Some(value) = expected.filter(|value| *value != current) {
+            let mut error =
+                SdkError::new("STALE_VERSION", "Document version changed", "open_project");
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(current));
+            return Err(error);
+        }
+        let generation = self.generation.checked_add(1).ok_or_else(|| {
+            SdkError::new(
+                "GENERATION_EXHAUSTED",
+                "Document generation exhausted",
+                "open_project",
+            )
+        })?;
+        let result = self.project.open_authoring(path);
+        if !result.status.is_ok() {
+            return Err(SdkError::from_status(
+                result.status,
+                "open_project",
+                vec![path.display().to_string()],
+            ));
+        }
+        self.generation = generation;
+        self.done.clear();
+        self.redo.clear();
+        self.preview.reset();
+        self.incarnations.clear();
+        self.events.clear();
+        self.refresh_incarnations(&HashSet::new(), &HashSet::new());
+        Ok(result)
+    }
+
     pub fn document_id(&self) -> &str {
         self.project.document().id()
+    }
+    pub fn project_path(&self) -> Option<&Path> {
+        let path = self.project.manifest();
+        (!path.as_os_str().is_empty()).then_some(path)
+    }
+    pub fn diagnose_resources(&self) -> Vec<ResourceDiagnostic> {
+        self.project.diagnose()
+    }
+    /// Save through the project's publication path and retain SDK undo/redo.
+    /// Project paths must be absolute; unsaved relative asset sources require an
+    /// explicit base and are rejected instead of being interpreted from cwd.
+    pub fn save_project(
+        &mut self,
+        path: &Path,
+        expected: Option<Version>,
+    ) -> Result<SaveReceipt, SdkError> {
+        if !path.is_absolute() {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "Project path must be absolute",
+                "save_project",
+            ));
+        }
+        let before = self.version();
+        if let Some(value) = expected.filter(|value| *value != before) {
+            let mut error =
+                SdkError::new("STALE_VERSION", "Document version changed", "save_project");
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(before));
+            return Err(error);
+        }
+        let old_root = self.project.root();
+        let old_assets: HashMap<_, _> = self
+            .asset_ids()
+            .iter()
+            .filter_map(|id| self.asset(id).map(|asset| (id.clone(), asset)))
+            .collect();
+        for asset in old_assets.values() {
+            validate_asset_root(&old_root, asset)?;
+        }
+        for entry in self.done.iter().chain(&self.redo) {
+            for asset in entry.checkpoint.assets() {
+                validate_asset_root(&entry.root, &asset)?;
+            }
+        }
+        let result = self.project.save(path);
+        if !result.status.is_ok() {
+            return Err(SdkError::from_status(
+                result.status,
+                "save_project",
+                vec![path.display().to_string()],
+            ));
+        }
+        let new_root = self.project.root();
+        let new_assets: HashMap<_, _> = self
+            .asset_ids()
+            .iter()
+            .filter_map(|id| self.asset(id).map(|asset| (id.clone(), asset)))
+            .collect();
+        for entry in self.done.iter_mut().chain(&mut self.redo) {
+            relocate_history_assets(entry, &old_root, &old_assets, &new_root, &new_assets);
+        }
+        Ok(SaveReceipt {
+            before,
+            after: self.version(),
+            manifest: self.project.manifest().to_path_buf(),
+            warnings: result.warnings,
+            durable: result.durable,
+        })
     }
     pub fn version(&self) -> Version {
         Version {
@@ -1245,7 +1374,8 @@ impl EditSession<'_> {
                 + identity_keys
                     .iter()
                     .map(|key| key.id.capacity())
-                    .sum::<usize>();
+                    .sum::<usize>()
+                + self.session.project.root().as_os_str().len();
             let redo_bytes: usize = self
                 .session
                 .redo
@@ -1299,6 +1429,7 @@ impl EditSession<'_> {
                 label: self.label.clone(),
                 checkpoint,
                 identity_keys,
+                root: self.session.project.root(),
             });
             self.session.redo.clear();
         }
@@ -1332,8 +1463,75 @@ fn merge_kind(a: ChangeKind, b: ChangeKind) -> ChangeKind {
     }
 }
 
+fn validate_asset_root(root: &Path, asset: &ImageAsset) -> Result<(), SdkError> {
+    if Path::new(&asset.source).is_absolute() {
+        return Ok(());
+    }
+    if root.as_os_str().is_empty()
+        || !root.is_absolute()
+        || !is_valid_asset_path(&asset.source)
+        || root.join(&asset.source).to_str().is_none()
+    {
+        let mut error = SdkError::new(
+            "INVALID_ASSET_BASE",
+            "Relative asset source requires a valid absolute project root",
+            "save_project",
+        );
+        error.object_ids.push(asset.id.clone());
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn resolved_source(root: &Path, asset: &ImageAsset) -> PathBuf {
+    let source = Path::new(&asset.source);
+    if source.is_absolute() {
+        source.to_path_buf()
+    } else {
+        root.join(source)
+    }
+}
+
+fn relocate_history_assets(
+    entry: &mut HistoryEntry,
+    old_root: &Path,
+    old_assets: &HashMap<String, ImageAsset>,
+    new_root: &Path,
+    new_assets: &HashMap<String, ImageAsset>,
+) {
+    for asset in entry.checkpoint.assets() {
+        if let (Some(old), Some(new)) = (old_assets.get(&asset.id), new_assets.get(&asset.id)) {
+            let same_content = asset.id == old.id
+                && asset.width == old.width
+                && asset.height == old.height
+                && asset.sha256 == old.sha256
+                && resolved_source(&entry.root, &asset) == resolved_source(old_root, old);
+            if same_content {
+                let relocated = entry.checkpoint.relocate_asset_storage(
+                    &asset,
+                    new.source.clone(),
+                    new.sha256.clone(),
+                );
+                debug_assert!(relocated);
+                continue;
+            }
+        }
+        if !Path::new(&asset.source).is_absolute() {
+            let absolute = entry.root.join(&asset.source);
+            let absolute = absolute.to_str().expect("preflight checked path");
+            let relocated = entry.checkpoint.relocate_asset_storage(
+                &asset,
+                absolute.to_owned(),
+                asset.sha256.clone(),
+            );
+            debug_assert!(relocated);
+        }
+    }
+    entry.root = new_root.to_path_buf();
+}
+
 /// Read a PNG once and return a validated, absolute-path resource description.
-/// File publication remains an explicit later project operation.
+/// File publication is a separate `AuthoringSession::save_project` operation.
 pub fn prepare_png_asset(id: &str, name: &str, path: &Path) -> Result<ImageAsset, SdkError> {
     let path = fs::canonicalize(path)
         .map_err(|e| SdkError::new("RESOURCE_IO", &e.to_string(), "prepare_png_asset"))?;

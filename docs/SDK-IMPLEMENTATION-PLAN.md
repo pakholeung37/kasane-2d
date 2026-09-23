@@ -483,4 +483,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 提交 `a370546` 后续实施：增加 `AuthoringSession::new_project`，以 expected version 检查后原子替换内存文档；成功推进 generation、清理旧历史/预览/事件并使旧句柄失效，失败保留原状态。SDK 当前 26 项契约测试通过。保存、打开与跨保存历史仍在 S2 范围。
 
+2026-09-23 续实施记录：S2 已接入 `open_project`、`save_project`（同路径保存与另存为）、`project_path` 和 `diagnose_resources`。打开时先校验完整结构，失败保持旧会话；成功推进 generation。保存沿用 project 的发布和冲突检测，成功后按资源 ID、解析后的旧路径、尺寸及 hash 重定位 done/redo checkpoint；不匹配的历史相对资源改为原工程根目录下的绝对路径。SDK 工程测试覆盖空 hash 旧资源、A→B 同 ID 替换、已删除的历史资源、redo 分支、失败保存/打开，以及重开后的持久对象与 CPU 求值一致。model3/MOC3 导入、导出和显式资源 relocate 仍待 S2 后续。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

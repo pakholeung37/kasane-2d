@@ -1,5 +1,5 @@
 use super::{Document, DocumentContent};
-use crate::types::{ChangeKind, Status};
+use crate::types::{ChangeKind, ImageAsset, Status};
 use std::collections::HashMap;
 
 mod size;
@@ -14,6 +14,34 @@ impl DocumentCheckpoint {
     /// capacity-aware budget estimate, not a process RSS measurement.
     pub fn estimated_bytes(&self) -> usize {
         size::estimated_content_bytes(self.0.content_ref())
+    }
+
+    /// Read-only resource descriptions for SDK history relocation.
+    pub fn assets(&self) -> Vec<ImageAsset> {
+        self.0
+            .asset_order
+            .iter()
+            .filter_map(|id| self.0.assets.get(id).cloned())
+            .collect()
+    }
+
+    /// Rewrite only a checkpoint asset's storage location and verified hash.
+    /// The complete expected descriptor prevents an ID-only relocation.
+    pub fn relocate_asset_storage(
+        &mut self,
+        expected: &ImageAsset,
+        source: String,
+        sha256: String,
+    ) -> bool {
+        let Some(asset) = self.0.assets.get_mut(&expected.id) else {
+            return false;
+        };
+        if asset != expected {
+            return false;
+        }
+        asset.source = source;
+        asset.sha256 = sha256;
+        true
     }
 }
 

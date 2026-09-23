@@ -524,6 +524,27 @@ impl DocumentSession {
         result
     }
 
+    /// Atomically open a document for the SDK, including final graph validation.
+    /// Resource diagnostics are returned separately and do not reject an editable project.
+    pub fn open_authoring(&mut self, path: &Path) -> ProjectResult {
+        if self.history.active() || self.document.transaction_active() {
+            return ProjectResult::failed("EDIT_ACTIVE", "Finish the active edit first");
+        }
+        let (result, snapshot) = self.store.open(path);
+        if !result.status.is_ok() {
+            return result;
+        }
+        let snapshot = snapshot.expect("successful open has a snapshot");
+        if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
+            return ProjectResult::from_status(issue.status);
+        }
+        self.document = snapshot.document;
+        self.history.clear(self.document.revision(), None);
+        self.manifest = snapshot.manifest;
+        self.manifest_sha256 = snapshot.manifest_sha256;
+        result
+    }
+
     pub fn save(&mut self, path: &Path) -> ProjectResult {
         if self.history.active() {
             return ProjectResult::failed(

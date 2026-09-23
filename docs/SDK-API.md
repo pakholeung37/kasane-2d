@@ -1,6 +1,6 @@
 # Kasane SDK API（实施中）
 
-状态：S0 契约初稿，S1 的内存对象族和预览入口已大体接入。尚未达到 [完整实施计划](SDK-IMPLEMENTATION-PLAN.md) 的 S1–S5 验收。
+状态：S0 契约初稿，S1 的内存对象族和预览入口已大体接入；S2 已接入工程打开、保存和资源诊断。尚未达到 [完整实施计划](SDK-IMPLEMENTATION-PLAN.md) 的 S1–S5 验收。
 
 ## 当前可运行的 Rust API
 
@@ -56,8 +56,12 @@ BlendShape key table、constraint、binding、Glue 和 Offscreen 均提供 `crea
 
 `prepare_png_asset` 读取 PNG、计算尺寸与 SHA-256，返回绝对路径资源描述；它不修改文档。`rectangle_mesh` 创建四顶点、两三角形的根 mesh 描述，UV 为四角。材质和坐标源字段仍可用 core 的强类型 `Mesh` 表达。显式批次适合大量顶点写回，避免每步重建 candidate。
 
+`save_project(path, expected_version)` 通过 project 的原子发布入口保存或另存为，`path` 必须是绝对路径，可指向工程目录或 JSON manifest。返回 `SaveReceipt`，包含保存前后版本、规范 manifest 路径、发布后的 warning 与 `durable`。保存成功后保留全部 SDK undo/redo，并将匹配同一旧资源的历史 checkpoint 重定位到新工程；同 ID 但不同资源的历史版本仍指向自己的旧文件。redo 回到已保存内容时 `modified()` 为 false。保存失败保留文档、工程路径和 SDK 历史。尚未保存的相对资源路径没有明确根目录，SDK 会以 `INVALID_ASSET_BASE` 拒绝保存；可先用 `prepare_png_asset` 得到绝对路径描述。
+
+`open_project(path, expected_version)` 只在解码和结构校验成功后替换会话。成功后 generation 增加、旧句柄过期，清空历史、预览和事件；失败保留原状态。纹理文件缺失或损坏会在成功返回的 `ProjectResult::diagnostics` 中报告，`diagnose_resources()` 可随时重查。`project_path()` 返回当前 manifest 路径。打开与保存均要求绝对路径，显式版本不匹配返回 `STALE_VERSION`。
+
 ## 尚未交付的契约
 
-保存和跨保存历史、资源诊断、Python wheel、wgpu 观察与统一验收入口均未实现。当前只在内存里创作和求值；资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
+model3/bare MOC3 导入、工程导出、显式资源 relocate、Python wheel、wgpu 观察与统一验收入口仍未实现。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
 
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。
