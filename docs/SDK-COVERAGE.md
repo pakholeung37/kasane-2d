@@ -5,7 +5,7 @@
 | 旧公开入口 | 新 SDK 入口或方向 | 状态 / 测试 |
 | --- | --- | --- |
 | `initialize` | `AuthoringSession::new` | 已实现 / `vertical_slice` |
-| `new_project` | 原子替换文档 | 待 S1 |
+| `new_project` | `AuthoringSession::new_project` 原子替换文档 | 已实现 / `document_operations` |
 | `add_image_asset` | `EditSession::create_asset` | 已实现 / `vertical_slice` |
 | `get_asset_snapshot` | `AuthoringSession::asset` | 已实现 / `vertical_slice` |
 | `begin_transaction` | `begin_edit` | 已实现 / `vertical_slice` |

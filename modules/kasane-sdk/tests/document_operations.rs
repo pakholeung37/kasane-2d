@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use kasane_core::{draw_order::DrawOrderGroup, Canvas, Vec2};
 use kasane_sdk::{
     prepare_png_asset, rectangle_mesh, AuthoringSession, GeometryBounds, GeometryChecks,
@@ -203,4 +205,49 @@ fn geometry_warnings_are_separate_from_structural_validity() {
         "INVALID_DIAGNOSTIC_OPTIONS"
     );
     assert_eq!(sdk.version(), version);
+}
+
+#[test]
+fn new_project_failure_preserves_session_and_success_changes_generation() {
+    let mut sdk = session();
+    let old = sdk.handle(ObjectKind::Mesh, &id(3)).unwrap();
+    let frame = sdk.preview_frame().unwrap();
+    let current = sdk.version();
+    let mut invalid_canvas = sdk.canvas();
+    invalid_canvas.pixels_per_unit = 0.0;
+    assert_eq!(
+        sdk.new_project(&id(1), invalid_canvas, Some(current))
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "INVALID_CANVAS"
+    );
+    let mut stale = current;
+    stale.revision += 1;
+    assert_eq!(
+        sdk.new_project(&id(1), sdk.canvas(), Some(stale))
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "STALE_VERSION"
+    );
+    assert_eq!(sdk.version(), current);
+    sdk.resolve_handle(&old).unwrap();
+    assert!(Arc::ptr_eq(&frame, &sdk.preview_frame().unwrap()));
+    assert_eq!(sdk.history_lengths(), (1, 0));
+
+    let next = sdk
+        .new_project(&id(1), sdk.canvas(), Some(current))
+        .unwrap();
+    assert_eq!(next.session_id, current.session_id);
+    assert_eq!(next.generation, current.generation + 1);
+    assert!(sdk.asset_ids().is_empty());
+    assert!(sdk.mesh_ids().is_empty());
+    assert_eq!(sdk.history_lengths(), (0, 0));
+    assert!(sdk.preview_values().is_empty());
+    assert!(sdk.drain_events().is_empty());
+    assert_eq!(
+        sdk.resolve_handle(&old).unwrap_err().code.as_ref(),
+        "STALE_HANDLE"
+    );
 }

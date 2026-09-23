@@ -38,7 +38,7 @@ session.redo()?;
 
 读取返回对象副本。`geometry()` 的 `positions` 是源坐标：根 mesh 为 `CanvasPixels`，有变形父对象时为 `ParentLocal(parent_id)`；`vertex_ids` 是稳定顶点身份，`triangles` 引用这些 ID。`evaluate(values)` 不修改会话状态，输出 positions 是 Runtime 坐标，根对象转换公式为 `(x-origin.x)/ppu`、`(origin.y-y)/ppu`。UV 保留 core 约定；源数组不会被 renderer 的纹理翻转改写。
 
-`Version` 为 `(session_id, generation, revision)`。目前新建会话 generation 为 1，尚未提供替换文档入口。批次 `expected_version` 检查三个字段；过期错误提供 expected 和 actual。`SdkError` 有 `code/message/operation/object_ids` 及可选字段路径、版本和 referrers；core 未提供字段路径时留空。`EditReceipt` 提供前后版本、直接对象 ID、变化种类与标签。`drain_events()` 目前返回成功内容提交及 undo/redo 的 receipt。
+`Version` 为 `(session_id, generation, revision)`。新建会话 generation 为 1；`new_project(document_id, canvas, expected)` 成功时原子替换内存文档、增加 generation，并清空旧 history、预览和事件。失败时旧会话不变。批次 `expected_version` 检查三个字段；过期错误提供 expected 和 actual。`SdkError` 有 `code/message/operation/object_ids` 及可选字段路径、版本和 referrers；core 未提供字段路径时留空。`EditReceipt` 提供前后版本、直接对象 ID、变化种类与标签。`drain_events()` 目前返回成功内容提交及 undo/redo 的 receipt。
 
 `ObjectHandle` 当前覆盖 asset、mesh、parameter、mesh binding、Part、Transform、SceneBinding、BlendShape key table/constraint/binding、Glue 和 Offscreen。`handle(kind, id)` 只获取已提交对象；`resolve_handle` 校验 session、generation、对象种类和 incarnation。普通字段修改保留句柄，undo 使对象消失后即使 redo 恢复，旧句柄也保持过期。`mesh_by_handle` 是当前的强类型读取入口，其余类型仍通过 ID 查询。拓扑快照带 `Version`；`replace_topology` 要求它来自 edit 开始时的同一版本和 mesh，并把顶点映射与所有相关 binding/glue 一次交给 core 校验。
 

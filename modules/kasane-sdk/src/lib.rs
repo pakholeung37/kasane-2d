@@ -273,6 +273,48 @@ impl AuthoringSession {
         })
     }
 
+    /// Atomically replace the in-memory document. A failed request leaves the
+    /// current document, history, preview and handles intact.
+    pub fn new_project(
+        &mut self,
+        document_id: &str,
+        canvas: Canvas,
+        expected: Option<Version>,
+    ) -> Result<Version, SdkError> {
+        let current = self.version();
+        if let Some(value) = expected.filter(|value| *value != current) {
+            let mut error =
+                SdkError::new("STALE_VERSION", "Document version changed", "new_project");
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(current));
+            return Err(error);
+        }
+        let mut document = Document::new();
+        let status = document.initialize(document_id, canvas);
+        if !status.is_ok() {
+            return Err(SdkError::from_status(
+                status,
+                "new_project",
+                vec![document_id.into()],
+            ));
+        }
+        let generation = self.generation.checked_add(1).ok_or_else(|| {
+            SdkError::new(
+                "GENERATION_EXHAUSTED",
+                "Document generation exhausted",
+                "new_project",
+            )
+        })?;
+        self.project = DocumentSession::from_authoring_document(document);
+        self.generation = generation;
+        self.done.clear();
+        self.redo.clear();
+        self.preview.reset();
+        self.incarnations.clear();
+        self.events.clear();
+        Ok(self.version())
+    }
+
     pub fn document_id(&self) -> &str {
         self.project.document().id()
     }
