@@ -495,4 +495,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 同轮后续：补工程重置、asset/mesh/parameter/几何快照、全部对象 ID 列表、名称与引用查询、结构诊断、历史状态和事件、独立预览值与帧。Python 快照的版本与数据在同一次原生锁内读取；预览失败不覆盖旧值。仓库外 wheel 的 9 项 Python CPU 测试通过；公开入口覆盖升至 59/115，剩余 56 项待绑定。
 
+2026-09-23 S3 继续：补 canvas/parameter 替换、删除对象、层级关系编辑与 mesh binding 查询。参数替换保留现有 runtime ID 等未显式提供的字段。仓库外 wheel 的 11 项 CPU 测试通过，覆盖为 69/115，剩余 46 项；层级关系编辑成功路径随 Part/Transform 绑定继续验证。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

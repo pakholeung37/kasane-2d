@@ -29,6 +29,13 @@ type EvaluationTuple = (
 type DiagnosticTuple = (String, String, String);
 type ImportTuple = (VersionTuple, u8, Vec<DiagnosticTuple>, Vec<String>);
 type BindingForm = (Vec<f32>, Vec<PointTuple>);
+type MeshBindingTuple = (
+    String,
+    String,
+    Vec<(String, Vec<f32>)>,
+    Vec<BindingForm>,
+    VersionTuple,
+);
 type GeometryTuple = (
     VersionTuple,
     String,
@@ -102,6 +109,29 @@ fn mesh_tuple(mesh: kasane_core::Mesh, version: Version) -> MeshTuple {
         mesh.base_positions
             .into_iter()
             .map(|p| (p.x, p.y))
+            .collect(),
+        version_tuple(version),
+    )
+}
+
+fn binding_tuple(binding: MeshBinding, version: Version) -> MeshBindingTuple {
+    (
+        binding.id,
+        binding.mesh_id,
+        binding
+            .axes
+            .into_iter()
+            .map(|axis| (axis.parameter_id, axis.keys))
+            .collect(),
+        binding
+            .keyforms
+            .into_iter()
+            .map(|form| {
+                (
+                    form.keys,
+                    form.positions.into_iter().map(|p| (p.x, p.y)).collect(),
+                )
+            })
             .collect(),
         version_tuple(version),
     )
@@ -412,6 +442,20 @@ impl NativeSession {
         Ok(session
             .mesh(id)
             .map(|mesh| mesh_tuple(mesh, session.version())))
+    }
+
+    fn binding(&self, id: &str) -> PyResult<Option<MeshBindingTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .binding(id)
+            .map(|binding| binding_tuple(binding, session.version())))
+    }
+
+    fn binding_for_mesh(&self, mesh_id: &str) -> PyResult<Option<MeshBindingTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .binding_for_mesh(mesh_id)
+            .map(|binding| binding_tuple(binding, session.version())))
     }
 
     fn find_meshes_by_name(&self, name: &str) -> PyResult<Vec<MeshTuple>> {
@@ -774,6 +818,14 @@ enum Command {
     UpdatePositions(String, Vec<u32>, Vec<Vec2>),
     CreateParameter(Parameter),
     CreateMeshBinding(MeshBinding),
+    ReplaceCanvas(Canvas),
+    EraseObject(String),
+    ReplaceParameter(Parameter),
+    SetOrganizationParent(String, String),
+    SetTransformParent(String, Option<String>),
+    SetTransformPart(String, Option<String>),
+    SetDeformParent(String, String),
+    SetMeshPart(String, String),
 }
 
 #[pyclass]
@@ -810,6 +862,114 @@ impl NativeEdit {
 
 #[pymethods]
 impl NativeEdit {
+    #[allow(clippy::too_many_arguments)]
+    fn replace_canvas(
+        &mut self,
+        py: Python<'_>,
+        width: f32,
+        height: f32,
+        origin_x: f32,
+        origin_y: f32,
+        pixels_per_unit: f32,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_canvas")?;
+        self.commands.push(Command::ReplaceCanvas(Canvas::new(
+            width,
+            height,
+            Vec2::new(origin_x, origin_y),
+            pixels_per_unit,
+        )));
+        Ok(())
+    }
+
+    fn erase_object(&mut self, py: Python<'_>, id: String) -> PyResult<()> {
+        self.ensure_open(py, "erase_object")?;
+        self.commands.push(Command::EraseObject(id));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false))]
+    fn replace_parameter(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+        minimum: f32,
+        maximum: f32,
+        default_value: f32,
+        repeat: bool,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_parameter")?;
+        let original = self.session.lock().map_err(|_| poisoned())?.parameter(&id);
+        let mut parameter = original.unwrap_or_else(|| Parameter {
+            runtime_id: id.clone(),
+            ..Parameter::default()
+        });
+        parameter.id = id;
+        parameter.name = name;
+        parameter.minimum = minimum;
+        parameter.maximum = maximum;
+        parameter.default_value = default_value;
+        parameter.repeat = repeat;
+        self.commands.push(Command::ReplaceParameter(parameter));
+        Ok(())
+    }
+
+    fn set_organization_parent(
+        &mut self,
+        py: Python<'_>,
+        part_id: String,
+        parent_id: String,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "set_organization_parent")?;
+        self.commands
+            .push(Command::SetOrganizationParent(part_id, parent_id));
+        Ok(())
+    }
+
+    fn set_transform_parent(
+        &mut self,
+        py: Python<'_>,
+        transform_id: String,
+        parent_id: Option<String>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "set_transform_parent")?;
+        self.commands
+            .push(Command::SetTransformParent(transform_id, parent_id));
+        Ok(())
+    }
+
+    fn set_transform_part(
+        &mut self,
+        py: Python<'_>,
+        transform_id: String,
+        part_id: Option<String>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "set_transform_part")?;
+        self.commands
+            .push(Command::SetTransformPart(transform_id, part_id));
+        Ok(())
+    }
+
+    fn set_deform_parent(
+        &mut self,
+        py: Python<'_>,
+        mesh_id: String,
+        transform_id: String,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "set_deform_parent")?;
+        self.commands
+            .push(Command::SetDeformParent(mesh_id, transform_id));
+        Ok(())
+    }
+
+    fn set_mesh_part(&mut self, py: Python<'_>, mesh_id: String, part_id: String) -> PyResult<()> {
+        self.ensure_open(py, "set_mesh_part")?;
+        self.commands.push(Command::SetMeshPart(mesh_id, part_id));
+        Ok(())
+    }
+
     fn add_png_asset(&mut self, py: Python<'_>, id: &str, name: &str, path: &str) -> PyResult<()> {
         self.ensure_open(py, "add_png_asset")?;
         let id = id.to_owned();
@@ -957,6 +1117,24 @@ impl NativeEdit {
                         }
                         Command::CreateParameter(parameter) => edit.create_parameter(parameter)?,
                         Command::CreateMeshBinding(binding) => edit.create_binding(binding)?,
+                        Command::ReplaceCanvas(canvas) => edit.replace_canvas(canvas)?,
+                        Command::EraseObject(id) => edit.erase_object(&id)?,
+                        Command::ReplaceParameter(parameter) => {
+                            edit.replace_parameter(parameter)?
+                        }
+                        Command::SetOrganizationParent(id, parent) => {
+                            edit.set_organization_parent(&id, &parent)?
+                        }
+                        Command::SetTransformParent(id, parent) => {
+                            edit.set_transform_parent(&id, parent.map(Into::into))?
+                        }
+                        Command::SetTransformPart(id, part) => {
+                            edit.set_transform_part(&id, part.map(Into::into))?
+                        }
+                        Command::SetDeformParent(id, parent) => {
+                            edit.set_deform_parent(&id, &parent)?
+                        }
+                        Command::SetMeshPart(id, part) => edit.set_mesh_part(&id, &part)?,
                     }
                 }
                 Ok(())

@@ -49,7 +49,9 @@
     "status": "pending"
   },
   "Edit.erase_object": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.erase_object",
+    "test": "test_canvas_parameter_replace_and_erase_are_atomic"
   },
   "Edit.rename_mesh": {
     "status": "bound",
@@ -72,7 +74,9 @@
     "status": "pending"
   },
   "Edit.replace_canvas": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_canvas",
+    "test": "test_canvas_parameter_replace_and_erase_are_atomic"
   },
   "Edit.replace_draw_order_groups": {
     "status": "pending"
@@ -87,7 +91,9 @@
     "status": "pending"
   },
   "Edit.replace_parameter": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_parameter",
+    "test": "test_canvas_parameter_replace_and_erase_are_atomic"
   },
   "Edit.replace_part": {
     "status": "pending"
@@ -105,25 +111,35 @@
     "status": "pending"
   },
   "Edit.set_deform_parent": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_deform_parent",
+    "test": "test_parent_edit_errors_roll_back_entire_batch"
   },
   "Edit.set_mesh_keyform": {
     "status": "pending"
   },
   "Edit.set_mesh_part": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_mesh_part",
+    "test": "test_parent_edit_errors_roll_back_entire_batch"
   },
   "Edit.set_organization_parent": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_organization_parent",
+    "test": "test_parent_edit_errors_roll_back_entire_batch"
   },
   "Edit.set_scene_keyform": {
     "status": "pending"
   },
   "Edit.set_transform_parent": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_transform_parent",
+    "test": "test_parent_edit_errors_roll_back_entire_batch"
   },
   "Edit.set_transform_part": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_transform_part",
+    "test": "test_parent_edit_errors_roll_back_entire_batch"
   },
   "Edit.update_mesh_properties": {
     "status": "pending"
@@ -161,10 +177,14 @@
     "test": "test_rollback_and_structured_error"
   },
   "Session.binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.binding",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.binding_for_mesh": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.binding_for_mesh",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.binding_for_scene": {
     "status": "pending"

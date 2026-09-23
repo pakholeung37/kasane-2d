@@ -86,6 +86,14 @@ class MeshKeyform(NamedTuple):
     positions: list[Point]
 
 
+class MeshBindingSnapshot(NamedTuple):
+    id: str
+    mesh_id: str
+    axes: list[Axis]
+    keyforms: list[MeshKeyform]
+    version: Version
+
+
 class ResourceIssue(NamedTuple):
     asset_id: str
     code: str
@@ -166,6 +174,48 @@ class Edit:
 
     def add_png_asset(self, asset_id: str, name: str, absolute_path: Path) -> None:
         self._call(lambda: self._native.add_png_asset(asset_id, name, str(absolute_path)))
+
+    def replace_canvas(
+        self, width: float, height: float, origin: Point, pixels_per_unit: float
+    ) -> None:
+        self._call(
+            lambda: self._native.replace_canvas(
+                width, height, origin[0], origin[1], pixels_per_unit
+            )
+        )
+
+    def erase_object(self, object_id: str) -> None:
+        self._call(lambda: self._native.erase_object(object_id))
+
+    def replace_parameter(
+        self,
+        parameter_id: str,
+        name: str,
+        minimum: float,
+        maximum: float,
+        default_value: float,
+        repeat: bool = False,
+    ) -> None:
+        self._call(
+            lambda: self._native.replace_parameter(
+                parameter_id, name, minimum, maximum, default_value, repeat
+            )
+        )
+
+    def set_organization_parent(self, part_id: str, parent_id: str) -> None:
+        self._call(lambda: self._native.set_organization_parent(part_id, parent_id))
+
+    def set_transform_parent(self, transform_id: str, parent_id: str | None) -> None:
+        self._call(lambda: self._native.set_transform_parent(transform_id, parent_id))
+
+    def set_transform_part(self, transform_id: str, part_id: str | None) -> None:
+        self._call(lambda: self._native.set_transform_part(transform_id, part_id))
+
+    def set_deform_parent(self, mesh_id: str, transform_id: str) -> None:
+        self._call(lambda: self._native.set_deform_parent(mesh_id, transform_id))
+
+    def set_mesh_part(self, mesh_id: str, part_id: str) -> None:
+        self._call(lambda: self._native.set_mesh_part(mesh_id, part_id))
 
     def create_rectangle(
         self, mesh_id: str, name: str, asset_id: str, minimum: Point, maximum: Point
@@ -367,6 +417,12 @@ class Session:
             return None
         return MeshSnapshot(*raw)
 
+    def binding(self, binding_id: str) -> MeshBindingSnapshot | None:
+        return _binding_snapshot(self._native.binding(binding_id))
+
+    def binding_for_mesh(self, mesh_id: str) -> MeshBindingSnapshot | None:
+        return _binding_snapshot(self._native.binding_for_mesh(mesh_id))
+
     def find_meshes_by_name(self, name: str) -> list[MeshSnapshot]:
         return [MeshSnapshot(*mesh) for mesh in self._native.find_meshes_by_name(name)]
 
@@ -461,6 +517,19 @@ def open_project(absolute_path: Path) -> Session:
     return Session._from_native(NativeSession.open(str(absolute_path)))
 
 
+def _binding_snapshot(raw) -> MeshBindingSnapshot | None:
+    if raw is None:
+        return None
+    binding_id, mesh_id, axes, forms, version = raw
+    return MeshBindingSnapshot(
+        binding_id,
+        mesh_id,
+        [Axis(parameter_id, keys) for parameter_id, keys in axes],
+        [MeshKeyform(keys, positions) for keys, positions in forms],
+        version,
+    )
+
+
 __all__ = [
     "Axis",
     "AssetSnapshot",
@@ -474,6 +543,7 @@ __all__ = [
     "HistoryState",
     "ImportResult",
     "MeshSnapshot",
+    "MeshBindingSnapshot",
     "MeshKeyform",
     "ParameterSample",
     "ParameterSnapshot",

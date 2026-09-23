@@ -151,6 +151,12 @@ class CpuWheelTests(unittest.TestCase):
             )
         self.assertEqual(model.parameter_ids(), [PARAMETER])
         self.assertEqual(model.binding_ids(), [BINDING])
+        binding = model.binding(BINDING)
+        self.assertEqual(binding.mesh_id, MESH)
+        self.assertEqual(binding.axes, [kasane.Axis(PARAMETER, [0, 1])])
+        self.assertEqual(model.binding_for_mesh(MESH), binding)
+        binding.keyforms[0].positions[0] = (999, 999)
+        self.assertEqual(model.binding(BINDING).keyforms[0].positions[0], base[0])
         self.assertEqual(model.parameter(PARAMETER).name, "open")
         middle = model.evaluate({PARAMETER: 0.5})
         self.assertEqual(middle.parameters[0].value, 0.5)
@@ -238,6 +244,47 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(model.history_lengths(), (0, 0))
         self.assertEqual(model.preview_values, {})
         self.assertIsNone(model.project_path)
+
+    def test_canvas_parameter_replace_and_erase_are_atomic(self):
+        model = session()
+        with model.edit("create") as edit:
+            edit.create_parameter(PARAMETER, "old", 0, 1, 0)
+        before = model.version
+        with model.edit("replace") as edit:
+            edit.replace_canvas(200, 100, (100, 50), 20)
+            edit.replace_parameter(PARAMETER, "new", -1, 1, 0.5)
+        self.assertEqual(model.version[2], before[2] + 1)
+        self.assertEqual(model.canvas.width, 200)
+        self.assertEqual(model.parameter(PARAMETER).name, "new")
+        self.assertEqual(model.parameter(PARAMETER).minimum, -1)
+        model.undo()
+        self.assertEqual(model.canvas.width, 100)
+        self.assertEqual(model.parameter(PARAMETER).name, "old")
+        model.redo()
+        with model.edit("erase") as edit:
+            edit.erase_object(PARAMETER)
+        self.assertIsNone(model.parameter(PARAMETER))
+        model.undo()
+        self.assertEqual(model.parameter(PARAMETER).name, "new")
+
+    def test_parent_edit_errors_roll_back_entire_batch(self):
+        operations = [
+            lambda edit: edit.set_organization_parent("missing", ""),
+            lambda edit: edit.set_transform_parent("missing", None),
+            lambda edit: edit.set_transform_part("missing", None),
+            lambda edit: edit.set_deform_parent("missing", "parent"),
+            lambda edit: edit.set_mesh_part("missing", "part"),
+        ]
+        for operation in operations:
+            with self.subTest(operation=operation):
+                model = session()
+                before = model.version
+                with self.assertRaises(kasane.SdkFailure):
+                    with model.edit("bad parent") as edit:
+                        edit.create_parameter(PARAMETER, "temporary", 0, 1, 0)
+                        operation(edit)
+                self.assertEqual(model.version, before)
+                self.assertEqual(model.parameter_ids(), [])
 
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:

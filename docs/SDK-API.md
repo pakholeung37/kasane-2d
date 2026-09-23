@@ -73,4 +73,6 @@ S3 已有可安装的 CPython 3.14 wheel 初段：`kasane.Session` 支持创建/
 
 S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照、名称查询、引用查询、结构诊断、历史状态与事件，以及独立的预览值/帧。快照的版本和内容来自同一次原生锁内读取；Python 返回的数组是副本。[Python 覆盖清单](../modules/kasane-python/python-coverage.json)及检查器目前记录 115 个 Rust SDK 公开入口中的 59 个已绑定，56 个仍待绑定；完整接口、GPU 观察与最终统一验收尚未交付。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
 
+同轮续接 `Edit.replace_canvas`、`replace_parameter`、`erase_object` 与层级关系设置，及 mesh binding 快照查询。`replace_parameter` 保留原对象的 runtime ID 等未在简化 Python 参数表单中列出的字段。覆盖清单现为 69/115 已绑定、46 项待绑定；层级关系设置目前只完成了失败回滚测试，后续还需随 Part/Transform 创建接口验证成功路径。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。
