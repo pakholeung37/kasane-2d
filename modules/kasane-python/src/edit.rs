@@ -1,18 +1,19 @@
 //! Typed edit commands and one-shot SDK publication.
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::conversion::*;
 use crate::error::{edit_failure, poisoned, sdk_failure};
 use kasane_core::{
     draw_order::DrawOrderGroup, BindingAxis, BlendShapeConstraint, BlendShapeKeyTable, Canvas,
-    MeshBinding, MeshKeyform, Parameter, Part, RotationTransform, SceneBinding, SceneKeyform,
-    Transform, TransformData, Vec2, WarpTransform,
+    MeshBinding, MeshKeyform, Parameter, ParameterKind, Part, RotationTransform, SceneBinding,
+    SceneKeyform, Transform, TransformData, Vec2, WarpTransform,
 };
 use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
-    AuthoringSession, EditReceipt, MeshProperties, TopologyReplacement, Version,
+    AuthoringSession, EditSession, MeshProperties, SdkError, TopologyReplacement,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -32,7 +33,7 @@ enum Command {
     UpdateMeshProperties(String, MeshProperties),
     ReplaceCanvas(Canvas),
     EraseObject(String),
-    ReplaceParameter(Parameter),
+    ReplaceParameter(Parameter, Option<ParameterKind>),
     SetOrganizationParent(String, String),
     SetTransformParent(String, Option<String>),
     SetTransformPart(String, Option<String>),
@@ -62,12 +63,51 @@ enum Command {
     SetSceneKeyform(String, SceneKeyform),
 }
 
+struct PendingCommands {
+    workspace: Option<EditSession<'static>>,
+    error: Option<SdkError>,
+}
+
+impl PendingCommands {
+    fn new(workspace: EditSession<'static>) -> Self {
+        Self {
+            workspace: Some(workspace),
+            error: None,
+        }
+    }
+
+    fn push(&mut self, command: Command) -> Result<(), SdkError> {
+        if let Some(error) = &self.error {
+            return Err(error.clone());
+        }
+        match command::apply_command(self.workspace.as_mut().expect("edit is open"), command) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                self.error = Some(error.clone());
+                Err(error)
+            }
+        }
+    }
+
+    fn clear(&mut self) {
+        self.workspace = None;
+        self.error = None;
+    }
+
+    fn candidate_document(&self) -> &kasane_core::Document {
+        self.workspace
+            .as_ref()
+            .expect("edit is open")
+            .candidate_document()
+    }
+}
+
 #[pyclass]
 pub(crate) struct NativeEdit {
     session: Arc<Mutex<AuthoringSession>>,
-    label: String,
-    expected: Version,
-    commands: Vec<Command>,
+    active_edit: Arc<AtomicBool>,
+    active_held: bool,
+    commands: PendingCommands,
     failed: bool,
     closed: bool,
 }
@@ -75,14 +115,14 @@ pub(crate) struct NativeEdit {
 impl NativeEdit {
     pub(crate) fn new(
         session: Arc<Mutex<AuthoringSession>>,
-        label: String,
-        expected: Version,
+        active_edit: Arc<AtomicBool>,
+        workspace: EditSession<'static>,
     ) -> Self {
         Self {
             session,
-            label,
-            expected,
-            commands: Vec::new(),
+            active_edit,
+            active_held: true,
+            commands: PendingCommands::new(workspace),
             failed: false,
             closed: false,
         }
@@ -96,7 +136,7 @@ impl NativeEdit {
                 operation,
                 "Edit is already closed",
             ))
-        } else if self.failed {
+        } else if self.failed || self.commands.error.is_some() {
             Err(edit_failure(
                 py,
                 "EDIT_ABORTED",
@@ -107,997 +147,26 @@ impl NativeEdit {
             Ok(())
         }
     }
+
+    fn release_active(&mut self) {
+        if self.active_held {
+            self.active_held = false;
+            self.active_edit.store(false, Ordering::Release);
+        }
+    }
 }
 
-#[pymethods]
-impl NativeEdit {
-    fn add_png_asset_from_base(
-        &mut self,
-        py: Python<'_>,
-        id: &str,
-        name: &str,
-        base: &str,
-        relative: &str,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "add_png_asset_from_base")?;
-        let (id, name, base, relative) = (
-            id.to_owned(),
-            name.to_owned(),
-            base.to_owned(),
-            relative.to_owned(),
-        );
-        match py.detach(move || {
-            prepare_png_asset_from_base(&id, &name, Path::new(&base), Path::new(&relative))
-        }) {
-            Ok(asset) => {
-                self.commands.push(Command::AddPng(asset));
-                Ok(())
-            }
-            Err(error) => {
-                self.failed = true;
-                Err(sdk_failure(py, error))
-            }
-        }
-    }
+mod assets;
+mod bindings;
+mod command;
+mod document;
+mod effects;
+mod lifecycle;
+mod meshes;
+mod transforms;
 
-    fn replace_png_asset(
-        &mut self,
-        py: Python<'_>,
-        id: &str,
-        name: &str,
-        path: &str,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_png_asset")?;
-        let (id, name, path) = (id.to_owned(), name.to_owned(), path.to_owned());
-        match py.detach(move || prepare_png_asset(&id, &name, Path::new(&path))) {
-            Ok(asset) => {
-                self.commands.push(Command::ReplaceAsset(asset));
-                Ok(())
-            }
-            Err(error) => {
-                self.failed = true;
-                Err(sdk_failure(py, error))
-            }
-        }
-    }
-
-    fn relocate_png_asset(&mut self, py: Python<'_>, id: &str, path: &str) -> PyResult<()> {
-        self.ensure_open(py, "relocate_png_asset")?;
-        let original = self.session.lock().map_err(|_| poisoned())?.asset(id);
-        let Some(original) = original else {
-            self.failed = true;
-            return Err(edit_failure(
-                py,
-                "MISSING_ASSET",
-                "relocate_png_asset",
-                "Asset does not exist",
-            ));
-        };
-        let path = path.to_owned();
-        match py.detach(move || prepare_relocated_asset(&original, Path::new(&path))) {
-            Ok(asset) => {
-                self.commands.push(Command::ReplaceAsset(asset));
-                Ok(())
-            }
-            Err(error) => {
-                self.failed = true;
-                Err(sdk_failure(py, error))
-            }
-        }
-    }
-
-    fn create_rotation_transform(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        part_id: Option<String>,
-        parent_id: Option<String>,
-        rotation: RotationTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_transform")?;
-        self.commands.push(Command::CreateTransform(Transform {
-            id,
-            name,
-            part_id: part_id.map(Into::into),
-            parent_id: parent_id.map(Into::into),
-            data: TransformData::Rotation(rotation_data(rotation)),
-            ..Transform::default()
-        }));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn create_warp_transform(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        part_id: Option<String>,
-        parent_id: Option<String>,
-        rows: u32,
-        columns: u32,
-        quad: bool,
-        points: Vec<PointTuple>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_transform")?;
-        self.commands.push(Command::CreateTransform(Transform {
-            id,
-            name,
-            part_id: part_id.map(Into::into),
-            parent_id: parent_id.map(Into::into),
-            data: TransformData::Warp(WarpTransform {
-                rows,
-                columns,
-                quad,
-                points: points.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
-            }),
-            ..Transform::default()
-        }));
-        Ok(())
-    }
-
-    fn update_rotation(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        rotation: RotationTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "update_rotation")?;
-        self.commands
-            .push(Command::UpdateRotation(id, rotation_data(rotation)));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn replace_transform(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        part_id: Option<String>,
-        parent_id: Option<String>,
-        kind: &str,
-        rotation: Option<RotationTuple>,
-        warp: Option<WarpTuple>,
-        enabled: bool,
-        appearance: AppearanceTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_transform")?;
-        let data = match (kind, rotation, warp) {
-            ("rotation", Some(rotation), None) => TransformData::Rotation(rotation_data(rotation)),
-            ("warp", None, Some((rows, columns, quad, points))) => {
-                TransformData::Warp(WarpTransform {
-                    rows,
-                    columns,
-                    quad,
-                    points: points.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
-                })
-            }
-            _ => {
-                return Err(PyValueError::new_err(
-                    "Transform data does not match its kind",
-                ))
-            }
-        };
-        let original = self.session.lock().map_err(|_| poisoned())?.transform(&id);
-        let runtime_id = original
-            .map(|transform| transform.runtime_id)
-            .unwrap_or_else(|| id.clone());
-        self.commands.push(Command::ReplaceTransform(Transform {
-            id,
-            runtime_id,
-            name,
-            part_id: part_id.map(Into::into),
-            parent_id: parent_id.map(Into::into),
-            data,
-            enabled,
-            appearance: appearance_from_tuple(appearance),
-        }));
-        Ok(())
-    }
-
-    fn create_offscreen(&mut self, py: Python<'_>, data: OffscreenDataTuple) -> PyResult<()> {
-        self.ensure_open(py, "create_offscreen")?;
-        let runtime_id = data.0.clone();
-        self.commands
-            .push(Command::CreateOffscreen(offscreen_from_tuple(
-                data, runtime_id,
-            )));
-        Ok(())
-    }
-
-    fn create_mesh(&mut self, py: Python<'_>, data: MeshRecordDataTuple) -> PyResult<()> {
-        self.ensure_open(py, "create_mesh")?;
-        let runtime_id = data.0.clone();
-        self.commands
-            .push(Command::CreateMesh(Box::new(mesh_from_record(
-                data, runtime_id,
-            )?)));
-        Ok(())
-    }
-
-    fn replace_mesh(&mut self, py: Python<'_>, data: MeshRecordDataTuple) -> PyResult<()> {
-        self.ensure_open(py, "replace_mesh")?;
-        let original = self.session.lock().map_err(|_| poisoned())?.mesh(&data.0);
-        let runtime_id = original
-            .map(|value| value.runtime_id)
-            .unwrap_or_else(|| data.0.clone());
-        self.commands
-            .push(Command::ReplaceMesh(Box::new(mesh_from_record(
-                data, runtime_id,
-            )?)));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn replace_topology(
-        &mut self,
-        py: Python<'_>,
-        source: GeometryTuple,
-        mesh_data: MeshRecordDataTuple,
-        binding_data: Option<MeshBindingDataTuple>,
-        blend_data: Vec<BlendBindingDataTuple>,
-        glue_data: Vec<GlueDataTuple>,
-        mapping: Vec<(u32, Option<u32>)>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_topology")?;
-        let source = geometry_from_tuple(source)?;
-        let session = self.session.lock().map_err(|_| poisoned())?;
-        let runtime_id = session
-            .mesh(&mesh_data.0)
-            .map(|value| value.runtime_id)
-            .unwrap_or_else(|| mesh_data.0.clone());
-        let mut glues = Vec::with_capacity(glue_data.len());
-        for data in glue_data {
-            let runtime_id = session
-                .glue(&data.0)
-                .map(|value| value.runtime_id)
-                .unwrap_or_else(|| data.0.clone());
-            glues.push(glue_from_tuple(data, runtime_id));
-        }
-        drop(session);
-        let replacement = TopologyReplacement {
-            mesh: mesh_from_record(mesh_data, runtime_id)?,
-            binding: binding_data.map(mesh_binding_from_tuple),
-            blend_bindings: blend_data
-                .into_iter()
-                .map(blend_binding_from_tuple)
-                .collect::<PyResult<_>>()?,
-            glues,
-            vertex_mapping: mapping.into_iter().collect::<HashMap<_, _>>(),
-        };
-        self.commands.push(Command::ReplaceTopology(
-            Box::new(source),
-            Box::new(replacement),
-        ));
-        Ok(())
-    }
-
-    fn replace_offscreen(&mut self, py: Python<'_>, data: OffscreenDataTuple) -> PyResult<()> {
-        self.ensure_open(py, "replace_offscreen")?;
-        let original = self
-            .session
-            .lock()
-            .map_err(|_| poisoned())?
-            .offscreen(&data.0);
-        let runtime_id = original
-            .map(|value| value.runtime_id)
-            .unwrap_or_else(|| data.0.clone());
-        self.commands
-            .push(Command::ReplaceOffscreen(offscreen_from_tuple(
-                data, runtime_id,
-            )));
-        Ok(())
-    }
-
-    fn replace_part_binding_with_offscreen(
-        &mut self,
-        py: Python<'_>,
-        binding_id: String,
-        target_id: String,
-        axes: Vec<(String, Vec<f32>)>,
-        forms: Vec<SceneFormTuple>,
-        offscreen_data: OffscreenDataTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_part_binding_with_offscreen")?;
-        let binding = scene_binding_from_tuples(binding_id, "part", target_id, axes, forms)?;
-        let original = self
-            .session
-            .lock()
-            .map_err(|_| poisoned())?
-            .offscreen(&offscreen_data.0);
-        let runtime_id = original
-            .map(|value| value.runtime_id)
-            .unwrap_or_else(|| offscreen_data.0.clone());
-        self.commands.push(Command::ReplacePartBindingWithOffscreen(
-            binding,
-            offscreen_from_tuple(offscreen_data, runtime_id),
-        ));
-        Ok(())
-    }
-
-    fn create_glue(&mut self, py: Python<'_>, data: GlueDataTuple) -> PyResult<()> {
-        self.ensure_open(py, "create_glue")?;
-        let runtime_id = data.0.clone();
-        self.commands
-            .push(Command::CreateGlue(glue_from_tuple(data, runtime_id)));
-        Ok(())
-    }
-
-    fn replace_glue(&mut self, py: Python<'_>, data: GlueDataTuple) -> PyResult<()> {
-        self.ensure_open(py, "replace_glue")?;
-        let original = self.session.lock().map_err(|_| poisoned())?.glue(&data.0);
-        let runtime_id = original
-            .map(|value| value.runtime_id)
-            .unwrap_or_else(|| data.0.clone());
-        self.commands
-            .push(Command::ReplaceGlue(glue_from_tuple(data, runtime_id)));
-        Ok(())
-    }
-
-    fn create_blend_key_table(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        parameter_id: String,
-        keys: Vec<f32>,
-        base_key_idx: usize,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_blend_key_table")?;
-        self.commands
-            .push(Command::CreateBlendKeyTable(BlendShapeKeyTable {
-                id,
-                parameter_id,
-                keys,
-                base_key_idx,
-            }));
-        Ok(())
-    }
-
-    fn replace_blend_key_table(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        parameter_id: String,
-        keys: Vec<f32>,
-        base_key_idx: usize,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_blend_key_table")?;
-        self.commands
-            .push(Command::ReplaceBlendKeyTable(BlendShapeKeyTable {
-                id,
-                parameter_id,
-                keys,
-                base_key_idx,
-            }));
-        Ok(())
-    }
-
-    fn create_blend_constraint(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        parameter_id: String,
-        keys: Vec<f32>,
-        weights: Vec<f32>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_blend_constraint")?;
-        self.commands
-            .push(Command::CreateBlendConstraint(BlendShapeConstraint {
-                id,
-                parameter_id,
-                keys,
-                weights,
-            }));
-        Ok(())
-    }
-
-    fn replace_blend_constraint(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        parameter_id: String,
-        keys: Vec<f32>,
-        weights: Vec<f32>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_blend_constraint")?;
-        self.commands
-            .push(Command::ReplaceBlendConstraint(BlendShapeConstraint {
-                id,
-                parameter_id,
-                keys,
-                weights,
-            }));
-        Ok(())
-    }
-
-    fn create_blend_binding(
-        &mut self,
-        py: Python<'_>,
-        data: BlendBindingDataTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_blend_binding")?;
-        self.commands
-            .push(Command::CreateBlendBinding(blend_binding_from_tuple(data)?));
-        Ok(())
-    }
-
-    fn replace_blend_binding(
-        &mut self,
-        py: Python<'_>,
-        data: BlendBindingDataTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_blend_binding")?;
-        self.commands
-            .push(Command::ReplaceBlendBinding(blend_binding_from_tuple(
-                data,
-            )?));
-        Ok(())
-    }
-
-    fn update_warp_points(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        points: Vec<PointTuple>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "update_warp_points")?;
-        self.commands.push(Command::UpdateWarpPoints(
-            id,
-            points.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
-        ));
-        Ok(())
-    }
-
-    #[pyo3(signature = (id, name, parent_id="", enabled=true, draw_order=0.0))]
-    fn create_part(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        parent_id: &str,
-        enabled: bool,
-        draw_order: f32,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_part")?;
-        self.commands.push(Command::CreatePart(Part {
-            id,
-            name,
-            parent_id: parent_id.into(),
-            enabled,
-            draw_order,
-            ..Part::default()
-        }));
-        Ok(())
-    }
-
-    fn replace_part(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        parent_id: String,
-        enabled: bool,
-        draw_order: f32,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_part")?;
-        let original = self.session.lock().map_err(|_| poisoned())?.part(&id);
-        let mut part = original.unwrap_or_else(|| Part {
-            runtime_id: id.clone(),
-            ..Part::default()
-        });
-        part.id = id;
-        part.name = name;
-        part.parent_id = parent_id;
-        part.enabled = enabled;
-        part.draw_order = draw_order;
-        self.commands.push(Command::ReplacePart(part));
-        Ok(())
-    }
-
-    fn replace_draw_order_groups(
-        &mut self,
-        py: Python<'_>,
-        groups: Vec<DrawOrderTuple>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_draw_order_groups")?;
-        self.commands.push(Command::ReplaceDrawOrderGroups(
-            groups
-                .into_iter()
-                .map(|(owner, items, min_order, max_order)| DrawOrderGroup {
-                    owner,
-                    items,
-                    min_order,
-                    max_order,
-                })
-                .collect(),
-        ));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn replace_canvas(
-        &mut self,
-        py: Python<'_>,
-        width: f32,
-        height: f32,
-        origin_x: f32,
-        origin_y: f32,
-        pixels_per_unit: f32,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_canvas")?;
-        self.commands.push(Command::ReplaceCanvas(Canvas::new(
-            width,
-            height,
-            Vec2::new(origin_x, origin_y),
-            pixels_per_unit,
-        )));
-        Ok(())
-    }
-
-    fn erase_object(&mut self, py: Python<'_>, id: String) -> PyResult<()> {
-        self.ensure_open(py, "erase_object")?;
-        self.commands.push(Command::EraseObject(id));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind=None))]
-    fn replace_parameter(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        minimum: f32,
-        maximum: f32,
-        default_value: f32,
-        repeat: bool,
-        kind: Option<&str>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_parameter")?;
-        let original = self.session.lock().map_err(|_| poisoned())?.parameter(&id);
-        let mut parameter = original.unwrap_or_else(|| Parameter {
-            runtime_id: id.clone(),
-            ..Parameter::default()
-        });
-        parameter.id = id;
-        parameter.name = name;
-        parameter.minimum = minimum;
-        parameter.maximum = maximum;
-        parameter.default_value = default_value;
-        parameter.repeat = repeat;
-        if let Some(kind) = kind {
-            parameter.kind = parameter_kind_from_name(kind)?;
-        }
-        self.commands.push(Command::ReplaceParameter(parameter));
-        Ok(())
-    }
-
-    fn set_organization_parent(
-        &mut self,
-        py: Python<'_>,
-        part_id: String,
-        parent_id: String,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "set_organization_parent")?;
-        self.commands
-            .push(Command::SetOrganizationParent(part_id, parent_id));
-        Ok(())
-    }
-
-    fn set_transform_parent(
-        &mut self,
-        py: Python<'_>,
-        transform_id: String,
-        parent_id: Option<String>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "set_transform_parent")?;
-        self.commands
-            .push(Command::SetTransformParent(transform_id, parent_id));
-        Ok(())
-    }
-
-    fn set_transform_part(
-        &mut self,
-        py: Python<'_>,
-        transform_id: String,
-        part_id: Option<String>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "set_transform_part")?;
-        self.commands
-            .push(Command::SetTransformPart(transform_id, part_id));
-        Ok(())
-    }
-
-    fn set_deform_parent(
-        &mut self,
-        py: Python<'_>,
-        mesh_id: String,
-        transform_id: String,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "set_deform_parent")?;
-        self.commands
-            .push(Command::SetDeformParent(mesh_id, transform_id));
-        Ok(())
-    }
-
-    fn set_mesh_part(&mut self, py: Python<'_>, mesh_id: String, part_id: String) -> PyResult<()> {
-        self.ensure_open(py, "set_mesh_part")?;
-        self.commands.push(Command::SetMeshPart(mesh_id, part_id));
-        Ok(())
-    }
-
-    fn add_png_asset(&mut self, py: Python<'_>, id: &str, name: &str, path: &str) -> PyResult<()> {
-        self.ensure_open(py, "add_png_asset")?;
-        let id = id.to_owned();
-        let name = name.to_owned();
-        let path = path.to_owned();
-        match py.detach(move || prepare_png_asset(&id, &name, Path::new(&path))) {
-            Ok(asset) => {
-                self.commands.push(Command::AddPng(asset));
-                Ok(())
-            }
-            Err(error) => {
-                self.failed = true;
-                Err(sdk_failure(py, error))
-            }
-        }
-    }
-
-    fn create_rectangle(
-        &mut self,
-        py: Python<'_>,
-        id: &str,
-        name: &str,
-        asset_id: &str,
-        minimum: (f32, f32),
-        maximum: (f32, f32),
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_rectangle")?;
-        match rectangle_mesh(
-            id,
-            name,
-            asset_id,
-            Vec2::new(minimum.0, minimum.1),
-            Vec2::new(maximum.0, maximum.1),
-        ) {
-            Ok(mesh) => {
-                self.commands.push(Command::CreateRectangle(Box::new(mesh)));
-                Ok(())
-            }
-            Err(error) => {
-                self.failed = true;
-                Err(sdk_failure(py, error))
-            }
-        }
-    }
-
-    fn rename_mesh(&mut self, py: Python<'_>, id: String, name: String) -> PyResult<()> {
-        self.ensure_open(py, "rename_mesh")?;
-        self.commands.push(Command::RenameMesh(id, name));
-        Ok(())
-    }
-
-    fn update_positions(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        vertex_ids: Vec<u32>,
-        positions: Vec<(f32, f32)>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "update_positions")?;
-        self.commands.push(Command::UpdatePositions(
-            id,
-            vertex_ids,
-            positions
-                .into_iter()
-                .map(|(x, y)| Vec2::new(x, y))
-                .collect(),
-        ));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind="normal"))]
-    fn create_parameter(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        name: String,
-        minimum: f32,
-        maximum: f32,
-        default_value: f32,
-        repeat: bool,
-        kind: &str,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_parameter")?;
-        self.commands.push(Command::CreateParameter(Parameter {
-            id,
-            name,
-            minimum,
-            maximum,
-            default_value,
-            repeat,
-            kind: parameter_kind_from_name(kind)?,
-            ..Parameter::default()
-        }));
-        Ok(())
-    }
-
-    fn create_mesh_binding(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        mesh_id: String,
-        axes: Vec<(String, Vec<f32>)>,
-        forms: Vec<BindingForm>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_mesh_binding")?;
-        self.commands.push(Command::CreateMeshBinding(MeshBinding {
-            id,
-            mesh_id,
-            axes: axes
-                .into_iter()
-                .map(|(parameter_id, keys)| BindingAxis { parameter_id, keys })
-                .collect(),
-            keyforms: forms
-                .into_iter()
-                .map(|(keys, positions, appearance, draw_order)| MeshKeyform {
-                    keys,
-                    positions: positions
-                        .into_iter()
-                        .map(|(x, y)| Vec2::new(x, y))
-                        .collect(),
-                    appearance: appearance_from_tuple(appearance),
-                    draw_order,
-                })
-                .collect(),
-        }));
-        Ok(())
-    }
-
-    fn replace_mesh_binding(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        mesh_id: String,
-        axes: Vec<(String, Vec<f32>)>,
-        forms: Vec<BindingForm>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_mesh_binding")?;
-        self.commands.push(Command::ReplaceMeshBinding(MeshBinding {
-            id,
-            mesh_id,
-            axes: axes
-                .into_iter()
-                .map(|(parameter_id, keys)| BindingAxis { parameter_id, keys })
-                .collect(),
-            keyforms: forms
-                .into_iter()
-                .map(|(keys, positions, appearance, draw_order)| MeshKeyform {
-                    keys,
-                    positions: positions
-                        .into_iter()
-                        .map(|(x, y)| Vec2::new(x, y))
-                        .collect(),
-                    appearance: appearance_from_tuple(appearance),
-                    draw_order,
-                })
-                .collect(),
-        }));
-        Ok(())
-    }
-
-    fn set_mesh_keyform(&mut self, py: Python<'_>, id: String, form: BindingForm) -> PyResult<()> {
-        self.ensure_open(py, "set_mesh_keyform")?;
-        let (keys, positions, appearance, draw_order) = form;
-        self.commands.push(Command::SetMeshKeyform(
-            id,
-            MeshKeyform {
-                keys,
-                positions: positions
-                    .into_iter()
-                    .map(|(x, y)| Vec2::new(x, y))
-                    .collect(),
-                appearance: appearance_from_tuple(appearance),
-                draw_order,
-            },
-        ));
-        Ok(())
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn update_mesh_properties(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        texture_asset_id: String,
-        appearance: AppearanceTuple,
-        draw_order: Option<f32>,
-        blend_mode: &str,
-        enabled: bool,
-        double_sided: bool,
-        inverted_mask: bool,
-        masks: Vec<String>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "update_mesh_properties")?;
-        self.commands.push(Command::UpdateMeshProperties(
-            id,
-            MeshProperties {
-                texture_asset_id,
-                appearance: appearance_from_tuple(appearance),
-                draw_order,
-                blend_mode: blend_mode_from_name(blend_mode)?,
-                enabled,
-                double_sided,
-                inverted_mask,
-                masks,
-            },
-        ));
-        Ok(())
-    }
-
-    fn create_scene_binding(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        kind: &str,
-        target_id: String,
-        axes: Vec<(String, Vec<f32>)>,
-        forms: Vec<SceneFormTuple>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "create_scene_binding")?;
-        self.commands
-            .push(Command::CreateSceneBinding(scene_binding_from_tuples(
-                id, kind, target_id, axes, forms,
-            )?));
-        Ok(())
-    }
-
-    fn replace_scene_binding(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        kind: &str,
-        target_id: String,
-        axes: Vec<(String, Vec<f32>)>,
-        forms: Vec<SceneFormTuple>,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "replace_scene_binding")?;
-        self.commands
-            .push(Command::ReplaceSceneBinding(scene_binding_from_tuples(
-                id, kind, target_id, axes, forms,
-            )?));
-        Ok(())
-    }
-
-    fn set_scene_keyform(
-        &mut self,
-        py: Python<'_>,
-        id: String,
-        kind: &str,
-        form: SceneFormTuple,
-    ) -> PyResult<()> {
-        self.ensure_open(py, "set_scene_keyform")?;
-        self.commands.push(Command::SetSceneKeyform(
-            id,
-            scene_form_from_tuple(kind, form)?,
-        ));
-        Ok(())
-    }
-
-    fn commit(&mut self, py: Python<'_>) -> PyResult<(u64, u64, u64)> {
-        self.ensure_open(py, "commit")?;
-        self.closed = true;
-        let session = self.session.clone();
-        let label = self.label.clone();
-        let expected = self.expected;
-        let commands = std::mem::take(&mut self.commands);
-        let result = py.detach(move || {
-            let mut session = session.lock().map_err(|_| ())?;
-            Ok::<_, ()>(session.edit(&label, Some(expected), |edit| {
-                for command in commands {
-                    match command {
-                        Command::AddPng(asset) => edit.create_asset(asset)?,
-                        Command::CreateRectangle(mesh) => edit.create_mesh(*mesh)?,
-                        Command::CreateMesh(mesh) => edit.create_mesh(*mesh)?,
-                        Command::ReplaceMesh(mesh) => edit.replace_mesh(*mesh)?,
-                        Command::ReplaceTopology(source, replacement) => {
-                            edit.replace_topology(&source, *replacement)?
-                        }
-                        Command::RenameMesh(id, name) => edit.rename_mesh(&id, name)?,
-                        Command::UpdatePositions(id, ids, positions) => {
-                            edit.update_positions(&id, &ids, &positions)?
-                        }
-                        Command::CreateParameter(parameter) => edit.create_parameter(parameter)?,
-                        Command::CreateMeshBinding(binding) => edit.create_binding(binding)?,
-                        Command::ReplaceMeshBinding(binding) => edit.replace_binding(binding)?,
-                        Command::SetMeshKeyform(id, form) => edit.set_mesh_keyform(&id, form)?,
-                        Command::UpdateMeshProperties(id, props) => {
-                            edit.update_mesh_properties(&id, props)?
-                        }
-                        Command::ReplaceCanvas(canvas) => edit.replace_canvas(canvas)?,
-                        Command::EraseObject(id) => edit.erase_object(&id)?,
-                        Command::ReplaceParameter(parameter) => {
-                            edit.replace_parameter(parameter)?
-                        }
-                        Command::SetOrganizationParent(id, parent) => {
-                            edit.set_organization_parent(&id, &parent)?
-                        }
-                        Command::SetTransformParent(id, parent) => {
-                            edit.set_transform_parent(&id, parent.map(Into::into))?
-                        }
-                        Command::SetTransformPart(id, part) => {
-                            edit.set_transform_part(&id, part.map(Into::into))?
-                        }
-                        Command::SetDeformParent(id, parent) => {
-                            edit.set_deform_parent(&id, &parent)?
-                        }
-                        Command::SetMeshPart(id, part) => edit.set_mesh_part(&id, &part)?,
-                        Command::ReplaceDrawOrderGroups(groups) => {
-                            edit.replace_draw_order_groups(groups)?
-                        }
-                        Command::CreatePart(part) => edit.create_part(part)?,
-                        Command::ReplacePart(part) => edit.replace_part(part)?,
-                        Command::CreateTransform(transform) => edit.create_transform(transform)?,
-                        Command::ReplaceTransform(transform) => {
-                            edit.replace_transform(transform)?
-                        }
-                        Command::CreateOffscreen(value) => edit.create_offscreen(value)?,
-                        Command::ReplaceOffscreen(value) => edit.replace_offscreen(value)?,
-                        Command::ReplacePartBindingWithOffscreen(binding, value) => {
-                            edit.replace_part_binding_with_offscreen(binding, value)?
-                        }
-                        Command::CreateGlue(value) => edit.create_glue(value)?,
-                        Command::ReplaceGlue(value) => edit.replace_glue(value)?,
-                        Command::CreateBlendKeyTable(value) => {
-                            edit.create_blend_key_table(value)?
-                        }
-                        Command::ReplaceBlendKeyTable(value) => {
-                            edit.replace_blend_key_table(value)?
-                        }
-                        Command::CreateBlendConstraint(value) => {
-                            edit.create_blend_constraint(value)?
-                        }
-                        Command::ReplaceBlendConstraint(value) => {
-                            edit.replace_blend_constraint(value)?
-                        }
-                        Command::CreateBlendBinding(value) => edit.create_blend_binding(value)?,
-                        Command::ReplaceBlendBinding(value) => edit.replace_blend_binding(value)?,
-                        Command::UpdateRotation(id, rotation) => {
-                            edit.update_rotation(&id, rotation)?
-                        }
-                        Command::UpdateWarpPoints(id, points) => {
-                            edit.update_warp_points(&id, points)?
-                        }
-                        Command::ReplaceAsset(asset) => edit.replace_asset(asset)?,
-                        Command::CreateSceneBinding(binding) => {
-                            edit.create_scene_binding(binding)?
-                        }
-                        Command::ReplaceSceneBinding(binding) => {
-                            edit.replace_scene_binding(binding)?
-                        }
-                        Command::SetSceneKeyform(id, form) => edit.set_scene_keyform(&id, form)?,
-                    }
-                }
-                Ok(())
-            }))
-        });
-        match result {
-            Ok(Ok(((), EditReceipt { after, .. }))) => Ok(version_tuple(after)),
-            Ok(Err(error)) => Err(sdk_failure(py, error)),
-            Err(()) => Err(poisoned()),
-        }
-    }
-
-    fn cancel(&mut self) {
-        self.closed = true;
-        self.commands.clear();
-    }
-
-    fn abort(&mut self) {
-        self.failed = true;
-        self.commands.clear();
+impl Drop for NativeEdit {
+    fn drop(&mut self) {
+        self.release_active();
     }
 }

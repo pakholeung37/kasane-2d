@@ -37,7 +37,11 @@ session.redo()?;
 
 `AuthoringSession::begin_edit(label, expected_version)` 创建隔离候选文档。`EditSession::commit` 发布一次 revision；丢弃 `EditSession` 回滚。任一方法失败后，即便调用者捕获错误，`commit` 仍返回 `EDIT_ABORTED`。`session.edit` 是自动提交的闭包形式。无内容且无身份变化的批次不产生历史或事件，也不清除 redo；同批次删除并以相同 ID、相同内容重建会推进 revision，使旧句柄过期。history 默认最多 50 条、256 MiB；`with_history_limits` 可配置，`history_state` 与 `estimated_content_bytes` 提供容量估算。超预算在发布前失败，成功提交才淘汰旧条目；估算包括持久内容的集合、字符串和数组 capacity，并不是 RSS 硬上限。
 
+跨调用的 Rust 编辑使用 `begin_owned_edit` 获取持有候选文档的工作区，最后以 `commit_to(&mut session)` 发布；提交再次检查完整 `Version`。Python `Edit` 直接在该工作区执行命令，`Edit.parameter()` 和 `Edit.mesh()` 读取前序命令后的候选状态，返回快照的版本字段表示该工作区的起始版本。Python 活动编辑期间，保存、工程重置、导入、导出、undo/redo 和嵌套编辑返回 `EDIT_ACTIVE`；异常、取消或对象释放会解除占用。Python 的 `replace_parameter(..., kind=None)` 继承候选对象当前的 `kind` 和未显式列出的字段。结构校验使用只读对象验证，元数据和顶点位置编辑不再复制整个文档做全量替换。
+
 读取返回对象副本。`geometry()` 的 `positions` 是源坐标：根 mesh 为 `CanvasPixels`，有变形父对象时为 `ParentLocal(parent_id)`；`vertex_ids` 是稳定顶点身份，`triangles` 引用这些 ID。`evaluate(values)` 不修改会话状态，输出 positions 是 Runtime 坐标，根对象转换公式为 `(x-origin.x)/ppu`、`(origin.y-y)/ppu`。UV 保留 core 约定；源数组不会被 renderer 的纹理翻转改写。
+
+Python `evaluate_snapshot(values)` 和 `preview_snapshot()` 返回完整求值快照：版本、源 revision、canvas、参数、drawable 的几何、透明度、颜色、绘制顺序、可见性、遮罩和纹理信息，以及 Offscreen 与 render plan。旧 `evaluate()` 和 `preview_frame()` 继续提供精简位置快照；完整接口会复制几何数组，适合显式诊断和测试。
 
 `Version` 为 `(session_id, generation, revision)`。新建会话 generation 为 1；`new_project(document_id, canvas, expected)` 成功时原子替换内存文档、增加 generation，并清空旧 history、预览和事件。失败时旧会话不变。批次 `expected_version` 检查三个字段；过期错误提供 expected 和 actual。`SdkError` 有 `code/message/operation/object_ids` 及可选字段路径、版本和 referrers；core 未提供字段路径时留空。`EditReceipt` 提供前后版本、直接对象 ID、变化种类与标签。`drain_events()` 目前返回成功内容提交及 undo/redo 的 receipt。
 
@@ -104,6 +108,8 @@ Python BlendShape binding 的六种 target 均有对应 delta keyform 类型，�
 Python MeshRecord 暴露完整几何、绘制属性及关系字段，可创建自定义 mesh 或完整替换。`Edit.replace_topology` 接收源几何快照、旧顶点到新顶点的映射，以及相关普通 binding、BlendShape binding、Glue 的完整候选，同一 edit 中原子校验和发布。方法清单为 115/116 项 Python 绑定、1 项 Rust 专用、0 项待绑定。
 
 S4 可选 GPU 入口开始接入：带 `observe` feature 的 wheel 提供 `kasane.Observer(width, height, fit_long_side)`；`observe(session, values)` 返回带源版本、输入指纹、evaluation revision、RGBA、PNG、实际纹理 hash/revision 和 adapter 信息的 `ObservedFrame`，`save_png(absolute_path)` 写出 PNG。`set_fit_long_side` 更新 view 并复用 GPU 资源；失败抛带 code 和 asset_id 的 `ObservationFailure`。默认 CPU wheel 的 `capabilities()["gpu_observation"]` 为 false；feature wheel 实际探测 device 后报告可用性。
+
+GPU 上传前按设备限制检查全部纹理尺寸，超限返回 `TEXTURE_SIZE_LIMIT` 并保留 Observer 可复用；输出尺寸超限返回 `OUTPUT_SIZE_LIMIT`。`capabilities()["purism_core_validation"]` 表示 PurismCore 已编入；当前未接入官方 Core 验证器，因此 `official_core_validation` 为 false。Rust 与 Python 的基本创作和失败回滚使用同一 [契约 fixture](../examples/sdk/authoring-contract.json) 验证。
 
 `Observer.observe_run(session, samples, absolute_output, focus=[])` 为每次运行创建独立目录，输出逐样本 PNG、focus crop、`contact-sheet.png`、`samples.json`、`diagnostics.json` 和 `report.json`。crop 从完整合成帧裁剪，保留遮挡、mask 和 Offscreen。报告记录 SDK 版本与原生模块 hash、平台、requested/actual、session/generation/document/source/evaluation revision、求值帧加资源与 view 的输入 hash、adapter、view、资源与图像 hash，并声明颜色及 alpha 约定；成功状态为 `frames_complete`，失败状态为 `failed` 并附样本序号。S4 后续补叠加层及逐项图像预期对照。
 

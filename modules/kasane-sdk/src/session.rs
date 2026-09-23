@@ -255,24 +255,32 @@ impl AuthoringSession {
     pub fn find_meshes_by_name(&self, name: &str) -> Vec<Mesh> {
         self.mesh_ids()
             .iter()
-            .filter_map(|id| self.mesh(id))
+            .filter_map(|id| self.project.document().get_mesh(id))
             .filter(|mesh| mesh.name == name)
+            .cloned()
             .collect()
     }
     pub fn require_unique_mesh(&self, name: &str) -> Result<Mesh, SdkError> {
-        let mut matches = self.find_meshes_by_name(name);
-        match matches.len() {
-            0 => Err(SdkError::new(
+        let mut matches = self
+            .mesh_ids()
+            .iter()
+            .filter_map(|id| self.project.document().get_mesh(id))
+            .filter(|mesh| mesh.name == name);
+        let Some(first) = matches.next() else {
+            return Err(SdkError::new(
                 "NOT_FOUND",
                 "No mesh has this name",
                 "require_unique_mesh",
-            )),
-            1 => Ok(matches.pop().unwrap()),
-            _ => Err(SdkError::new(
+            ));
+        };
+        if matches.next().is_some() {
+            Err(SdkError::new(
                 "AMBIGUOUS_NAME",
                 "Several meshes have this name",
                 "require_unique_mesh",
-            )),
+            ))
+        } else {
+            Ok(first.clone())
         }
     }
     pub fn geometry(&self, id: &str) -> Option<GeometrySnapshot> {
@@ -321,6 +329,18 @@ impl AuthoringSession {
         label: impl Into<String>,
         expected: Option<Version>,
     ) -> Result<EditSession<'_>, SdkError> {
+        let mut edit = self.begin_owned_edit(label, expected)?;
+        edit.session = Some(self);
+        Ok(edit)
+    }
+
+    /// Create a persistent candidate workspace. `commit_to` checks the source
+    /// version again before publishing, so callers can hold it across API calls.
+    pub fn begin_owned_edit(
+        &self,
+        label: impl Into<String>,
+        expected: Option<Version>,
+    ) -> Result<EditSession<'static>, SdkError> {
         let version = self.version();
         if let Some(value) = expected.filter(|value| *value != version) {
             let mut error =
@@ -338,7 +358,8 @@ impl AuthoringSession {
             ));
         }
         Ok(EditSession {
-            session: self,
+            session: None,
+            base_keys: self.object_keys(),
             candidate: Some(candidate),
             label: label.into(),
             before: version,

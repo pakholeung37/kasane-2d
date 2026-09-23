@@ -1,6 +1,5 @@
 """Run against an installed wheel from outside the source tree."""
 
-from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -46,6 +45,40 @@ def session():
 
 
 class CpuWheelTests(unittest.TestCase):
+    def test_shared_authoring_contract_matches_expected_results(self):
+        spec = json.loads((TEXTURE.parent / "authoring-contract.json").read_text())
+        model = kasane.Session(spec["document_id"], 100, 100, (50, 50), 10)
+        before = model.version
+        with self.assertRaises(kasane.SdkFailure) as failure:
+            with model.edit("invalid") as edit:
+                edit.create_rectangle(
+                    spec["mesh_id"], spec["initial_name"], spec["missing_asset_id"],
+                    tuple(spec["minimum"]), tuple(spec["maximum"]),
+                )
+        self.assertEqual(failure.exception.code, spec["invalid_create_code"])
+        self.assertEqual(model.version, before)
+        self.assertEqual(model.history_lengths(), (0, 0))
+        with model.edit("create") as edit:
+            edit.add_png_asset(spec["asset_id"], "texture", TEXTURE)
+            edit.create_rectangle(
+                spec["mesh_id"], spec["initial_name"], spec["asset_id"],
+                tuple(spec["minimum"]), tuple(spec["maximum"]),
+            )
+        self.assertEqual(model.evaluate({}).drawables[0].positions[0],
+                         tuple(spec["evaluated_first_position"]))
+        with model.edit("rename") as edit:
+            edit.rename_mesh(spec["mesh_id"], spec["updated_name"])
+        self.assertEqual(model.mesh(spec["mesh_id"]).name, spec["updated_name"])
+        model.undo()
+        self.assertEqual(model.mesh(spec["mesh_id"]).name, spec["initial_name"])
+        model.redo()
+        self.assertEqual(model.mesh(spec["mesh_id"]).name, spec["updated_name"])
+
+    def test_validation_capabilities_identify_the_engine(self):
+        capabilities = kasane.capabilities()
+        self.assertIn("purism_core_validation", capabilities)
+        self.assertFalse(capabilities["official_core_validation"])
+
     def test_create_save_reopen_and_snapshot_copy(self):
         model = session()
         with model.edit("create") as edit:
@@ -97,25 +130,79 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(aborted.exception.code, "EDIT_ABORTED")
         self.assertEqual(model.asset_ids(), [])
 
-    def test_two_threads_receive_one_stale_version(self):
+    def test_active_edit_blocks_conflicting_operations_and_releases_on_cancel(self):
         model = session()
         with model.edit("create") as edit:
             edit.add_png_asset(ASSET, "texture", TEXTURE)
             edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
-        edits = [model.edit("rename") for _ in range(2)]
+        before = model.version
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            edit = model.edit("rename")
+            edit.rename_mesh(MESH, "changed")
+            for action in (lambda: model.edit("nested"),
+                           lambda: model.save(destination), model.undo,
+                           lambda: model.new_project(DOCUMENT, 100, 100, (50, 50), 10)):
+                with self.assertRaises(kasane.SdkFailure) as failure:
+                    action()
+                self.assertEqual(failure.exception.code, "EDIT_ACTIVE")
+            self.assertFalse(destination.exists())
+            self.assertEqual(model.version, before)
+            edit.cancel()
+            self.assertEqual(model.mesh(MESH).name, "face")
+            with model.edit("rename") as next_edit:
+                next_edit.rename_mesh(MESH, "changed")
+            self.assertEqual(model.mesh(MESH).name, "changed")
 
-        def publish(index):
-            try:
-                with edits[index] as edit:
-                    edit.rename_mesh(MESH, f"face-{index}")
-                return "ok"
-            except kasane.SdkFailure as failure:
-                return failure.code
+    def test_aborted_edit_cannot_release_a_newer_edit(self):
+        model = session()
+        old = model.edit("bad")
+        with self.assertRaises(kasane.SdkFailure):
+            old.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        current = model.edit("current")
+        old.cancel()
+        del old
+        with self.assertRaises(kasane.SdkFailure) as failure:
+            model.edit("nested")
+        self.assertEqual(failure.exception.code, "EDIT_ACTIVE")
+        current.cancel()
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            futures = [executor.submit(publish, index) for index in range(2)]
-            results = [future.result(timeout=10) for future in futures]
-        self.assertEqual(sorted(results), ["STALE_VERSION", "ok"])
+    def test_repeated_parameter_replacement_uses_candidate_state(self):
+        model = session()
+        with model.edit("parameter") as edit:
+            edit.create_parameter(PARAMETER, "p", 0, 1, 0.5)
+        with model.edit("two replacements") as edit:
+            edit.replace_parameter(PARAMETER, "p", 0, 1, 0.5, kind="blend_shape")
+            self.assertEqual(edit.parameter(PARAMETER).kind, "blend_shape")
+            self.assertEqual(model.parameter(PARAMETER).kind, "normal")
+            edit.replace_parameter(PARAMETER, "renamed", 0, 1, 0.5)
+            self.assertEqual(edit.parameter(PARAMETER).name, "renamed")
+        self.assertEqual(model.parameter(PARAMETER).kind, "blend_shape")
+        self.assertEqual(model.parameter(PARAMETER).name, "renamed")
+        model.undo()
+        self.assertEqual(model.parameter(PARAMETER).kind, "normal")
+
+    def test_full_evaluation_snapshot_exposes_render_attributes(self):
+        model = session()
+        with model.edit("mesh") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        properties = model.mesh_properties(MESH)
+        with model.edit("opacity") as edit:
+            edit.update_mesh_properties(MESH, kasane.MeshProperties(
+                properties.texture_asset_id, kasane.Appearance(0.5),
+                properties.draw_order, properties.blend_mode, properties.enabled,
+                properties.double_sided, properties.inverted_mask, properties.masks,
+            ))
+        snapshot = model.evaluate_snapshot({})
+        self.assertEqual(snapshot.version, model.version)
+        self.assertEqual(snapshot.source_revision, model.evaluation_revision)
+        self.assertEqual(snapshot.drawables[0].positions, model.evaluate({}).drawables[0].positions)
+        self.assertEqual(snapshot.drawables[0].opacity, 0.5)
+        self.assertTrue(snapshot.drawables[0].visible)
+        self.assertEqual(snapshot.drawables[0].texture_asset_id, ASSET)
+        self.assertIn(("draw_mesh", MESH), snapshot.render_plan)
+        self.assertEqual(model.preview_snapshot().drawables[0].id, MESH)
 
     def test_update_positions_publishes_one_edit(self):
         model = session()

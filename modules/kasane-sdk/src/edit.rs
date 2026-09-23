@@ -12,7 +12,8 @@ use kasane_core::{
 };
 
 pub struct EditSession<'a> {
-    pub(crate) session: &'a mut AuthoringSession,
+    pub(crate) session: Option<&'a mut AuthoringSession>,
+    pub(crate) base_keys: HashSet<ObjectKey>,
     pub(crate) candidate: Option<Document>,
     pub(crate) label: String,
     pub(crate) before: Version,
@@ -23,6 +24,15 @@ pub struct EditSession<'a> {
 }
 
 impl EditSession<'_> {
+    /// Read the current candidate when composing multiple operations in one edit.
+    pub fn candidate_document(&self) -> &Document {
+        self.candidate.as_ref().expect("edit candidate exists")
+    }
+
+    pub fn base_version(&self) -> Version {
+        self.before
+    }
+
     fn document(&mut self) -> &mut Document {
         self.candidate.as_mut().expect("edit candidate exists")
     }
@@ -79,8 +89,9 @@ impl EditSession<'_> {
     pub fn erase_object(&mut self, id: &str) -> Result<(), SdkError> {
         self.ensure_active("erase_object")?;
         let original = self
-            .session
-            .object_keys()
+            .base_keys
+            .iter()
+            .cloned()
             .into_iter()
             .find(|key| key.id == id);
         let result = self.document().erase_object(id);
@@ -467,7 +478,19 @@ impl EditSession<'_> {
         self.record(result, "update_positions", mesh_id)
     }
     pub fn commit(mut self) -> Result<EditReceipt, SdkError> {
+        let session = self.session.take().expect("attached edit has a session");
+        self.commit_to(session)
+    }
+
+    /// Publish an owned edit workspace to its original session.
+    pub fn commit_to(mut self, session: &mut AuthoringSession) -> Result<EditReceipt, SdkError> {
         self.ensure_active("commit")?;
+        if session.version() != self.before {
+            let mut error = SdkError::new("STALE_VERSION", "Document version changed", "commit");
+            error.expected_version = Some(Box::new(self.before));
+            error.actual_version = Some(Box::new(session.version()));
+            return Err(error);
+        }
         let candidate = self.candidate.take().expect("edit candidate exists");
         if let Some(issue) = candidate.validate_structure().into_iter().next() {
             return Err(SdkError::from_status(
@@ -483,12 +506,12 @@ impl EditSession<'_> {
             .cloned()
             .collect();
         let identity_changed = !identity_keys.is_empty();
-        let changed = identity_changed || !self.session.project.document().same_content(&candidate);
-        let before_keys = changed.then(|| self.session.object_keys());
-        let previous = changed.then(|| self.session.project.document().checkpoint());
+        let changed = identity_changed || !session.project.document().same_content(&candidate);
+        let before_keys = changed.then(|| session.object_keys());
+        let previous = changed.then(|| session.project.document().checkpoint());
         let mut evict_count = 0usize;
         if let Some(checkpoint) = &previous {
-            let limits = self.session.history_limits;
+            let limits = session.history_limits;
             let candidate_bytes = candidate.estimated_content_bytes();
             let entry_bytes = checkpoint.estimated_bytes()
                 + self.label.capacity()
@@ -498,29 +521,24 @@ impl EditSession<'_> {
                     .iter()
                     .map(|key| key.id.capacity())
                     .sum::<usize>()
-                + self.session.project.root().as_os_str().len();
-            let redo_bytes: usize = self
-                .session
-                .redo
-                .iter()
-                .map(HistoryEntry::estimated_bytes)
-                .sum();
+                + session.project.root().as_os_str().len();
+            let redo_bytes: usize = session.redo.iter().map(HistoryEntry::estimated_bytes).sum();
             let mut projected_bytes = candidate_bytes
                 .saturating_add(entry_bytes)
                 .saturating_add(redo_bytes)
                 .saturating_add(
-                    self.session
+                    session
                         .done
                         .iter()
                         .map(HistoryEntry::estimated_bytes)
                         .sum::<usize>(),
                 );
-            let mut projected_steps = self.session.done.len() + 1;
+            let mut projected_steps = session.done.len() + 1;
             while (projected_bytes > limits.max_bytes || projected_steps > limits.max_steps)
-                && evict_count < self.session.done.len()
+                && evict_count < session.done.len()
             {
-                projected_bytes = projected_bytes
-                    .saturating_sub(self.session.done[evict_count].estimated_bytes());
+                projected_bytes =
+                    projected_bytes.saturating_sub(session.done[evict_count].estimated_bytes());
                 projected_steps -= 1;
                 evict_count += 1;
             }
@@ -532,34 +550,34 @@ impl EditSession<'_> {
                 ));
             }
         }
-        self.session
+        session
             .project
             .publish_authoring_candidate(candidate, self.kind, identity_changed)
             .map_err(|s| SdkError::from_status(s, "commit", self.object_ids.clone()))?;
         if changed {
-            self.session
+            session
                 .preview
-                .retain_parameters(self.session.project.document());
+                .retain_parameters(session.project.document());
         }
         if let Some(keys) = &before_keys {
-            self.session.refresh_incarnations(keys, &identity_keys);
+            session.refresh_incarnations(keys, &identity_keys);
         }
         if let Some(checkpoint) = previous {
             for _ in 0..evict_count {
-                self.session.done.pop_front();
+                session.done.pop_front();
             }
-            self.session.done.push_back(HistoryEntry {
+            session.done.push_back(HistoryEntry {
                 label: self.label.clone(),
                 checkpoint,
                 identity_keys,
-                root: self.session.project.root(),
+                root: session.project.root(),
             });
-            self.session.redo.clear();
+            session.redo.clear();
         }
         let receipt = EditReceipt {
             label: self.label.clone(),
             before: self.before,
-            after: self.session.version(),
+            after: session.version(),
             kind: if changed { self.kind } else { ChangeKind::None },
             object_ids: if changed {
                 std::mem::take(&mut self.object_ids)
@@ -569,7 +587,7 @@ impl EditSession<'_> {
             changed,
         };
         if changed {
-            self.session.events.push(receipt.clone());
+            session.events.push(receipt.clone());
         }
         Ok(receipt)
     }

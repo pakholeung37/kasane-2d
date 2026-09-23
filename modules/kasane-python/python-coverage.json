@@ -1,8 +1,23 @@
 {
+  "Edit.base_version": {
+    "status": "bound",
+    "python": "Edit.parameter",
+    "test": "test_repeated_parameter_replacement_uses_candidate_state"
+  },
+  "Edit.candidate_document": {
+    "status": "bound",
+    "python": "Edit.parameter / Edit.mesh",
+    "test": "test_repeated_parameter_replacement_uses_candidate_state"
+  },
   "Edit.commit": {
     "status": "bound",
     "python": "Edit.commit",
     "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Edit.commit_to": {
+    "status": "bound",
+    "python": "Edit.commit",
+    "test": "test_active_edit_blocks_conflicting_operations_and_releases_on_cancel"
   },
   "Edit.create_asset": {
     "status": "bound",
@@ -72,7 +87,7 @@
   "Edit.rename_mesh": {
     "status": "bound",
     "python": "Edit.rename_mesh",
-    "test": "test_two_threads_receive_one_stale_version"
+    "test": "test_active_edit_blocks_conflicting_operations_and_releases_on_cancel"
   },
   "Edit.replace_asset": {
     "status": "bound",
@@ -233,6 +248,12 @@
     "status": "bound",
     "python": "Session.edit",
     "test": "test_rollback_and_structured_error"
+  },
+  "Session.begin_owned_edit": {
+    "status": "rust_only",
+    "reason": "Rust construction or lifecycle primitive used behind the Python wrapper",
+    "rust_test_path": "modules/kasane-sdk/tests/vertical_slice.rs",
+    "rust_test": "owned_workspace_isolated_until_publication_and_checks_source_version"
   },
   "Session.binding": {
     "status": "bound",

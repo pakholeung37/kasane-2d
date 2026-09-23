@@ -25,6 +25,35 @@ OFFSCREEN = "00000000-0000-4000-8000-000000000007"
 
 
 class GpuWheelTests(unittest.TestCase):
+    def test_oversize_texture_reports_error_and_observer_recovers(self):
+        def chunk(kind, data):
+            payload = kind + data
+            return struct.pack(">I", len(data)) + payload + struct.pack(">I", zlib.crc32(payload))
+
+        width = 32769
+        png = (b"\x89PNG\r\n\x1a\n"
+               + chunk(b"IHDR", struct.pack(">IIBBBBB", width, 1, 8, 6, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(b"\x00" + b"\xff\x00\x00\xff" * width))
+               + chunk(b"IEND", b""))
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("base") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        with kasane.Observer(64, 64, 64) as observer:
+            observer.observe(model)
+            with TemporaryDirectory() as directory:
+                oversize = Path(directory).resolve() / "oversize.png"
+                oversize.write_bytes(png)
+                with model.edit("oversize") as edit:
+                    edit.replace_png_asset(ASSET, "oversize", oversize)
+                with self.assertRaises(kasane.ObservationFailure) as failure:
+                    observer.observe(model)
+                self.assertEqual(failure.exception.code, "TEXTURE_SIZE_LIMIT")
+                self.assertEqual(failure.exception.asset_id, ASSET)
+                with model.edit("restore") as edit:
+                    edit.replace_png_asset(ASSET, "texture", TEXTURE)
+                self.assertEqual(observer.observe(model).width, 64)
+
     def test_focus_crop_keeps_mask_and_offscreen_composition(self):
         model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
         with model.edit("layered scene") as edit:

@@ -17,6 +17,103 @@ fn session() -> AuthoringSession {
 }
 
 #[test]
+fn owned_workspace_isolated_until_publication_and_checks_source_version() {
+    let mut sdk = session();
+    let original = sdk.canvas();
+    let mut workspace = sdk.begin_owned_edit("resize", None).unwrap();
+    let resized = Canvas::new(120.0, 100.0, Vec2::new(50.0, 50.0), 10.0);
+    workspace.replace_canvas(resized).unwrap();
+    assert_eq!(workspace.candidate_document().canvas(), resized);
+    assert_eq!(sdk.canvas(), original);
+    workspace.commit_to(&mut sdk).unwrap();
+    assert_eq!(sdk.canvas(), resized);
+    assert_eq!(sdk.history_lengths(), (1, 0));
+
+    let mut stale = sdk.begin_owned_edit("stale", None).unwrap();
+    stale.replace_canvas(original).unwrap();
+    sdk.edit("another resize", None, |edit| edit.replace_canvas(original))
+        .unwrap();
+    assert_eq!(
+        stale.commit_to(&mut sdk).unwrap_err().code.as_ref(),
+        "STALE_VERSION"
+    );
+    assert_eq!(sdk.canvas(), original);
+}
+
+#[test]
+fn shared_authoring_contract_matches_expected_results() {
+    let spec: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../examples/sdk/authoring-contract.json"
+    ))
+    .unwrap();
+    let text = |field: &str| spec[field].as_str().unwrap();
+    let point = |field: &str| {
+        Vec2::new(
+            spec[field][0].as_f64().unwrap() as f32,
+            spec[field][1].as_f64().unwrap() as f32,
+        )
+    };
+    let mut sdk = AuthoringSession::new(
+        text("document_id"),
+        Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
+    )
+    .unwrap();
+    let invalid = rectangle_mesh(
+        text("mesh_id"),
+        text("initial_name"),
+        text("missing_asset_id"),
+        point("minimum"),
+        point("maximum"),
+    )
+    .unwrap();
+    let before = sdk.version();
+    let failure = sdk
+        .edit("invalid", None, |edit| edit.create_mesh(invalid))
+        .unwrap_err();
+    assert_eq!(failure.code.as_ref(), text("invalid_create_code"));
+    assert_eq!(sdk.version(), before);
+    assert_eq!(sdk.history_lengths(), (0, 0));
+
+    let asset = prepare_png_asset(text("asset_id"), "texture", &fixture_png()).unwrap();
+    let mesh = rectangle_mesh(
+        text("mesh_id"),
+        text("initial_name"),
+        text("asset_id"),
+        point("minimum"),
+        point("maximum"),
+    )
+    .unwrap();
+    sdk.edit("create", None, |edit| {
+        edit.create_asset(asset)?;
+        edit.create_mesh(mesh)
+    })
+    .unwrap();
+    let frame = sdk.evaluate(&PreviewValues::new()).unwrap();
+    assert_eq!(
+        frame.drawables[0].positions[0],
+        point("evaluated_first_position")
+    );
+    sdk.edit("rename", None, |edit| {
+        edit.rename_mesh(text("mesh_id"), text("updated_name"))
+    })
+    .unwrap();
+    assert_eq!(
+        sdk.mesh(text("mesh_id")).unwrap().name,
+        text("updated_name")
+    );
+    sdk.undo().unwrap();
+    assert_eq!(
+        sdk.mesh(text("mesh_id")).unwrap().name,
+        text("initial_name")
+    );
+    sdk.redo().unwrap();
+    assert_eq!(
+        sdk.mesh(text("mesh_id")).unwrap().name,
+        text("updated_name")
+    );
+}
+
+#[test]
 fn creates_png_rectangle_evaluates_and_undoes_all_content() {
     let path = fixture_png();
     let asset = prepare_png_asset(ASSET_ID, "asymmetric", &path).unwrap();

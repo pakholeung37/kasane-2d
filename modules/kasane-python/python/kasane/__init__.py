@@ -497,6 +497,64 @@ class Evaluation(NamedTuple):
     drawables: list[DrawableSample]
 
 
+class DrawableSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    part_id: str
+    raw_blend_mode: int | None
+    texture_asset_id: str
+    texture_slot: int
+    positions: list[Point]
+    uvs: list[Point]
+    indices: list[int]
+    draw_order: int
+    render_order: int
+    opacity: float
+    multiply_color: tuple[float, float, float, float]
+    screen_color: tuple[float, float, float, float]
+    blend_mode: str
+    enabled: bool
+    visible: bool
+    double_sided: bool
+    inverted_mask: bool
+    masks: list[str]
+
+
+class EvaluatedOffscreenSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    owner_part_id: str
+    parent_offscreen_id: str | None
+    render_order: int
+    opacity: float
+    enabled: bool
+    blend_mode: int
+    flags: int
+    masks: list[str]
+    multiply_color: tuple[float, float, float, float]
+    screen_color: tuple[float, float, float, float]
+
+
+class EvaluationSnapshot(NamedTuple):
+    version: Version
+    source_revision: int
+    canvas: CanvasSnapshot
+    parameters: list[ParameterSample]
+    drawables: list[DrawableSnapshot]
+    offscreens: list[EvaluatedOffscreenSnapshot]
+    render_plan: list[tuple[str, str]]
+
+
+def _evaluation_snapshot(data) -> EvaluationSnapshot:
+    version, revision, canvas, parameters, drawables, offscreens, plan = data
+    return EvaluationSnapshot(
+        version, revision, CanvasSnapshot(*canvas),
+        [ParameterSample(*item) for item in parameters],
+        [DrawableSnapshot(*item[0], *item[1]) for item in drawables],
+        [EvaluatedOffscreenSnapshot(*item) for item in offscreens], plan,
+    )
+
+
 class SaveResult(NamedTuple):
     manifest: Path
     durable: bool
@@ -529,6 +587,16 @@ class Edit:
 
     def __enter__(self) -> Edit:
         return self
+
+    def parameter(self, parameter_id: str) -> ParameterSnapshot | None:
+        """Read the parameter after preceding operations in this edit."""
+        raw = self._native.parameter(parameter_id)
+        return ParameterSnapshot(*raw) if raw is not None else None
+
+    def mesh(self, mesh_id: str) -> MeshSnapshot | None:
+        """Read the mesh after preceding operations in this edit."""
+        raw = self._native.mesh(mesh_id)
+        return MeshSnapshot(*raw) if raw is not None else None
 
     def __exit__(self, exception_type, exception, traceback) -> bool:
         if self._closed:
@@ -1171,6 +1239,10 @@ class Session:
             [DrawableSample(*sample) for sample in drawables],
         )
 
+    def evaluate_snapshot(self, values: Mapping[str, float]) -> EvaluationSnapshot:
+        """Return all evaluated render attributes and the source version."""
+        return _evaluation_snapshot(self._native.evaluate_snapshot(dict(values)))
+
     def diagnose_resources(self) -> list[ResourceIssue]:
         return [ResourceIssue(*item) for item in self._native.diagnose_resources()]
 
@@ -1202,6 +1274,9 @@ class Session:
             [ParameterSample(*sample) for sample in parameters],
             [DrawableSample(*sample) for sample in drawables],
         )
+
+    def preview_snapshot(self) -> EvaluationSnapshot:
+        return _evaluation_snapshot(self._native.preview_snapshot())
 
     def set_preview_values(self, values: Mapping[str, float]) -> bool:
         return self._native.set_preview_values(dict(values))
@@ -1594,11 +1669,13 @@ __all__ = [
     "AssetSnapshot",
     "CanvasSnapshot",
     "DrawableSample",
+    "DrawableSnapshot",
     "DrawableBounds",
     "DrawOrderGroup",
     "Edit",
     "EditEvent",
     "Evaluation",
+    "EvaluationSnapshot",
     "ExportResult",
     "GeometrySnapshot",
     "GeometryIssue",
@@ -1608,6 +1685,7 @@ __all__ = [
     "GlueVertexPair",
     "HistoryState",
     "ImportResult",
+    "EvaluatedOffscreenSnapshot",
     "MeshSnapshot",
     "MeshGeometryData",
     "MeshDrawingData",

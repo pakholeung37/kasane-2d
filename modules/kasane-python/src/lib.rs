@@ -23,7 +23,8 @@ fn capabilities(py: Python<'_>) -> PyResult<Py<PyDict>> {
     result.set_item("model3_import", true)?;
     result.set_item("bare_moc3_import", true)?;
     result.set_item("moc3_export", true)?;
-    result.set_item("official_core_validation", kasane_moc3::HAS_CORE_VALIDATION)?;
+    result.set_item("purism_core_validation", kasane_moc3::HAS_CORE_VALIDATION)?;
+    result.set_item("official_core_validation", false)?;
     #[cfg(feature = "observe")]
     let gpu_observation = kasane_sdk_observe::Observer::new(kasane_sdk_observe::ObserverConfig {
         width: 1,

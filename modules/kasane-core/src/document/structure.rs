@@ -1,7 +1,8 @@
 //! Read-only validation of the complete persistent document graph.
 use super::*;
 use crate::draw_order::validate_groups;
-use std::collections::HashSet;
+use crate::geometry::validate_render_mesh;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructureIssue {
@@ -80,35 +81,77 @@ impl Document {
         check_collection!(glues, glue_order);
         check_collection!(offscreens, offscreen_order);
 
-        // Every replacement reuses the normal core validator. The scratch graph
-        // is isolated, so canonicalization and cache invalidation cannot affect
-        // the source document or its revision.
-        let mut scratch = self.fork_candidate();
-        macro_rules! check_replacements {
-            ($map:ident, $replace:ident) => {
-                for (id, object) in &self.$map {
-                    let result = scratch.$replace(object.clone());
-                    if !result.status.is_ok() {
-                        issues.push(StructureIssue {
-                            object_id: id.clone(),
-                            status: result.status,
-                        });
-                    }
-                }
-            };
+        let mut add_issue = |id: &str, status: Status| {
+            if !status.is_ok() {
+                issues.push(StructureIssue {
+                    object_id: id.into(),
+                    status,
+                });
+            }
+        };
+        for (id, asset) in &self.assets {
+            if asset.width == 0 || asset.height == 0 || asset.source.is_empty() {
+                add_issue(id, Status::error("INVALID_ASSET", id));
+            }
         }
-        check_replacements!(assets, replace_asset);
-        check_replacements!(parts, replace_part);
-        check_replacements!(transforms, replace_transform);
-        check_replacements!(meshes, replace_mesh);
-        check_replacements!(parameters, replace_parameter);
-        check_replacements!(bindings, replace_binding);
-        check_replacements!(scene_bindings, replace_scene_binding);
-        check_replacements!(blend_key_tables, replace_blend_key_table);
-        check_replacements!(blend_constraints, replace_blend_constraint);
-        check_replacements!(blend_bindings, replace_blend_binding);
-        check_replacements!(glues, replace_glue);
-        check_replacements!(offscreens, replace_offscreen);
+        for (id, part) in &self.parts {
+            add_issue(id, self.validate_part(part));
+        }
+        for (id, transform) in &self.transforms {
+            add_issue(id, self.validate_transform(transform));
+        }
+        for (id, mesh) in &self.meshes {
+            let status = self.validate_mesh_snapshot(mesh);
+            add_issue(id, status);
+        }
+        for (id, parameter) in &self.parameters {
+            add_issue(id, self.validate_parameter(parameter));
+        }
+        for (id, binding) in &self.bindings {
+            add_issue(id, self.canonicalize_binding(&mut binding.clone()));
+        }
+        for (id, binding) in &self.scene_bindings {
+            add_issue(id, self.canonicalize_scene_binding(&mut binding.clone()));
+        }
+        for (id, table) in &self.blend_key_tables {
+            add_issue(id, self.validate_blend_key_table(table));
+        }
+        for (id, constraint) in &self.blend_constraints {
+            add_issue(id, self.validate_blend_constraint(constraint));
+        }
+        for (id, binding) in &self.blend_bindings {
+            add_issue(id, self.validate_blend_binding(binding));
+        }
+        for (id, glue) in &self.glues {
+            let duplicate = self
+                .glues
+                .iter()
+                .any(|(other_id, other)| other_id != id && other.runtime_id == glue.runtime_id);
+            add_issue(
+                id,
+                if duplicate {
+                    Status::error("DUPLICATE_RUNTIME_ID", format!("{}.runtime_id", glue.id))
+                } else {
+                    self.validate_glue(glue)
+                },
+            );
+        }
+        for (id, offscreen) in &self.offscreens {
+            let duplicate = self.offscreens.iter().any(|(other_id, other)| {
+                other_id != id && other.runtime_id == offscreen.runtime_id
+            });
+            add_issue(
+                id,
+                if duplicate {
+                    Status::error(
+                        "DUPLICATE_RUNTIME_ID",
+                        format!("{}.runtime_id", offscreen.id),
+                    )
+                } else {
+                    self.validate_offscreen(offscreen)
+                },
+            );
+        }
         if let Some(groups) = &self.draw_order_groups {
             if let Err(status) = validate_groups(self, groups) {
                 issues.push(StructureIssue {
@@ -125,6 +168,52 @@ impl Document {
             ))
         });
         issues
+    }
+
+    fn validate_mesh_snapshot(&self, mesh: &Mesh) -> Status {
+        if !self.assets.contains_key(&mesh.texture_asset_id) {
+            return Status::error("MISSING_ASSET", "Texture asset does not exist.");
+        }
+        let status = self.validate_mesh_properties(mesh);
+        if !status.is_ok() {
+            return status;
+        }
+        for (id, other) in &self.meshes {
+            if id != &mesh.id && other.runtime_id == mesh.runtime_id {
+                return Status::error(
+                    "DUPLICATE_RUNTIME_ID",
+                    format!("{}.runtime_id duplicates {}", mesh.id, id),
+                );
+            }
+        }
+        if mesh.vertex_ids.len() != mesh.base_positions.len() {
+            return Status::error("INVALID_LENGTH", "Vertex IDs must match positions.");
+        }
+        let slots: HashMap<_, _> = mesh
+            .vertex_ids
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (*id, i))
+            .collect();
+        if slots.len() != mesh.vertex_ids.len() {
+            return Status::error(
+                "DUPLICATE_VERTEX",
+                "Vertex IDs must be unique within a mesh.",
+            );
+        }
+        let mut indices = Vec::with_capacity(mesh.triangles.len() * 3);
+        for triangle in &mesh.triangles {
+            for id in triangle {
+                let Some(slot) = slots.get(id) else {
+                    return Status::error(
+                        "MISSING_VERTEX",
+                        "Triangle references an unknown vertex ID.",
+                    );
+                };
+                indices.push(*slot as u32);
+            }
+        }
+        validate_render_mesh(&mesh.base_positions, &mesh.uvs, &indices)
     }
 }
 

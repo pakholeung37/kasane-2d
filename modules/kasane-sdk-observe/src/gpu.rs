@@ -141,6 +141,13 @@ impl Observer {
         let info = adapter.get_info();
         let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
             .map_err(|failure| error("GPU_DEVICE", failure.to_string()))?;
+        let limit = device.limits().max_texture_dimension_2d;
+        if config.width > limit || config.height > limit {
+            return Err(error(
+                "OUTPUT_SIZE_LIMIT",
+                format!("Output size exceeds the device limit {limit}x{limit}"),
+            ));
+        }
         let renderer = WgpuRenderer::new(
             &device,
             WgpuTargetConfig {
@@ -170,7 +177,21 @@ impl Observer {
         Ok(())
     }
 
-    fn upload_textures(&mut self, resolved: Vec<ResolvedTexture>) {
+    fn upload_textures(&mut self, resolved: Vec<ResolvedTexture>) -> Result<(), ObservationError> {
+        let limit = self.device.limits().max_texture_dimension_2d;
+        for texture in &resolved {
+            let width = texture.data.width;
+            let height = texture.data.height;
+            if width == 0 || height == 0 || width > limit || height > limit {
+                return Err(ObservationError {
+                    code: "TEXTURE_SIZE_LIMIT".into(),
+                    message: format!(
+                        "Texture {width}x{height} exceeds the device limit {limit}x{limit}"
+                    ),
+                    asset_id: Some(texture.asset.id.clone()),
+                });
+            }
+        }
         let required: HashSet<_> = resolved
             .iter()
             .map(|texture| texture.asset.id.as_str())
@@ -228,6 +249,7 @@ impl Observer {
                 },
             );
         }
+        Ok(())
     }
 
     pub fn observe(&mut self, input: &ObservationInput) -> Result<ObservedFrame, ObservationError> {
@@ -248,7 +270,7 @@ impl Observer {
             .expect("digest writer is infallible");
         }
         let input_sha256 = format!("{:x}", digest.finalize());
-        self.upload_textures(resolved);
+        self.upload_textures(resolved)?;
         let mut catalog = WgpuTextureCatalog::new(
             self.textures
                 .iter()
