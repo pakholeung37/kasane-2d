@@ -1,0 +1,15 @@
+{
+  "baseline_commit": "c21c11101ddbebd6ad34878f9cb392a2664d1bad",
+  "current_commit": "de62a6be80efe3980796463664cd0b2e071075e8",
+  "libraries": {
+    "baseline": {
+      "path": "/Users/pakholeung/web/kesane-2d/target/kasane-preview-baseline-cargo/release/libkasane_godot.dylib",
+      "sha256": "e7d5223ef698a20fc22d04c7faadbb5444f23317aa146e64cf64aae232e9668e"
+    },
+    "current": {
+      "path": "/Users/pakholeung/web/kesane-2d/target/release/libkasane_godot.dylib",
+      "sha256": "69f7d9ca06b788b8a2006d68e4f73d0f1235673e1589389da4ba39da72b72d51"
+    }
+  },
+  "note": "Existing Godot editor left running; benchmarks run sequentially."
+}
