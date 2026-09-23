@@ -26,6 +26,8 @@ SCENE_PART = "00000000-0000-4000-8000-000000000010"
 SCENE_ROTATION = "00000000-0000-4000-8000-000000000011"
 SCENE_WARP = "00000000-0000-4000-8000-000000000012"
 OFFSCREEN = "00000000-0000-4000-8000-000000000013"
+MESH_B = "00000000-0000-4000-8000-000000000014"
+GLUE = "00000000-0000-4000-8000-000000000015"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -524,6 +526,47 @@ class CpuWheelTests(unittest.TestCase):
         model.undo()
         self.assertEqual(len(model.scene_binding(SCENE_PART).keyforms), 2)
         self.assertEqual(model.offscreen(OFFSCREEN).part_keyform_indices, [0, 1])
+
+    def test_glue_create_replace_binding_and_rollback(self):
+        model = session()
+        with model.edit("meshes") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "a", ASSET, (0, 0), (1, 1))
+            edit.create_rectangle(MESH_B, "b", ASSET, (0, 0), (1, 1))
+            edit.create_parameter(PARAMETER, "intensity", 0, 1, 0)
+            edit.create_glue(kasane.GlueSpec(
+                GLUE, "seam", MESH, MESH_B,
+                [kasane.GlueVertexPair(0, 0, 1, 1)],
+            ))
+        glue = model.glue(GLUE)
+        self.assertEqual(glue.runtime_id, GLUE)
+        self.assertEqual(glue.pairs[0].vertex_a, 0)
+        glue.pairs.clear()
+        self.assertEqual(len(model.glue(GLUE).pairs), 1)
+        with model.edit("bind glue") as edit:
+            edit.replace_glue(glue._replace(
+                name="animated seam", intensity=0.5,
+                pairs=[kasane.GlueVertexPair(0, 0, 0.75, 1)],
+                binding=kasane.GlueBinding([kasane.Axis(PARAMETER, [0, 1])], [0, 1]),
+            ))
+        updated = model.glue(GLUE)
+        self.assertEqual(updated.name, "animated seam")
+        self.assertEqual(updated.runtime_id, GLUE)
+        self.assertEqual(updated.binding.intensities, [0, 1])
+        self.assertAlmostEqual(updated.pairs[0].weight_a, 0.75)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.glue(GLUE).binding.intensities, [0, 1])
+        version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("invalid glue") as edit:
+                edit.replace_glue(updated._replace(pairs=[kasane.GlueVertexPair(99, 0, 1, 1)]))
+        self.assertEqual(error.exception.code, "MISSING_VERTEX")
+        self.assertEqual(model.version, version)
+        model.undo()
+        self.assertEqual(model.glue(GLUE).name, "seam")
 
     def test_png_base_relocation_and_replacement(self):
         model = session()

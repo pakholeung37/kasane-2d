@@ -1,8 +1,9 @@
 //! Value conversion at the Python/Rust boundary.
 use kasane_core::{
-    Appearance, BindingAxis, BlendMode, DrawableFrame, MeshBinding, Offscreen, OffscreenKeyform,
-    PartKeyform, PreciseVec2, RotationKeyform, RotationPose, RotationTransform, SceneBinding,
-    SceneKeyform, SceneTrack, Transform, TransformData, Vec2, WarpKeyform,
+    Appearance, BindingAxis, BlendMode, DrawableFrame, Glue, GlueBinding, GlueKeyform,
+    GlueVertexPair, MeshBinding, Offscreen, OffscreenKeyform, PartKeyform, PreciseVec2,
+    RotationKeyform, RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack,
+    Transform, TransformData, Vec2, WarpKeyform,
 };
 use kasane_sdk::{ObjectKind, Version};
 use pyo3::exceptions::PyValueError;
@@ -114,6 +115,90 @@ pub(crate) type OffscreenTuple = (
     Vec<OffscreenFormTuple>,
     VersionTuple,
 );
+pub(crate) type GluePairTuple = (u32, u32, f32, f32);
+pub(crate) type GlueBindingTuple = (Vec<(String, Vec<f32>)>, Vec<f32>);
+pub(crate) type GlueDataTuple = (
+    String,
+    String,
+    String,
+    String,
+    Vec<GluePairTuple>,
+    f32,
+    Option<GlueBindingTuple>,
+);
+pub(crate) type GlueTuple = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    Vec<GluePairTuple>,
+    f32,
+    Option<GlueBindingTuple>,
+    VersionTuple,
+);
+
+pub(crate) fn glue_from_tuple(data: GlueDataTuple, runtime_id: String) -> Glue {
+    let (id, name, mesh_a_id, mesh_b_id, pairs, intensity, binding) = data;
+    Glue {
+        id,
+        runtime_id,
+        name,
+        mesh_a_id,
+        mesh_b_id,
+        pairs: pairs
+            .into_iter()
+            .map(|(vertex_a, vertex_b, weight_a, weight_b)| GlueVertexPair {
+                vertex_a,
+                vertex_b,
+                weight_a,
+                weight_b,
+            })
+            .collect(),
+        intensity,
+        binding: binding.map(|(axes, forms)| GlueBinding {
+            axes: axes
+                .into_iter()
+                .map(|(parameter_id, keys)| BindingAxis { parameter_id, keys })
+                .collect(),
+            keyforms: forms
+                .into_iter()
+                .map(|intensity| GlueKeyform { intensity })
+                .collect(),
+        }),
+    }
+}
+
+pub(crate) fn glue_tuple(value: Glue, version: Version) -> GlueTuple {
+    (
+        value.id,
+        value.runtime_id,
+        value.name,
+        value.mesh_a_id,
+        value.mesh_b_id,
+        value
+            .pairs
+            .into_iter()
+            .map(|pair| (pair.vertex_a, pair.vertex_b, pair.weight_a, pair.weight_b))
+            .collect(),
+        value.intensity,
+        value.binding.map(|binding| {
+            (
+                binding
+                    .axes
+                    .into_iter()
+                    .map(|axis| (axis.parameter_id, axis.keys))
+                    .collect(),
+                binding
+                    .keyforms
+                    .into_iter()
+                    .map(|form| form.intensity)
+                    .collect(),
+            )
+        }),
+        version_tuple(version),
+    )
+}
 
 pub(crate) fn offscreen_from_tuple(data: OffscreenDataTuple, runtime_id: String) -> Offscreen {
     let (id, name, part_id, blend_mode, flags, masks, indices, keyforms) = data;

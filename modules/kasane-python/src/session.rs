@@ -398,6 +398,13 @@ impl NativeSession {
             .map(|value| offscreen_tuple(value, session.version())))
     }
 
+    fn glue(&self, id: &str) -> PyResult<Option<GlueTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .glue(id)
+            .map(|value| glue_tuple(value, session.version())))
+    }
+
     fn scene_binding(&self, id: &str) -> PyResult<Option<SceneBindingTuple>> {
         let session = self.inner.lock().map_err(|_| poisoned())?;
         Ok(session

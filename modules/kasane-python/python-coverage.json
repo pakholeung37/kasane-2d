@@ -24,7 +24,9 @@
     "status": "pending"
   },
   "Edit.create_glue": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_glue",
+    "test": "test_glue_create_replace_binding_and_rollback"
   },
   "Edit.create_mesh": {
     "status": "bound",
@@ -96,7 +98,9 @@
     "test": "test_draw_order_groups_and_history_limits"
   },
   "Edit.replace_glue": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_glue",
+    "test": "test_glue_create_replace_binding_and_rollback"
   },
   "Edit.replace_mesh": {
     "status": "pending"
@@ -324,7 +328,9 @@
     "test": "test_queries_geometry_history_and_events"
   },
   "Session.glue": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.glue",
+    "test": "test_glue_create_replace_binding_and_rollback"
   },
   "Session.glue_ids": {
     "status": "bound",

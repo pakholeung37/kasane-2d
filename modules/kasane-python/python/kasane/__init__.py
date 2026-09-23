@@ -241,6 +241,40 @@ class OffscreenSnapshot(NamedTuple):
     version: Version
 
 
+class GlueVertexPair(NamedTuple):
+    vertex_a: int
+    vertex_b: int
+    weight_a: float
+    weight_b: float
+
+
+class GlueBinding(NamedTuple):
+    axes: list[Axis]
+    intensities: list[float]
+
+
+class GlueSpec(NamedTuple):
+    id: str
+    name: str
+    mesh_a_id: str
+    mesh_b_id: str
+    pairs: Sequence[GlueVertexPair]
+    intensity: float = 0
+    binding: GlueBinding | None = None
+
+
+class GlueSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    name: str
+    mesh_a_id: str
+    mesh_b_id: str
+    pairs: list[GlueVertexPair]
+    intensity: float
+    binding: GlueBinding | None
+    version: Version
+
+
 class ResourceIssue(NamedTuple):
     asset_id: str
     code: str
@@ -423,6 +457,12 @@ class Edit:
             [_scene_form_tuple("part", form) for form in binding.keyforms],
             _offscreen_data(offscreen),
         ))
+
+    def create_glue(self, glue: GlueSpec) -> None:
+        self._call(lambda: self._native.create_glue(_glue_data(glue)))
+
+    def replace_glue(self, glue: GlueSnapshot) -> None:
+        self._call(lambda: self._native.replace_glue(_glue_data(glue)))
 
     def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
         self._call(lambda: self._native.update_warp_points(transform_id, list(points)))
@@ -781,6 +821,19 @@ class Session:
             [OffscreenKeyform(*form) for form in forms], version,
         )
 
+    def glue(self, glue_id: str) -> GlueSnapshot | None:
+        raw = self._native.glue(glue_id)
+        if raw is None:
+            return None
+        id, runtime_id, name, mesh_a_id, mesh_b_id, pairs, intensity, binding, version = raw
+        typed_binding = None if binding is None else GlueBinding(
+            [Axis(parameter_id, keys) for parameter_id, keys in binding[0]], binding[1],
+        )
+        return GlueSnapshot(
+            id, runtime_id, name, mesh_a_id, mesh_b_id,
+            [GlueVertexPair(*pair) for pair in pairs], intensity, typed_binding, version,
+        )
+
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)
 
@@ -927,6 +980,17 @@ def _offscreen_data(value: OffscreenSpec | OffscreenSnapshot):
     )
 
 
+def _glue_data(value: GlueSpec | GlueSnapshot):
+    binding = None if value.binding is None else (
+        [(axis.parameter_id, list(axis.keys)) for axis in value.binding.axes],
+        list(value.binding.intensities),
+    )
+    return (
+        value.id, value.name, value.mesh_a_id, value.mesh_b_id,
+        [tuple(pair) for pair in value.pairs], value.intensity, binding,
+    )
+
+
 def _rotation_tuple(rotation: RotationData):
     pose = rotation.pose
     return (rotation.base_angle, (
@@ -995,6 +1059,10 @@ __all__ = [
     "ExportResult",
     "GeometrySnapshot",
     "GeometryIssue",
+    "GlueBinding",
+    "GlueSnapshot",
+    "GlueSpec",
+    "GlueVertexPair",
     "HistoryState",
     "ImportResult",
     "MeshSnapshot",

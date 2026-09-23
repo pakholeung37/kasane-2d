@@ -41,6 +41,8 @@ enum Command {
     CreateOffscreen(kasane_core::Offscreen),
     ReplaceOffscreen(kasane_core::Offscreen),
     ReplacePartBindingWithOffscreen(SceneBinding, kasane_core::Offscreen),
+    CreateGlue(kasane_core::Glue),
+    ReplaceGlue(kasane_core::Glue),
     UpdateRotation(String, RotationTransform),
     UpdateWarpPoints(String, Vec<Vec2>),
     ReplaceAsset(kasane_core::ImageAsset),
@@ -334,6 +336,25 @@ impl NativeEdit {
             binding,
             offscreen_from_tuple(offscreen_data, runtime_id),
         ));
+        Ok(())
+    }
+
+    fn create_glue(&mut self, py: Python<'_>, data: GlueDataTuple) -> PyResult<()> {
+        self.ensure_open(py, "create_glue")?;
+        let runtime_id = data.0.clone();
+        self.commands
+            .push(Command::CreateGlue(glue_from_tuple(data, runtime_id)));
+        Ok(())
+    }
+
+    fn replace_glue(&mut self, py: Python<'_>, data: GlueDataTuple) -> PyResult<()> {
+        self.ensure_open(py, "replace_glue")?;
+        let original = self.session.lock().map_err(|_| poisoned())?.glue(&data.0);
+        let runtime_id = original
+            .map(|value| value.runtime_id)
+            .unwrap_or_else(|| data.0.clone());
+        self.commands
+            .push(Command::ReplaceGlue(glue_from_tuple(data, runtime_id)));
         Ok(())
     }
 
@@ -839,6 +860,8 @@ impl NativeEdit {
                         Command::ReplacePartBindingWithOffscreen(binding, value) => {
                             edit.replace_part_binding_with_offscreen(binding, value)?
                         }
+                        Command::CreateGlue(value) => edit.create_glue(value)?,
+                        Command::ReplaceGlue(value) => edit.replace_glue(value)?,
                         Command::UpdateRotation(id, rotation) => {
                             edit.update_rotation(&id, rotation)?
                         }

@@ -517,4 +517,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 Offscreen 批次：Python 支持 Offscreen 创建、读取和替换，完整保留 keyform 的 opacity/multiply/screen、Part 槽映射及 runtime ID；Part scene binding 与 Offscreen 映射可在单次 core 操作中联合扩容。仓库外 wheel 的 23 项 CPU 测试通过；清单为 101/116 Python 绑定、1 项 Rust 专用、14 项待绑定。
 
+2026-09-23 S3 Glue 批次：Python 支持 Glue 创建、读取和替换，包括顶点对权重、静态强度和完整参数绑定表；替换保留 runtime ID。快照副本、保存重开、无效顶点回滚及 undo 通过仓库外 wheel 的 24 项 CPU 测试；清单为 104/116 Python 绑定、1 项 Rust 专用、11 项待绑定。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。
