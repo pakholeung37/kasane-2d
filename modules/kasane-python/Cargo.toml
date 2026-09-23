@@ -1,0 +1,17 @@
+[package]
+name = "kasane-python"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Python bindings for the Kasane 2D authoring SDK"
+
+[lib]
+name = "_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+kasane-core = { path = "../kasane-core" }
+kasane-sdk = { path = "../kasane-sdk" }
+kasane-moc3 = { path = "../kasane-moc3" }
+pyo3 = "=0.29.2"

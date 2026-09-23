@@ -69,6 +69,8 @@ BlendShape key table、constraint、binding、Glue 和 Offscreen 均提供 `crea
 
 ## 尚未交付的契约
 
-Python wheel、wgpu 观察与统一验收入口仍未实现。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
+S3 已有可安装的 CPython 3.14 wheel 初段：`kasane.Session` 支持创建/打开会话、PNG 矩形、参数与完整单 mesh binding 的原子 edit、源位置更新、查询、CPU 求值、保存/重开、导入/导出和 undo/redo。`with session.edit(...)` 在块内异常时撤回本批次；即使块内捕获输入错误，退出时也以 `EDIT_ABORTED` 拒绝发布。`SdkFailure` 暴露 code、operation、object_ids、字段路径、版本和 referrers。`python -m kasane run <script> --report <path>` 报告 stdout/stderr、异常栈与行号、会话版本；退出不自动保存。`examples/sdk/python_cpu_recipe.py` 是可运行的 CPU 创作示例。
+
+这只是 S3 的首批绑定。[Python 覆盖清单](../modules/kasane-python/python-coverage.json)及检查器目前记录 115 个 Rust SDK 公开入口中的 29 个已绑定，86 个仍待绑定；完整接口、GPU 观察与最终统一验收尚未交付。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
 
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

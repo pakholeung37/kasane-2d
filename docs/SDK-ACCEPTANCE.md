@@ -14,4 +14,18 @@
 
 `modules/kasane-sdk/tests/project_io.rs` 的 10 项测试覆盖：保存/重开后的持久内容与 CPU 求值一致；save-as 后同 ID 不同图片的历史资源；无 hash 旧资源的历史提示；已删除资源的历史路径；done/redo 跨保存；保存冲突和失败打开不替换会话；发布后目录同步 warning 的保存基线；model3 与 bare MOC3 导入；导入后编辑、保存和导出；relocate/replace 的内容校验；显式 base 的相对 PNG 路径。
 
-导出沿用 `kasane-project` 的结构验证和 publication 机制。测试确认生成 MOC3 文件，未将 structural pass 解释为官方运行时验收。独立外部模型预检查入口、Python wheel、GPU 观察和 S5 的图像证据尚未验收。
+导出沿用 `kasane-project` 的结构验证和 publication 机制。测试确认生成 MOC3 文件，未将 structural pass 解释为官方运行时验收。独立外部模型预检查入口、完整 Python API、GPU 观察和 S5 的图像证据尚未验收。
+
+## S3 首批 Python CPU wheel（2026-09-23）
+
+本地固定 PyO3 0.29.2、maturin 1.15.0，使用 CPython 3.14.3 构建 `kasane._native` 的 macOS arm64 wheel；wheel 安装在仓库外 `/tmp/kasane-sdk-python-venv`，测试从 `/tmp` 执行，`PYTHONPATH` 清空。wheel 内含 `__main__.py`、`_native.pyi` 与 `py.typed`。
+
+| 命令 | 结果 |
+| --- | --- |
+| `cargo test -p kasane-python -p kasane-sdk -p kasane-project` | 通过：原有 SDK/project 测试和 Python crate 构建测试 |
+| `cargo clippy -p kasane-python -p kasane-sdk -p kasane-project --all-targets -- -D warnings` | 通过，无 warning |
+| `python3.14 modules/kasane-python/tools/check_coverage.py` | 通过：115 个 Rust SDK 入口均已列出；29 个已绑定，86 个待绑定 |
+| 从 `/tmp` 运行已安装 wheel 的 `modules/kasane-python/tests/test_cpu.py -v` | 7 项通过：创建/保存/重开、数组副本、参数插值、导入/导出、rollback、双线程版本冲突、runner 异常行号 |
+| `python -m kasane run examples/sdk/python_cpu_recipe.py --report <path>` | 通过：报告 `passed`，创作与保存后 `modified=false` |
+
+这些结果验证了本机 CPython 3.14 的首批 API。尚未验证其它 Python 版本、free-threaded wheel、完整 Rust API 覆盖或 GPU 观察。

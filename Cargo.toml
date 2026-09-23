@@ -12,6 +12,7 @@ members = [
     "modules/kasane-moc3",
     "modules/kasane-project",
     "modules/kasane-sdk",
+    "modules/kasane-python",
 ]
 
 [workspace.package]

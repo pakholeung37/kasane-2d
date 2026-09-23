@@ -1,0 +1,14 @@
+[build-system]
+requires = ["maturin==1.15.0"]
+build-backend = "maturin"
+
+[project]
+name = "kasane"
+dynamic = ["version"]
+requires-python = ">=3.14,<3.15"
+description = "Scriptable 2D model authoring SDK"
+
+[tool.maturin]
+python-source = "python"
+module-name = "kasane._native"
+bindings = "pyo3"

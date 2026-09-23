@@ -491,4 +491,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 同轮路径契约修正：`prepare_png_asset` 现要求绝对路径；相对用户路径通过 `prepare_png_asset_from_base` 显式传入绝对 base，避免按进程 cwd 解析。SDK 测试覆盖错误路径与正确解析。
 
+2026-09-23 S3 首批实施：新增 `kasane-python` mixed-layout wheel，固定 PyO3 0.29.2 与 maturin 1.15.0；原生 Session 使用短时锁，`with edit` 收集命令后一次调用 Rust SDK 发布。已接入 PNG/矩形建模、参数和完整 mesh binding、位置更新、CPU 求值、工程导入/保存/导出、结构化业务异常，以及一次性 runner 的 stdout/stderr、异常行号与会话版本报告。仓库外 CPython 3.14 venv 的 7 项测试与 CPU recipe 通过；公开入口覆盖检查记录 29/115 已绑定，剩余 86 项及 GPU 观察仍待实施。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

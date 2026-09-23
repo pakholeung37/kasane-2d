@@ -1,0 +1,405 @@
+{
+  "Edit.commit": {
+    "status": "bound",
+    "python": "Edit.commit",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Edit.create_asset": {
+    "status": "bound",
+    "python": "Edit.add_png_asset",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Edit.create_binding": {
+    "status": "bound",
+    "python": "Edit.create_mesh_binding",
+    "test": "test_parameter_binding_samples_and_reopens"
+  },
+  "Edit.create_blend_binding": {
+    "status": "pending"
+  },
+  "Edit.create_blend_constraint": {
+    "status": "pending"
+  },
+  "Edit.create_blend_key_table": {
+    "status": "pending"
+  },
+  "Edit.create_glue": {
+    "status": "pending"
+  },
+  "Edit.create_mesh": {
+    "status": "bound",
+    "python": "Edit.create_rectangle",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Edit.create_offscreen": {
+    "status": "pending"
+  },
+  "Edit.create_parameter": {
+    "status": "bound",
+    "python": "Edit.create_parameter",
+    "test": "test_parameter_binding_samples_and_reopens"
+  },
+  "Edit.create_part": {
+    "status": "pending"
+  },
+  "Edit.create_scene_binding": {
+    "status": "pending"
+  },
+  "Edit.create_transform": {
+    "status": "pending"
+  },
+  "Edit.erase_object": {
+    "status": "pending"
+  },
+  "Edit.rename_mesh": {
+    "status": "bound",
+    "python": "Edit.rename_mesh",
+    "test": "test_two_threads_receive_one_stale_version"
+  },
+  "Edit.replace_asset": {
+    "status": "pending"
+  },
+  "Edit.replace_binding": {
+    "status": "pending"
+  },
+  "Edit.replace_blend_binding": {
+    "status": "pending"
+  },
+  "Edit.replace_blend_constraint": {
+    "status": "pending"
+  },
+  "Edit.replace_blend_key_table": {
+    "status": "pending"
+  },
+  "Edit.replace_canvas": {
+    "status": "pending"
+  },
+  "Edit.replace_draw_order_groups": {
+    "status": "pending"
+  },
+  "Edit.replace_glue": {
+    "status": "pending"
+  },
+  "Edit.replace_mesh": {
+    "status": "pending"
+  },
+  "Edit.replace_offscreen": {
+    "status": "pending"
+  },
+  "Edit.replace_parameter": {
+    "status": "pending"
+  },
+  "Edit.replace_part": {
+    "status": "pending"
+  },
+  "Edit.replace_part_binding_with_offscreen": {
+    "status": "pending"
+  },
+  "Edit.replace_scene_binding": {
+    "status": "pending"
+  },
+  "Edit.replace_topology": {
+    "status": "pending"
+  },
+  "Edit.replace_transform": {
+    "status": "pending"
+  },
+  "Edit.set_deform_parent": {
+    "status": "pending"
+  },
+  "Edit.set_mesh_keyform": {
+    "status": "pending"
+  },
+  "Edit.set_mesh_part": {
+    "status": "pending"
+  },
+  "Edit.set_organization_parent": {
+    "status": "pending"
+  },
+  "Edit.set_scene_keyform": {
+    "status": "pending"
+  },
+  "Edit.set_transform_parent": {
+    "status": "pending"
+  },
+  "Edit.set_transform_part": {
+    "status": "pending"
+  },
+  "Edit.update_mesh_properties": {
+    "status": "pending"
+  },
+  "Edit.update_positions": {
+    "status": "bound",
+    "python": "Edit.update_positions",
+    "test": "test_update_positions_publishes_one_edit"
+  },
+  "Edit.update_rotation": {
+    "status": "pending"
+  },
+  "Edit.update_warp_points": {
+    "status": "pending"
+  },
+  "ObjectHandle.id": {
+    "status": "pending"
+  },
+  "ObjectHandle.kind": {
+    "status": "pending"
+  },
+  "Session.asset": {
+    "status": "pending"
+  },
+  "Session.asset_ids": {
+    "status": "bound",
+    "python": "Session.asset_ids",
+    "test": "test_rollback_and_structured_error"
+  },
+  "Session.begin_edit": {
+    "status": "bound",
+    "python": "Session.edit",
+    "test": "test_rollback_and_structured_error"
+  },
+  "Session.binding": {
+    "status": "pending"
+  },
+  "Session.binding_for_mesh": {
+    "status": "pending"
+  },
+  "Session.binding_for_scene": {
+    "status": "pending"
+  },
+  "Session.binding_ids": {
+    "status": "pending"
+  },
+  "Session.blend_binding": {
+    "status": "pending"
+  },
+  "Session.blend_binding_ids": {
+    "status": "pending"
+  },
+  "Session.blend_constraint": {
+    "status": "pending"
+  },
+  "Session.blend_constraint_ids": {
+    "status": "pending"
+  },
+  "Session.blend_key_table": {
+    "status": "pending"
+  },
+  "Session.blend_key_table_ids": {
+    "status": "pending"
+  },
+  "Session.canvas": {
+    "status": "pending"
+  },
+  "Session.diagnose_resources": {
+    "status": "bound",
+    "python": "Session.diagnose_resources",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.document_id": {
+    "status": "pending"
+  },
+  "Session.drain_events": {
+    "status": "pending"
+  },
+  "Session.draw_order_groups": {
+    "status": "pending"
+  },
+  "Session.edit": {
+    "status": "bound",
+    "python": "Session.edit",
+    "test": "test_rollback_and_structured_error"
+  },
+  "Session.estimated_content_bytes": {
+    "status": "pending"
+  },
+  "Session.evaluate": {
+    "status": "bound",
+    "python": "Session.evaluate",
+    "test": "test_parameter_binding_samples_and_reopens"
+  },
+  "Session.evaluation_revision": {
+    "status": "pending"
+  },
+  "Session.export_package": {
+    "status": "bound",
+    "python": "Session.export_package",
+    "test": "test_import_edit_save_and_export"
+  },
+  "Session.find_meshes_by_name": {
+    "status": "pending"
+  },
+  "Session.geometry": {
+    "status": "pending"
+  },
+  "Session.glue": {
+    "status": "pending"
+  },
+  "Session.glue_ids": {
+    "status": "pending"
+  },
+  "Session.handle": {
+    "status": "pending"
+  },
+  "Session.history_lengths": {
+    "status": "pending"
+  },
+  "Session.history_state": {
+    "status": "pending"
+  },
+  "Session.import_bare_moc3": {
+    "status": "bound",
+    "python": "Session.import_bare_moc3",
+    "test": "test_import_edit_save_and_export"
+  },
+  "Session.import_model3": {
+    "status": "bound",
+    "python": "Session.import_model3",
+    "test": "test_import_edit_save_and_export"
+  },
+  "Session.mesh": {
+    "status": "bound",
+    "python": "Session.mesh",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.mesh_by_handle": {
+    "status": "pending"
+  },
+  "Session.mesh_ids": {
+    "status": "bound",
+    "python": "Session.mesh_ids",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.modified": {
+    "status": "bound",
+    "python": "Session.modified",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.new": {
+    "status": "bound",
+    "python": "Session.__init__",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.new_project": {
+    "status": "pending"
+  },
+  "Session.offscreen": {
+    "status": "pending"
+  },
+  "Session.offscreen_ids": {
+    "status": "pending"
+  },
+  "Session.open_project": {
+    "status": "bound",
+    "python": "open_project",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.parameter": {
+    "status": "bound",
+    "python": "Session.parameter",
+    "test": "test_parameter_binding_samples_and_reopens"
+  },
+  "Session.parameter_ids": {
+    "status": "bound",
+    "python": "Session.parameter_ids",
+    "test": "test_parameter_binding_samples_and_reopens"
+  },
+  "Session.part": {
+    "status": "pending"
+  },
+  "Session.part_ids": {
+    "status": "pending"
+  },
+  "Session.preview_evaluation_count": {
+    "status": "pending"
+  },
+  "Session.preview_frame": {
+    "status": "pending"
+  },
+  "Session.preview_revision": {
+    "status": "pending"
+  },
+  "Session.preview_values": {
+    "status": "pending"
+  },
+  "Session.project_path": {
+    "status": "bound",
+    "python": "Session.project_path",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.redo": {
+    "status": "bound",
+    "python": "Session.redo",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.references_to": {
+    "status": "pending"
+  },
+  "Session.require_unique_mesh": {
+    "status": "pending"
+  },
+  "Session.reset_preview_values": {
+    "status": "pending"
+  },
+  "Session.resolve_handle": {
+    "status": "pending"
+  },
+  "Session.save_project": {
+    "status": "bound",
+    "python": "Session.save",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.scene_binding": {
+    "status": "pending"
+  },
+  "Session.scene_binding_ids": {
+    "status": "pending"
+  },
+  "Session.set_preview_parameter": {
+    "status": "pending"
+  },
+  "Session.set_preview_values": {
+    "status": "pending"
+  },
+  "Session.transform": {
+    "status": "pending"
+  },
+  "Session.transform_ids": {
+    "status": "pending"
+  },
+  "Session.undo": {
+    "status": "bound",
+    "python": "Session.undo",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "Session.validate_structure": {
+    "status": "pending"
+  },
+  "Session.version": {
+    "status": "bound",
+    "python": "Session.version",
+    "test": "test_update_positions_publishes_one_edit"
+  },
+  "Session.with_filesystem": {
+    "status": "pending"
+  },
+  "Session.with_history_limits": {
+    "status": "pending"
+  },
+  "free.prepare_png_asset": {
+    "status": "bound",
+    "python": "Edit.add_png_asset",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  },
+  "free.prepare_png_asset_from_base": {
+    "status": "pending"
+  },
+  "free.prepare_relocated_asset": {
+    "status": "pending"
+  },
+  "free.rectangle_mesh": {
+    "status": "bound",
+    "python": "Edit.create_rectangle",
+    "test": "test_create_save_reopen_and_snapshot_copy"
+  }
+}
