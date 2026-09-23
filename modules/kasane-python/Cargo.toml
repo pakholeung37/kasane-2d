@@ -15,3 +15,7 @@ kasane-core = { path = "../kasane-core" }
 kasane-sdk = { path = "../kasane-sdk" }
 kasane-moc3 = { path = "../kasane-moc3" }
 pyo3 = "=0.29.2"
+kasane-sdk-observe = { path = "../kasane-sdk-observe", optional = true }
+
+[features]
+observe = ["dep:kasane-sdk-observe"]

@@ -948,6 +948,7 @@ dependencies = [
  "kasane-core",
  "kasane-moc3",
  "kasane-sdk",
+ "kasane-sdk-observe",
  "pyo3",
 ]
 
@@ -985,6 +986,20 @@ dependencies = [
  "kasane-core",
  "kasane-project",
  "png",
+]
+
+[[package]]
+name = "kasane-sdk-observe"
+version = "0.1.0"
+dependencies = [
+ "kasane-core",
+ "kasane-preview",
+ "kasane-project",
+ "kasane-render",
+ "kasane-render-wgpu",
+ "kasane-sdk",
+ "png",
+ "wgpu",
 ]
 
 [[package]]

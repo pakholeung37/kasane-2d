@@ -46,6 +46,19 @@ class SdkFailure(Exception):
     referrers: list[str]
 
 
+class ObservationFailure(Exception):
+    code: str
+    asset_id: str | None
+
+
+class NativeObserver:
+    def __init__(self, width: int, height: int, fit_long_side: float) -> None: ...
+    def set_fit_long_side(self, value: float) -> None: ...
+    def observe(
+        self, session: NativeSession, values: dict[str, float]
+    ) -> tuple[tuple[Version, int, str, int, list[tuple[str, float, float, bool]], tuple[float, float, float, float, float], float, Point, list[tuple[str, bool, tuple[int, int, int, int] | None]]], int, int, bytes, bytes, list[tuple[str, str, int]], str, str]: ...
+
+
 class ObjectHandle:
     @property
     def id(self) -> str: ...

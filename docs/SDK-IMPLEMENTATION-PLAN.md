@@ -527,4 +527,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 CPU 验收：仓库外 CPython 3.14 venv 安装 wheel，`test_cpu.py` 28 项通过；`python_cpu_recipe.py` 在仓库外独立输出目录完成创建、采样、保存和重开。Rust SDK 与 Python 基础 fixture 共用 `asymmetric-2x2.png`、100×100 画布及 40–60 矩形，检查相同的中点采样结果；两线程版本竞争、with edit 回滚、快照副本及 runner 异常行号均由 wheel 测试覆盖。覆盖检查 `--require-complete`、Rust 测试和 Clippy 均通过。S3 在当前 CPython 3.14/macOS arm64 环境的 CPU 验收完成；S4 GPU 观察与 S5 完整 agent 流程仍待实施。
 
+2026-09-23 S4 首批：新增 `kasane-sdk-observe`；`ObservationInput` 从已提交 Session 捕获明确参数的帧、版本、资源描述与项目 root，随后在会话锁外用 Project 共用 PNG/hash/尺寸验证读取纹理。`Observer` 复用 wgpu device、renderer 和按内容 hash 管理的纹理，提供透明 RGBA 与 PNG 字节；可选 Python `observe` feature 暴露同一入口，默认 CPU wheel 不初始化 GPU。Python `observe_run` 将逐样本 PNG、实际参数、来源版本、focus crop、contact sheet 和诊断写入独立运行目录；crop 从完整合成图按本次求值和 view 的 mesh bounds 裁剪，保留 mask/offscreen 遮挡。失败报告标记失败样本，不把旧图标成新结果。真实 GPU Rust 测试覆盖未保存工程、连续几何/纹理/view 变化；仓库外 feature wheel 的 2 项测试覆盖资源失败、PNG、运行报告、crop 像素与完整帧一致，以及 mask/Offscreen 场景。叠加层、完整报告字段及 S4 GPU 门禁仍在后续批次。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

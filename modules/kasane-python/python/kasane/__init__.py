@@ -2,11 +2,23 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
+import math
 from pathlib import Path
+import struct
 from typing import Mapping, NamedTuple, Sequence
+from uuid import UUID, uuid4
 from weakref import WeakSet
+import zlib
 
 from ._native import NativeSession, ObjectHandle, SdkFailure, capabilities
+try:
+    from ._native import NativeObserver, ObservationFailure
+except ImportError:
+    NativeObserver = None
+    class ObservationFailure(Exception):
+        """Raised only by wheels built with the observe feature."""
 
 Version = tuple[int, int, int]
 Point = tuple[float, float]
@@ -86,6 +98,50 @@ class MeshRecordSnapshot(NamedTuple):
     part_id: str
     deformer_id: str
     version: Version
+
+
+class TextureRevision(NamedTuple):
+    asset_id: str
+    sha256: str
+    revision: int
+
+
+class DrawableBounds(NamedTuple):
+    id: str
+    visible: bool
+    bounds: tuple[int, int, int, int] | None
+
+
+class ObservedFrame(NamedTuple):
+    version: Version
+    evaluation_revision: int
+    document_id: str
+    source_revision: int
+    parameters: list[ParameterSample]
+    canvas: CanvasSnapshot
+    view_scale: float
+    view_offset: Point
+    drawable_bounds: list[DrawableBounds]
+    width: int
+    height: int
+    rgba: bytes
+    png: bytes
+    texture_revisions: list[TextureRevision]
+    adapter_name: str
+    adapter_backend: str
+
+    def save_png(self, path: Path) -> None:
+        if not path.is_absolute():
+            raise ValueError("PNG output path must be absolute")
+        path.write_bytes(self.png)
+
+
+class ObservationRun(NamedTuple):
+    directory: Path
+    report: Path
+    frames: list[Path]
+    crops: list[Path]
+    contact_sheet: Path
 
 
 class AssetSnapshot(NamedTuple):
@@ -1183,6 +1239,140 @@ class Session:
         return Path(value) if value is not None else None
 
 
+class Observer:
+    """Reusable offscreen renderer; requires a wheel built with the observe feature."""
+
+    def __init__(self, width: int, height: int, fit_long_side: float) -> None:
+        if NativeObserver is None:
+            raise RuntimeError("This kasane wheel has no GPU observation feature")
+        self._native = NativeObserver(width, height, fit_long_side)
+
+    def __enter__(self) -> Observer:
+        return self
+
+    def __exit__(self, exception_type, exception, traceback) -> bool:
+        return False
+
+    def set_fit_long_side(self, value: float) -> None:
+        self._native.set_fit_long_side(value)
+
+    def observe(self, session: Session, values: Mapping[str, float] | None = None) -> ObservedFrame:
+        raw = self._native.observe(session._native, dict(values or {}))
+        metadata, width, height, rgba, png, textures, adapter_name, backend = raw
+        version, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
+        return ObservedFrame(
+            version, evaluation_revision, document_id, source_revision,
+            [ParameterSample(*item) for item in parameters], CanvasSnapshot(*canvas),
+            scale, offset, [DrawableBounds(*item) for item in bounds],
+            width, height, rgba, png,
+            [TextureRevision(*item) for item in textures], adapter_name, backend,
+        )
+
+    def observe_run(
+        self, session: Session, samples: Sequence[Mapping[str, float]], output: Path,
+        focus: Sequence[str] = (),
+    ) -> ObservationRun:
+        """Render each sample into a unique run directory and write a JSON report."""
+        if not output.is_absolute():
+            raise ValueError("Observation output path must be absolute")
+        if not samples:
+            raise ValueError("Observation run requires at least one sample")
+        output.mkdir(parents=True, exist_ok=True)
+        directory = output / uuid4().hex
+        frames_dir = directory / "frames"
+        frames_dir.mkdir(parents=True)
+        report_path = directory / "report.json"
+        frames: list[Path] = []
+        crops: list[Path] = []
+        captured: list[ObservedFrame] = []
+        entries: list[dict] = []
+        sample_entries: list[dict] = []
+        diagnostics: list[dict] = []
+        report = {"schema_version": 1, "status": "running", "frames": entries}
+        try:
+            for index, requested in enumerate(samples):
+                frame = self.observe(session, requested)
+                path = frames_dir / f"{index:03d}.png"
+                frame.save_png(path)
+                frames.append(path)
+                captured.append(frame)
+                crop_entries = []
+                bounds_by_id = {item.id: item for item in frame.drawable_bounds}
+                for object_id in focus:
+                    try:
+                        safe_id = str(UUID(object_id))
+                    except ValueError:
+                        diagnostics.append({"index": index, "object_id": object_id,
+                                            "code": "INVALID_FOCUS_ID"})
+                        continue
+                    drawable = bounds_by_id.get(safe_id)
+                    if drawable is None or drawable.bounds is None:
+                        diagnostics.append({"index": index, "object_id": safe_id,
+                                            "code": "FOCUS_NOT_VISIBLE" if drawable else "FOCUS_NOT_FOUND"})
+                        continue
+                    x0, y0, x1, y1 = drawable.bounds
+                    cropped = _crop_rgba(frame.rgba, frame.width, drawable.bounds)
+                    crop_png = _encode_rgba_png(x1 - x0, y1 - y0, cropped)
+                    crop_path = directory / "crops" / safe_id / f"{index:03d}.png"
+                    crop_path.parent.mkdir(parents=True, exist_ok=True)
+                    crop_path.write_bytes(crop_png)
+                    crops.append(crop_path)
+                    crop_entries.append({
+                        "object_id": safe_id, "bounds": drawable.bounds,
+                        "path": str(crop_path.relative_to(directory)),
+                        "sha256": hashlib.sha256(crop_png).hexdigest(),
+                    })
+                sample_entries.append({
+                    "requested": dict(requested),
+                    "actual": [sample._asdict() for sample in frame.parameters],
+                })
+                entries.append({
+                    "index": index, "path": str(path.relative_to(directory)),
+                    "sha256": hashlib.sha256(frame.png).hexdigest(),
+                    "version": frame.version,
+                    "source_revision": frame.source_revision,
+                    "evaluation_revision": frame.evaluation_revision,
+                    "document_id": frame.document_id,
+                    "canvas": frame.canvas._asdict(),
+                    "view": {"scale": frame.view_scale, "offset": frame.view_offset,
+                             "width": frame.width, "height": frame.height},
+                    "adapter": {"name": frame.adapter_name, "backend": frame.adapter_backend},
+                    "textures": [texture._asdict() for texture in frame.texture_revisions],
+                    "format": "RGBA8Unorm",
+                    "color_space": "linear_unorm_no_gamma_conversion",
+                    "alpha_convention": "premultiplied_no_post_conversion",
+                    "background": "transparent",
+                    "texture_profile": "linear_no_mipmap",
+                    "crops": crop_entries,
+                })
+            sheet = _contact_sheet(captured)
+            contact_sheet = directory / "contact-sheet.png"
+            contact_sheet.write_bytes(sheet)
+            report["contact_sheet"] = {
+                "path": contact_sheet.name, "sha256": hashlib.sha256(sheet).hexdigest(),
+            }
+            (directory / "samples.json").write_text(
+                json.dumps(sample_entries, indent=2, allow_nan=False), encoding="utf-8",
+            )
+            report["status"] = "frames_complete"
+        except Exception as error:
+            report["status"] = "failed"
+            report["failure"] = {
+                "sample_index": len(entries), "type": type(error).__name__,
+                "code": getattr(error, "code", None),
+                "asset_id": getattr(error, "asset_id", None),
+                "message": str(error),
+            }
+            setattr(error, "run_directory", directory)
+            raise
+        finally:
+            (directory / "diagnostics.json").write_text(
+                json.dumps(diagnostics, indent=2, allow_nan=False), encoding="utf-8",
+            )
+            report_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
+        return ObservationRun(directory, report_path, frames, crops, contact_sheet)
+
+
 def open_project(absolute_path: Path) -> Session:
     """Open a saved project from an absolute path."""
     return Session._from_native(NativeSession.open(str(absolute_path)))
@@ -1214,6 +1404,54 @@ def _offscreen_data(value: OffscreenSpec | OffscreenSnapshot):
         list(value.masks), list(value.part_keyform_indices),
         [(form.opacity, form.multiply, form.screen) for form in value.keyforms],
     )
+
+
+def _encode_rgba_png(width: int, height: int, rgba: bytes) -> bytes:
+    stride = width * 4
+    if len(rgba) != stride * height:
+        raise ValueError("RGBA buffer dimensions do not match")
+    scanlines = b"".join(
+        b"\0" + rgba[row * stride:(row + 1) * stride]
+        for row in range(height)
+    )
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (struct.pack(">I", len(payload)) + kind + payload +
+                struct.pack(">I", zlib.crc32(kind + payload) & 0xffffffff))
+    return (
+        b"\x89PNG\r\n\x1a\n" +
+        chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)) +
+        chunk(b"IDAT", zlib.compress(scanlines)) +
+        chunk(b"IEND", b"")
+    )
+
+
+def _crop_rgba(
+    rgba: bytes, width: int, bounds: tuple[int, int, int, int],
+) -> bytes:
+    x0, y0, x1, y1 = bounds
+    stride = width * 4
+    return b"".join(
+        rgba[row * stride + x0 * 4:row * stride + x1 * 4]
+        for row in range(y0, y1)
+    )
+
+
+def _contact_sheet(frames: Sequence[ObservedFrame]) -> bytes:
+    columns = math.ceil(math.sqrt(len(frames)))
+    rows = math.ceil(len(frames) / columns)
+    cell_width = frames[0].width
+    cell_height = frames[0].height
+    width = cell_width * columns
+    height = cell_height * rows
+    rgba = bytearray(width * height * 4)
+    for index, frame in enumerate(frames):
+        x = (index % columns) * cell_width
+        y = (index // columns) * cell_height
+        for row in range(cell_height):
+            source = row * cell_width * 4
+            target = ((y + row) * width + x) * 4
+            rgba[target:target + cell_width * 4] = frame.rgba[source:source + cell_width * 4]
+    return _encode_rgba_png(width, height, rgba)
 
 
 def _mesh_record_data(value: MeshRecordSpec | MeshRecordSnapshot):
@@ -1340,6 +1578,7 @@ __all__ = [
     "AssetSnapshot",
     "CanvasSnapshot",
     "DrawableSample",
+    "DrawableBounds",
     "DrawOrderGroup",
     "Edit",
     "EditEvent",
@@ -1363,6 +1602,10 @@ __all__ = [
     "MeshBindingSnapshot",
     "MeshKeyform",
     "ObjectHandle",
+    "ObservationFailure",
+    "ObservationRun",
+    "ObservedFrame",
+    "Observer",
     "OffscreenKeyform",
     "OffscreenSpec",
     "OffscreenSnapshot",
@@ -1381,6 +1624,7 @@ __all__ = [
     "Session",
     "StructureIssue",
     "TransformSnapshot",
+    "TextureRevision",
     "WarpData",
     "capabilities",
     "open_project",

@@ -103,4 +103,10 @@ Python BlendShape binding 的六种 target 均有对应 delta keyform 类型，�
 
 Python MeshRecord 暴露完整几何、绘制属性及关系字段，可创建自定义 mesh 或完整替换。`Edit.replace_topology` 接收源几何快照、旧顶点到新顶点的映射，以及相关普通 binding、BlendShape binding、Glue 的完整候选，同一 edit 中原子校验和发布。方法清单为 115/116 项 Python 绑定、1 项 Rust 专用、0 项待绑定。
 
+S4 可选 GPU 入口开始接入：带 `observe` feature 的 wheel 提供 `kasane.Observer(width, height, fit_long_side)`；`observe(session, values)` 返回带源版本、evaluation revision、RGBA、PNG、实际纹理 hash/revision 和 adapter 信息的 `ObservedFrame`，`save_png(absolute_path)` 写出 PNG。`set_fit_long_side` 更新 view 并复用 GPU 资源；失败抛带 code 和 asset_id 的 `ObservationFailure`。默认 CPU wheel 的 `capabilities()["gpu_observation"]` 为 false；feature wheel 实际探测 device 后报告可用性。
+
+`Observer.observe_run(session, samples, absolute_output, focus=[])` 为每次运行创建独立目录，输出逐样本 PNG、focus crop、`contact-sheet.png`、`samples.json`、`diagnostics.json` 和 `report.json`。crop 从完整合成帧裁剪，保留遮挡、mask 和 Offscreen。报告记录 requested/actual、source/evaluation revision、adapter、view、资源与图像 hash；成功状态为 `frames_complete`，失败状态为 `failed` 并附样本序号。S4 后续补叠加层及完整观察报告字段。
+
+可运行示例：以 `maturin build --features observe` 构建 wheel 并安装到外部 venv 后，从仓库外运行 `python /absolute/path/to/examples/sdk/python_observe_recipe.py /absolute/output/dir`。示例在未保存 Session 中创建 mask 与 Offscreen、采样参数 0/0.5/1，并打印报告路径。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

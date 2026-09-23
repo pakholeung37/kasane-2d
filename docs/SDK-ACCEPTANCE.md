@@ -63,3 +63,7 @@ BlendShape binding 续测：六种 target 的 delta keyform 创建、读取；me
 Mesh 全量与拓扑续测：自定义三角 mesh 创建、全字段快照及替换；同时更新顶点 ID、普通 binding、BlendShape binding、Glue，验证不完整映射与陈旧快照回滚、保存重开和 undo。仓库外 wheel 的 `test_cpu.py` 28 项通过；覆盖清单为 115/116 项 Python 绑定、1 项 Rust 专用、0 项待绑定。
 
 S3 CPU 门禁：外部 CPython 3.14 venv 的 28 项 wheel 测试、仓库外独立运行的 `python_cpu_recipe.py`、Rust SDK/Project 测试、Clippy 和 `check_coverage.py --require-complete` 均通过。Rust 与 Python 基础 fixture 使用同一 PNG、画布和矩形输入，验证相同的参数中点采样。当前验收环境为 macOS arm64；GPU 图像与 S5 agent 流程尚未运行。
+
+S4 首批 GPU 实测：`cargo test -p kasane-sdk-observe` 的 2 项测试在当前 macOS arm64 GPU 上通过，含未保存 Session 观察及同一 Observer 的连续几何、纹理、view 变化；`cargo clippy` 无警告。带 `observe` feature 的仓库外 wheel 的 `test_observe.py` 2 项通过，覆盖 RGBA/PNG、纹理 revision、资源缺失错误、逐样本运行报告、失败报告、focus crop、contact sheet，以及 mask/Offscreen 场景；裁剪 PNG 的像素逐行等于完整合成帧相同区域。报告声明 `RGBA8Unorm`、线性数据、不额外转换的预乘 alpha 和透明背景。默认 CPU wheel 重新构建后的 28 项测试通过，且能力探测报告 GPU 观察关闭；覆盖检查 115/116、0 待绑定。完整 S4 门禁尚未执行。
+
+观察 recipe 实测：仓库外安装的 feature wheel 运行 `examples/sdk/python_observe_recipe.py`，在 `target/sdk-acceptance/5c7e2ae6ac784b1eb80cfc4c4790a269` 产出 3 帧、3 个 focus crop、contact sheet 和报告；三帧 PNG hash 不同，adapter 为 Apple M4 / Metal，报告状态 `frames_complete`，参数 sweep 后 Session preview 值不变。此本地证据目录不纳入 Git；需要复核时重新运行 recipe 即可。

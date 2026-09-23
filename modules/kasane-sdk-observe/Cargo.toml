@@ -1,0 +1,19 @@
+[package]
+name = "kasane-sdk-observe"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Immutable observation inputs and wgpu harness for Kasane SDK"
+
+[dependencies]
+kasane-core = { path = "../kasane-core" }
+kasane-sdk = { path = "../kasane-sdk" }
+kasane-project = { path = "../kasane-project" }
+kasane-preview = { path = "../kasane-preview" }
+kasane-render = { path = "../kasane-render" }
+kasane-render-wgpu = { path = "../kasane-render-wgpu" }
+wgpu = { workspace = true }
+png = { workspace = true }
+
+[dev-dependencies]

@@ -16,7 +16,7 @@ use pyo3::prelude::*;
 
 #[pyclass]
 pub(crate) struct NativeSession {
-    inner: Arc<Mutex<AuthoringSession>>,
+    pub(crate) inner: Arc<Mutex<AuthoringSession>>,
 }
 
 #[pymethods]
