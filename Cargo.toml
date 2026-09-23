@@ -11,6 +11,7 @@ members = [
     "modules/kasane-godot",
     "modules/kasane-moc3",
     "modules/kasane-moc3-psd",
+    "modules/kasane-psd",
     "modules/kasane-project",
     "modules/kasane-sdk",
     "modules/kasane-sdk-observe",
