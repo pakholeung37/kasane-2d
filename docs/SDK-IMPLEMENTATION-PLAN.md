@@ -519,4 +519,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 Glue 批次：Python 支持 Glue 创建、读取和替换，包括顶点对权重、静态强度和完整参数绑定表；替换保留 runtime ID。快照副本、保存重开、无效顶点回滚及 undo 通过仓库外 wheel 的 24 项 CPU 测试；清单为 104/116 Python 绑定、1 项 Rust 专用、11 项待绑定。
 
+2026-09-23 S3 BlendShape 元数据批次：参数创建/替换可指定 `blend_shape` kind，快照包含 kind；Python 支持 key table 与 constraint 的创建、读取和替换。快照副本、保存重开、无效长度回滚及 undo 通过仓库外 wheel 的 25 项 CPU 测试；清单为 110/116 Python 绑定、1 项 Rust 专用、5 项待绑定。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

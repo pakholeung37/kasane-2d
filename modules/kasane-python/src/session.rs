@@ -325,6 +325,7 @@ impl NativeSession {
                 parameter.maximum,
                 parameter.default_value,
                 parameter.repeat,
+                parameter_kind_name(parameter.kind).to_owned(),
                 version_tuple(session.version()),
             )
         }))
@@ -403,6 +404,32 @@ impl NativeSession {
         Ok(session
             .glue(id)
             .map(|value| glue_tuple(value, session.version())))
+    }
+
+    fn blend_key_table(&self, id: &str) -> PyResult<Option<BlendKeyTableTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session.blend_key_table(id).map(|value| {
+            (
+                value.id,
+                value.parameter_id,
+                value.keys,
+                value.base_key_idx,
+                version_tuple(session.version()),
+            )
+        }))
+    }
+
+    fn blend_constraint(&self, id: &str) -> PyResult<Option<BlendConstraintTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session.blend_constraint(id).map(|value| {
+            (
+                value.id,
+                value.parameter_id,
+                value.keys,
+                value.weights,
+                version_tuple(session.version()),
+            )
+        }))
     }
 
     fn scene_binding(&self, id: &str) -> PyResult<Option<SceneBindingTuple>> {

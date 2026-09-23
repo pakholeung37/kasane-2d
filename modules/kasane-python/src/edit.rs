@@ -5,8 +5,9 @@ use std::sync::{Arc, Mutex};
 use crate::conversion::*;
 use crate::error::{edit_failure, poisoned, sdk_failure};
 use kasane_core::{
-    draw_order::DrawOrderGroup, BindingAxis, Canvas, MeshBinding, MeshKeyform, Parameter, Part,
-    RotationTransform, SceneBinding, SceneKeyform, Transform, TransformData, Vec2, WarpTransform,
+    draw_order::DrawOrderGroup, BindingAxis, BlendShapeConstraint, BlendShapeKeyTable, Canvas,
+    MeshBinding, MeshKeyform, Parameter, Part, RotationTransform, SceneBinding, SceneKeyform,
+    Transform, TransformData, Vec2, WarpTransform,
 };
 use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
@@ -43,6 +44,10 @@ enum Command {
     ReplacePartBindingWithOffscreen(SceneBinding, kasane_core::Offscreen),
     CreateGlue(kasane_core::Glue),
     ReplaceGlue(kasane_core::Glue),
+    CreateBlendKeyTable(BlendShapeKeyTable),
+    ReplaceBlendKeyTable(BlendShapeKeyTable),
+    CreateBlendConstraint(BlendShapeConstraint),
+    ReplaceBlendConstraint(BlendShapeConstraint),
     UpdateRotation(String, RotationTransform),
     UpdateWarpPoints(String, Vec<Vec2>),
     ReplaceAsset(kasane_core::ImageAsset),
@@ -358,6 +363,82 @@ impl NativeEdit {
         Ok(())
     }
 
+    fn create_blend_key_table(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        parameter_id: String,
+        keys: Vec<f32>,
+        base_key_idx: usize,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_blend_key_table")?;
+        self.commands
+            .push(Command::CreateBlendKeyTable(BlendShapeKeyTable {
+                id,
+                parameter_id,
+                keys,
+                base_key_idx,
+            }));
+        Ok(())
+    }
+
+    fn replace_blend_key_table(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        parameter_id: String,
+        keys: Vec<f32>,
+        base_key_idx: usize,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_blend_key_table")?;
+        self.commands
+            .push(Command::ReplaceBlendKeyTable(BlendShapeKeyTable {
+                id,
+                parameter_id,
+                keys,
+                base_key_idx,
+            }));
+        Ok(())
+    }
+
+    fn create_blend_constraint(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        parameter_id: String,
+        keys: Vec<f32>,
+        weights: Vec<f32>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_blend_constraint")?;
+        self.commands
+            .push(Command::CreateBlendConstraint(BlendShapeConstraint {
+                id,
+                parameter_id,
+                keys,
+                weights,
+            }));
+        Ok(())
+    }
+
+    fn replace_blend_constraint(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        parameter_id: String,
+        keys: Vec<f32>,
+        weights: Vec<f32>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_blend_constraint")?;
+        self.commands
+            .push(Command::ReplaceBlendConstraint(BlendShapeConstraint {
+                id,
+                parameter_id,
+                keys,
+                weights,
+            }));
+        Ok(())
+    }
+
     fn update_warp_points(
         &mut self,
         py: Python<'_>,
@@ -465,7 +546,7 @@ impl NativeEdit {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false))]
+    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind=None))]
     fn replace_parameter(
         &mut self,
         py: Python<'_>,
@@ -475,6 +556,7 @@ impl NativeEdit {
         maximum: f32,
         default_value: f32,
         repeat: bool,
+        kind: Option<&str>,
     ) -> PyResult<()> {
         self.ensure_open(py, "replace_parameter")?;
         let original = self.session.lock().map_err(|_| poisoned())?.parameter(&id);
@@ -488,6 +570,9 @@ impl NativeEdit {
         parameter.maximum = maximum;
         parameter.default_value = default_value;
         parameter.repeat = repeat;
+        if let Some(kind) = kind {
+            parameter.kind = parameter_kind_from_name(kind)?;
+        }
         self.commands.push(Command::ReplaceParameter(parameter));
         Ok(())
     }
@@ -617,7 +702,7 @@ impl NativeEdit {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false))]
+    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind="normal"))]
     fn create_parameter(
         &mut self,
         py: Python<'_>,
@@ -627,6 +712,7 @@ impl NativeEdit {
         maximum: f32,
         default_value: f32,
         repeat: bool,
+        kind: &str,
     ) -> PyResult<()> {
         self.ensure_open(py, "create_parameter")?;
         self.commands.push(Command::CreateParameter(Parameter {
@@ -636,6 +722,7 @@ impl NativeEdit {
             maximum,
             default_value,
             repeat,
+            kind: parameter_kind_from_name(kind)?,
             ..Parameter::default()
         }));
         Ok(())
@@ -862,6 +949,18 @@ impl NativeEdit {
                         }
                         Command::CreateGlue(value) => edit.create_glue(value)?,
                         Command::ReplaceGlue(value) => edit.replace_glue(value)?,
+                        Command::CreateBlendKeyTable(value) => {
+                            edit.create_blend_key_table(value)?
+                        }
+                        Command::ReplaceBlendKeyTable(value) => {
+                            edit.replace_blend_key_table(value)?
+                        }
+                        Command::CreateBlendConstraint(value) => {
+                            edit.create_blend_constraint(value)?
+                        }
+                        Command::ReplaceBlendConstraint(value) => {
+                            edit.replace_blend_constraint(value)?
+                        }
                         Command::UpdateRotation(id, rotation) => {
                             edit.update_rotation(&id, rotation)?
                         }

@@ -115,6 +115,7 @@ class ParameterSnapshot(NamedTuple):
     maximum: float
     default_value: float
     repeat: bool
+    kind: str
     version: Version
 
 
@@ -272,6 +273,36 @@ class GlueSnapshot(NamedTuple):
     pairs: list[GlueVertexPair]
     intensity: float
     binding: GlueBinding | None
+    version: Version
+
+
+class BlendKeyTableSpec(NamedTuple):
+    id: str
+    parameter_id: str
+    keys: Sequence[float]
+    base_key_idx: int
+
+
+class BlendKeyTableSnapshot(NamedTuple):
+    id: str
+    parameter_id: str
+    keys: list[float]
+    base_key_idx: int
+    version: Version
+
+
+class BlendConstraintSpec(NamedTuple):
+    id: str
+    parameter_id: str
+    keys: Sequence[float]
+    weights: Sequence[float]
+
+
+class BlendConstraintSnapshot(NamedTuple):
+    id: str
+    parameter_id: str
+    keys: list[float]
+    weights: list[float]
     version: Version
 
 
@@ -464,6 +495,28 @@ class Edit:
     def replace_glue(self, glue: GlueSnapshot) -> None:
         self._call(lambda: self._native.replace_glue(_glue_data(glue)))
 
+    def create_blend_key_table(self, table: BlendKeyTableSpec) -> None:
+        self._call(lambda: self._native.create_blend_key_table(
+            table.id, table.parameter_id, list(table.keys), table.base_key_idx,
+        ))
+
+    def replace_blend_key_table(self, table: BlendKeyTableSnapshot) -> None:
+        self._call(lambda: self._native.replace_blend_key_table(
+            table.id, table.parameter_id, list(table.keys), table.base_key_idx,
+        ))
+
+    def create_blend_constraint(self, constraint: BlendConstraintSpec) -> None:
+        self._call(lambda: self._native.create_blend_constraint(
+            constraint.id, constraint.parameter_id,
+            list(constraint.keys), list(constraint.weights),
+        ))
+
+    def replace_blend_constraint(self, constraint: BlendConstraintSnapshot) -> None:
+        self._call(lambda: self._native.replace_blend_constraint(
+            constraint.id, constraint.parameter_id,
+            list(constraint.keys), list(constraint.weights),
+        ))
+
     def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
         self._call(lambda: self._native.update_warp_points(transform_id, list(points)))
 
@@ -478,10 +531,11 @@ class Edit:
         maximum: float,
         default_value: float,
         repeat: bool = False,
+        kind: str | None = None,
     ) -> None:
         self._call(
             lambda: self._native.replace_parameter(
-                parameter_id, name, minimum, maximum, default_value, repeat
+                parameter_id, name, minimum, maximum, default_value, repeat, kind
             )
         )
 
@@ -525,10 +579,11 @@ class Edit:
         maximum: float,
         default_value: float,
         repeat: bool = False,
+        kind: str = "normal",
     ) -> None:
         self._call(
             lambda: self._native.create_parameter(
-                parameter_id, name, minimum, maximum, default_value, repeat
+                parameter_id, name, minimum, maximum, default_value, repeat, kind
             )
         )
 
@@ -834,6 +889,14 @@ class Session:
             [GlueVertexPair(*pair) for pair in pairs], intensity, typed_binding, version,
         )
 
+    def blend_key_table(self, table_id: str) -> BlendKeyTableSnapshot | None:
+        raw = self._native.blend_key_table(table_id)
+        return BlendKeyTableSnapshot(*raw) if raw is not None else None
+
+    def blend_constraint(self, constraint_id: str) -> BlendConstraintSnapshot | None:
+        raw = self._native.blend_constraint(constraint_id)
+        return BlendConstraintSnapshot(*raw) if raw is not None else None
+
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)
 
@@ -1048,6 +1111,10 @@ def _scene_binding_snapshot(raw) -> SceneBindingSnapshot | None:
 
 __all__ = [
     "Axis",
+    "BlendConstraintSnapshot",
+    "BlendConstraintSpec",
+    "BlendKeyTableSnapshot",
+    "BlendKeyTableSpec",
     "Appearance",
     "AssetSnapshot",
     "CanvasSnapshot",

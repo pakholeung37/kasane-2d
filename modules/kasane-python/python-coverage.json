@@ -18,10 +18,14 @@
     "status": "pending"
   },
   "Edit.create_blend_constraint": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_blend_constraint",
+    "test": "test_blend_table_constraint_and_parameter_kind"
   },
   "Edit.create_blend_key_table": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_blend_key_table",
+    "test": "test_blend_table_constraint_and_parameter_kind"
   },
   "Edit.create_glue": {
     "status": "bound",
@@ -82,10 +86,14 @@
     "status": "pending"
   },
   "Edit.replace_blend_constraint": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_blend_constraint",
+    "test": "test_blend_table_constraint_and_parameter_kind"
   },
   "Edit.replace_blend_key_table": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_blend_key_table",
+    "test": "test_blend_table_constraint_and_parameter_kind"
   },
   "Edit.replace_canvas": {
     "status": "bound",
@@ -247,7 +255,9 @@
     "test": "test_queries_geometry_history_and_events"
   },
   "Session.blend_constraint": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.blend_constraint",
+    "test": "test_blend_table_constraint_and_parameter_kind"
   },
   "Session.blend_constraint_ids": {
     "status": "bound",
@@ -255,7 +265,9 @@
     "test": "test_queries_geometry_history_and_events"
   },
   "Session.blend_key_table": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.blend_key_table",
+    "test": "test_blend_table_constraint_and_parameter_kind"
   },
   "Session.blend_key_table_ids": {
     "status": "bound",

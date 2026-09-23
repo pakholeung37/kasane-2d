@@ -28,6 +28,9 @@ SCENE_WARP = "00000000-0000-4000-8000-000000000012"
 OFFSCREEN = "00000000-0000-4000-8000-000000000013"
 MESH_B = "00000000-0000-4000-8000-000000000014"
 GLUE = "00000000-0000-4000-8000-000000000015"
+BLEND_PARAMETER = "00000000-0000-4000-8000-000000000016"
+BLEND_TABLE = "00000000-0000-4000-8000-000000000017"
+BLEND_CONSTRAINT = "00000000-0000-4000-8000-000000000018"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -567,6 +570,42 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(model.version, version)
         model.undo()
         self.assertEqual(model.glue(GLUE).name, "seam")
+
+    def test_blend_table_constraint_and_parameter_kind(self):
+        model = session()
+        with model.edit("parameters and blend metadata") as edit:
+            edit.create_parameter(BLEND_PARAMETER, "shape", 0, 1, 0, kind="blend_shape")
+            edit.create_parameter(PARAMETER, "limit", 0, 1, 0)
+            edit.create_blend_key_table(kasane.BlendKeyTableSpec(
+                BLEND_TABLE, BLEND_PARAMETER, [0, 1], 0,
+            ))
+            edit.create_blend_constraint(kasane.BlendConstraintSpec(
+                BLEND_CONSTRAINT, PARAMETER, [0, 1], [1, 1],
+            ))
+        self.assertEqual(model.parameter(BLEND_PARAMETER).kind, "blend_shape")
+        table = model.blend_key_table(BLEND_TABLE)
+        constraint = model.blend_constraint(BLEND_CONSTRAINT)
+        table.keys[0] = 0.25
+        self.assertEqual(model.blend_key_table(BLEND_TABLE).keys, [0, 1])
+        with model.edit("replace blend metadata") as edit:
+            edit.replace_blend_key_table(table._replace(keys=[0, 0.5, 1], base_key_idx=1))
+            edit.replace_blend_constraint(constraint._replace(weights=[0.5, 1]))
+        self.assertEqual(model.blend_key_table(BLEND_TABLE).base_key_idx, 1)
+        self.assertEqual(model.blend_constraint(BLEND_CONSTRAINT).weights, [0.5, 1])
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.blend_key_table(BLEND_TABLE).keys, [0, 0.5, 1])
+            self.assertEqual(reopened.parameter(BLEND_PARAMETER).kind, "blend_shape")
+        version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("invalid constraint") as edit:
+                edit.replace_blend_constraint(constraint._replace(weights=[1]))
+        self.assertEqual(error.exception.code, "INVALID_LENGTH")
+        self.assertEqual(model.version, version)
+        model.undo()
+        self.assertEqual(model.blend_key_table(BLEND_TABLE).keys, [0, 1])
 
     def test_png_base_relocation_and_replacement(self):
         model = session()

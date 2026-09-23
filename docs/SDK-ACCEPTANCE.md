@@ -55,3 +55,5 @@ Transform 完整替换续测：rotation 和 warp 的快照字段可替换并保�
 Offscreen 续测：创建、快照副本、完整替换、保存重开、非法索引回滚和 undo；单独扩容 Part 表被拒，Part 表与 Offscreen 映射联合扩容成功并可 undo。仓库外 wheel 的 `test_cpu.py` 23 项通过；覆盖清单为 101/116 项 Python 绑定、1 项 Rust 专用、14 项待绑定。
 
 Glue 续测：创建、快照副本、带参数绑定的完整替换、保存重开、无效顶点回滚和 undo。仓库外 wheel 的 `test_cpu.py` 24 项通过；覆盖清单为 104/116 项 Python 绑定、1 项 Rust 专用、11 项待绑定。
+
+BlendShape 元数据续测：blend_shape 参数、key table 与 constraint 创建、替换、快照副本和保存重开；约束长度错误整批回滚，undo 恢复旧表。仓库外 wheel 的 `test_cpu.py` 25 项通过；覆盖清单为 110/116 项 Python 绑定、1 项 Rust 专用、5 项待绑定。

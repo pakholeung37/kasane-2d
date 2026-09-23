@@ -1,9 +1,9 @@
 //! Value conversion at the Python/Rust boundary.
 use kasane_core::{
     Appearance, BindingAxis, BlendMode, DrawableFrame, Glue, GlueBinding, GlueKeyform,
-    GlueVertexPair, MeshBinding, Offscreen, OffscreenKeyform, PartKeyform, PreciseVec2,
-    RotationKeyform, RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack,
-    Transform, TransformData, Vec2, WarpKeyform,
+    GlueVertexPair, MeshBinding, Offscreen, OffscreenKeyform, ParameterKind, PartKeyform,
+    PreciseVec2, RotationKeyform, RotationPose, RotationTransform, SceneBinding, SceneKeyform,
+    SceneTrack, Transform, TransformData, Vec2, WarpKeyform,
 };
 use kasane_sdk::{ObjectKind, Version};
 use pyo3::exceptions::PyValueError;
@@ -11,7 +11,7 @@ use pyo3::prelude::*;
 
 pub(crate) type VersionTuple = (u64, u64, u64);
 pub(crate) type PointTuple = (f32, f32);
-pub(crate) type ParameterTuple = (String, String, f32, f32, f32, bool, VersionTuple);
+pub(crate) type ParameterTuple = (String, String, f32, f32, f32, bool, String, VersionTuple);
 pub(crate) type MeshTuple = (String, String, Vec<u32>, Vec<PointTuple>, VersionTuple);
 pub(crate) type AssetTuple = (String, String, String, u32, u32, String, VersionTuple);
 pub(crate) type EvaluationTuple = (
@@ -137,6 +137,8 @@ pub(crate) type GlueTuple = (
     Option<GlueBindingTuple>,
     VersionTuple,
 );
+pub(crate) type BlendKeyTableTuple = (String, String, Vec<f32>, usize, VersionTuple);
+pub(crate) type BlendConstraintTuple = (String, String, Vec<f32>, Vec<f32>, VersionTuple);
 
 pub(crate) fn glue_from_tuple(data: GlueDataTuple, runtime_id: String) -> Glue {
     let (id, name, mesh_a_id, mesh_b_id, pairs, intensity, binding) = data;
@@ -253,6 +255,21 @@ pub(crate) fn blend_mode_from_name(name: &str) -> PyResult<BlendMode> {
         "additive" => Ok(BlendMode::Additive),
         "multiplicative" => Ok(BlendMode::Multiplicative),
         _ => Err(PyValueError::new_err("Unknown mesh blend mode")),
+    }
+}
+
+pub(crate) fn parameter_kind_from_name(name: &str) -> PyResult<ParameterKind> {
+    match name {
+        "normal" => Ok(ParameterKind::Normal),
+        "blend_shape" => Ok(ParameterKind::BlendShape),
+        _ => Err(PyValueError::new_err("Unknown parameter kind")),
+    }
+}
+
+pub(crate) fn parameter_kind_name(kind: ParameterKind) -> &'static str {
+    match kind {
+        ParameterKind::Normal => "normal",
+        ParameterKind::BlendShape => "blend_shape",
     }
 }
 
