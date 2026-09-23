@@ -10,6 +10,7 @@ members = [
     "modules/kasane-preview",
     "modules/kasane-godot",
     "modules/kasane-moc3",
+    "modules/kasane-moc3-psd",
     "modules/kasane-project",
     "modules/kasane-sdk",
 ]

@@ -1,0 +1,13 @@
+[package]
+name = "kasane-moc3-psd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Export MOC3 ArtMeshes and textures as a layered PSD"
+
+[dependencies]
+kasane-core = { path = "../kasane-core" }
+kasane-moc3 = { path = "../kasane-moc3" }
+

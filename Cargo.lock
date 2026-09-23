@@ -913,6 +913,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kasane-moc3-psd"
+version = "0.1.0"
+dependencies = [
+ "kasane-core",
+ "kasane-moc3",
+]
+
+[[package]]
 name = "kasane-preview"
 version = "0.1.0"
 dependencies = [
