@@ -151,7 +151,8 @@ def run(output: Path) -> Path:
             "texture_sha256": digest(texture),
         },
         "original_ids": {
-            "mesh": mesh_id, "binding": binding_id,
+            "mesh": mesh_id, "mesh_runtime_id": mesh.runtime_id,
+            "binding": binding_id,
             "assets": list(assets), "parameters": list(parameters),
             "transforms": list(transforms), "parts": list(parts),
         },

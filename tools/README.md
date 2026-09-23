@@ -51,4 +51,4 @@ python3 -m unittest discover -s tools -p test_acceptance_validators.py -v
 python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl --require-gpu
 ```
 
-默认结果写入 `target/sdk-acceptance/<run-id>/report.json`。CPU wheel 可不加 `--require-gpu` 运行，报告 GPU 项为 `not_run`，总体状态为 `partial`。
+默认结果写入 `target/sdk-acceptance/<run-id>/report.json`。CPU wheel 可不加 `--require-gpu` 运行，报告 GPU 项为 `not_run`，总体状态为 `partial`。已有官方 Core 与 Purism Core probe 时，可加 `--official-probe /absolute/path/to/kasane_document_official_probe --require-official-core --purism-probe /absolute/path/to/kasane_document_purism_probe --require-purism-core`，验证新建模型及外部模型编辑前后的逐顶点数值。

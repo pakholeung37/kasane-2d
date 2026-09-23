@@ -442,7 +442,7 @@ python3.14 tools/validate_sdk.py --wheel /absolute/path/to/cpu-wheel.whl
 python3.14 tools/validate_sdk.py --wheel /absolute/path/to/observe-wheel.whl --require-gpu
 ```
 
-`validate_sdk.py` 将指定 wheel 安装到仓库外临时 venv，运行 Python 测试、两素材创作与导出、外部 model3 局部编辑，以及可用时的 GPU 观察和第二脚本自检修正，并汇总证据。CPU wheel 的 GPU 与自检修正项明确为 `not_run`；`--require-gpu` 要求真实 GPU。官方运行时和图像真值对照尚未接入完整 S5 门禁。
+`validate_sdk.py` 将指定 wheel 安装到仓库外临时 venv，运行 Python 测试、两素材创作与导出、外部 model3 局部编辑，以及可用时的 GPU 观察和第二脚本自检修正，并汇总证据。CPU wheel 的 GPU 与自检修正项明确为 `not_run`；`--require-gpu` 要求真实 GPU。提供官方 Core/Purism Core probe 时，额外对两素材导出与外部编辑前后结果逐顶点比较；独立图像真值对照仍待接入。
 
 报告逐项使用 `passed/failed/not_run`，由检查结果生成。必需项失败或未执行返回非零；导入过程的 diagnostics 和发布成功的 warnings 独立保留。可复用 [acceptance_evidence.py](../tools/acceptance_evidence.py) 的检查汇总思想和兼容的实现部分，不手工填入整体 passed。
 
@@ -536,5 +536,7 @@ python3.14 tools/validate_sdk.py --wheel /absolute/path/to/observe-wheel.whl --r
 2026-09-23 S5 第一条流程：`python_two_asset_recipe.py` 在仓库外 wheel 中读取不同尺寸与位置的两张 PNG（2×2、4×4），创建两个 mesh、part、Rotation→Warp 与双 mesh 参数 keyform，计算 0/0.5/1 三档实际采样并按 0.05 原像素阈值检查中点插值；保存、重开后三档位置一致，MOC3 导出成功。`validate_sdk.py` 记录工程、导出 MOC3 的 hash、输入 hash 与命令日志；CPU 与 GPU feature wheel 均通过，最大中点误差约 0.000076 原像素。S5 外部工程局部编辑与第二脚本自检修正仍待实现。
 
 2026-09-23 S5 第二、三条流程：外部 v5 model3 导入后，第二条 recipe 记录原对象 ID，原位修改几何、deformer 父级、mesh binding 与绘制属性，保存前后工程并导出；重开确认未修改资源、参数、deformer 与 part 保持原字段，前后 MOC3 hash 不同。第三条流程分成创作/证据脚本和独立诊断/修正脚本：后者读取观察报告、原 PNG 与 focus crop 的 RGBA，发现右侧 mesh 仅 15 像素宽，低于 30 像素门槛，修改已有 warp 后复测为 45 像素宽，其他 mesh 与资源 hash 不变。GPU feature wheel 的统一报告 `passed`，CPU wheel 将 GPU 与第三条标为 `not_run`。官方 Core/Purism 对照、独立图像预期和多平台分发仍属未完成项。
+
+2026-09-23 S5 双 Core 数值验收：`validate_sdk.py` 接收官方 Core 与 Purism Core probe 路径及对应 require 标志，直接运行 SDK 两素材导出 MOC3 的 0/0.5/1 参数样本，以及外部 model3 编辑前后导出的 0/0.5 两参数样本。逐坐标报告写明 SDK expected、Core actual、绝对误差和原像素误差。官方 Core 新建模型 48 坐标最大误差 `5.96e-7` 原像素，外部模型编辑前后 32 坐标最大误差 `1.19e-5`；Purism Core 两组最大误差均为 0。双 Core/GPU feature wheel 同轮统一报告 `passed`；独立 GPU 图像真值和跨平台 wheel 尚未验收。
 
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

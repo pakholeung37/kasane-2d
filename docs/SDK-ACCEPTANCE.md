@@ -79,3 +79,5 @@ S5 三流程续测：更新两素材模型的变形局部坐标后，两个 mesh
 最新仓库外 wheel 门禁：GPU feature wheel 的 `target/sdk-acceptance/9e70584df0f7481fb6d5c495b908fc48/report.json` 为 `passed`，CPU 28 项、S5 新建/导出、外部导入编辑、GPU 2 项及二次脚本修正均通过；CPU wheel 的 `target/sdk-acceptance/15279241181b4e1b89178e8ace857e2b/report.json` 为 `partial`，GPU 与二次脚本修正明确 `not_run`。完整 S5 还需官方运行时和图像真值对照；本报告中的 `passed` 只代表已执行的当前门禁。
 
 二次脚本负控制：将 handoff 中的观察报告改为修正后的图像再次运行 `python_agent_repair.py`，进程以非零状态退出并报告 `No undersized target detected; existing model was not edited`，没有生成“成功修正”报告。
+
+双 Core 数值对照：`target/sdk-acceptance/fbccc3fd74454b3389433de6e6c3ad08/report.json` 记录仓库外 GPU feature wheel、Apple M4/Metal、官方 Live2D Cubism Core 6.0.1 与 Purism Core 1.1.0。两素材导出的 3 档参数共 48 坐标，对 SDK 求值的官方 Core 最大误差 `5.960464477539062e-07` 原像素、Purism 为 0；外部模型编辑前后两档参数共 32 坐标，官方最大误差 `1.1920928955078125e-05` 原像素、Purism 为 0。`official-core-comparison.json`、`purism-core-comparison.json` 及对应 import comparison 文件保留逐项 expected/actual；源 MOC3、probe 与 wheel hash 均在报告中。此轮所有已执行检查为 `passed`；独立 GPU 图像真值对照和其它平台 wheel 分发未验收。

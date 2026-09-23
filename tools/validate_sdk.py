@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run the shipped SDK wheel outside the source tree and retain CPU/GPU evidence.
+"""Validate the shipped SDK wheel outside the source tree and retain evidence.
 
-This covers S3/S4 plus S5's new-model flow. S5 import and agent-edit flows remain.
+The gate covers S3/S4, all three S5 recipes, and optional dual-Core numerical parity.
+Independent GPU image truth comparison remains a separate acceptance item.
 """
 
 from __future__ import annotations
@@ -54,10 +55,12 @@ def test_count(output: str, name: str) -> int:
 
 def command(
     name: str, args: list[str], *, cwd: Path, env: dict[str, str], logs: Path,
+    input_text: str | None = None,
 ) -> str:
     try:
         result = subprocess.run(
             args, cwd=cwd, env=env, capture_output=True, text=True, timeout=180,
+            input=input_text,
         )
     except subprocess.TimeoutExpired as failure:
         (logs / f"{name}.log").write_text(
@@ -191,15 +194,131 @@ def validate_agent_repair(path: Path, run: Path) -> dict:
     }
 
 
+def validate_official_core(
+    probe: Path, creation_report: Path, run: Path, outside: Path,
+    environment: dict[str, str], logs: Path, provider: str,
+) -> dict:
+    recipe = json.loads(creation_report.read_text(encoding="utf-8"))
+    moc3 = Path(recipe["export_moc3"])
+    output = command(
+        f"{provider}-core", [str(probe), str(moc3)], cwd=outside,
+        env=environment, logs=logs, input_text="3\n0\n0.5\n1\n",
+    )
+    core = json.loads(next(line for line in output.splitlines()
+                           if line.startswith('{"core_version"')))
+    if len(core["samples"]) != 3:
+        raise RuntimeError("Official Core probe returned the wrong sample count")
+    comparisons = []
+    maximum_pixel_error = 0.0
+    for index, value in enumerate((0.0, 0.5, 1.0)):
+        expected = recipe["samples"][str(value)]
+        actual = {drawable["runtime_id"]: drawable
+                  for drawable in core["samples"][index]}
+        if set(expected) != set(actual):
+            raise RuntimeError(f"Official Core drawable IDs differ at sample {value}")
+        for mesh_id, positions in expected.items():
+            observed = actual[mesh_id]["positions"]
+            if len(positions) != len(observed):
+                raise RuntimeError(f"Official Core vertex count differs for {mesh_id}")
+            for vertex, (sdk_point, core_point) in enumerate(zip(positions, observed, strict=True)):
+                for axis, (sdk_value, core_value) in enumerate(zip(sdk_point, core_point, strict=True)):
+                    difference = abs(sdk_value - core_value)
+                    pixel_error = difference * 10
+                    maximum_pixel_error = max(maximum_pixel_error, pixel_error)
+                    tolerance = 1e-5 + 1e-5 * max(abs(sdk_value), abs(core_value))
+                    comparisons.append({
+                        "sample": value, "mesh_id": mesh_id, "vertex": vertex,
+                        "axis": axis, "expected_sdk": sdk_value,
+                        "actual_official": core_value,
+                        "absolute_error": difference, "pixel_error": pixel_error,
+                        "status": "passed" if difference <= tolerance and pixel_error <= 0.05
+                                  else "failed",
+                    })
+    destination = run / f"{provider}-core-comparison.json"
+    destination.write_text(json.dumps({
+        "core_version": core["core_version"], "source_moc3_sha256": sha256(moc3),
+        "checks": comparisons,
+    }, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    if any(item["status"] != "passed" for item in comparisons):
+        raise RuntimeError("Official Core positions differ from SDK evaluation")
+    return {
+        "status": "passed", "probe_sha256": sha256(probe),
+        "comparison": destination.name, "coordinates": len(comparisons),
+        "maximum_pixel_error": maximum_pixel_error,
+        "core_version": core["core_version"],
+    }
+
+
+def validate_official_import_edit(
+    probe: Path, import_report: Path, run: Path, outside: Path,
+    environment: dict[str, str], logs: Path, provider: str,
+) -> dict:
+    recipe = json.loads(import_report.read_text(encoding="utf-8"))
+    mesh_id = recipe["original_ids"]["mesh"]
+    runtime_id = recipe["original_ids"]["mesh_runtime_id"]
+    comparisons = []
+    maximum_pixel_error = 0.0
+    for stage in ("before", "after"):
+        moc3 = Path(recipe[f"{stage}_export"])
+        output = command(
+            f"{provider}-import-{stage}", [str(probe), str(moc3)], cwd=outside,
+            env=environment, logs=logs, input_text="2\n0 0\n0.5 0.5\n",
+        )
+        core = json.loads(next(line for line in output.splitlines()
+                               if line.startswith('{"core_version"')))
+        if len(core["samples"]) != 2:
+            raise RuntimeError(f"Official Core import {stage} returned wrong sample count")
+        for sample_index, expected in enumerate(recipe[f"{stage}_samples"]):
+            drawables = {item["runtime_id"]: item for item in core["samples"][sample_index]}
+            if runtime_id not in drawables:
+                raise RuntimeError(f"Official Core import {stage} lost original runtime ID")
+            actual = drawables[runtime_id]["positions"]
+            if len(actual) != len(expected):
+                raise RuntimeError(f"Official Core import {stage} vertex count changed")
+            for vertex, (sdk_point, core_point) in enumerate(zip(expected, actual, strict=True)):
+                for axis, (sdk_value, core_value) in enumerate(zip(sdk_point, core_point, strict=True)):
+                    difference = abs(sdk_value - core_value)
+                    pixel_error = difference * 100
+                    maximum_pixel_error = max(maximum_pixel_error, pixel_error)
+                    tolerance = 1e-5 + 1e-5 * max(abs(sdk_value), abs(core_value))
+                    comparisons.append({
+                        "stage": stage, "sample_index": sample_index,
+                        "mesh_id": mesh_id, "vertex": vertex, "axis": axis,
+                        "expected_sdk": sdk_value, "actual_official": core_value,
+                        "absolute_error": difference, "pixel_error": pixel_error,
+                        "status": "passed" if difference <= tolerance and pixel_error <= 0.05
+                                  else "failed",
+                    })
+    destination = run / f"{provider}-import-comparison.json"
+    destination.write_text(json.dumps({
+        "fixture_moc3_sha256": recipe["fixture"]["moc3_sha256"],
+        "before_export_sha256": recipe["before_export_sha256"],
+        "after_export_sha256": recipe["after_export_sha256"],
+        "checks": comparisons,
+    }, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    if any(item["status"] != "passed" for item in comparisons):
+        raise RuntimeError("Official Core import positions differ from SDK evaluation")
+    return {
+        "status": "passed", "comparison": destination.name,
+        "coordinates": len(comparisons), "maximum_pixel_error": maximum_pixel_error,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
     parser.add_argument("--output", type=Path, default=ROOT / "target/sdk-acceptance")
     parser.add_argument("--require-gpu", action="store_true")
+    parser.add_argument("--official-probe", type=Path)
+    parser.add_argument("--require-official-core", action="store_true")
+    parser.add_argument("--purism-probe", type=Path)
+    parser.add_argument("--require-purism-core", action="store_true")
     args = parser.parse_args()
     wheel = args.wheel.resolve(strict=True)
     python = args.python.resolve(strict=True)
+    official_probe = args.official_probe.resolve(strict=True) if args.official_probe else None
+    purism_probe = args.purism_probe.resolve(strict=True) if args.purism_probe else None
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     run = output / uuid4().hex
@@ -247,6 +366,21 @@ def main() -> int:
             )
             creation_report = Path(creation_output.splitlines()[-1]).resolve(strict=True)
             report["checks"]["creation_export"] = validate_two_asset(creation_report, run)
+            for provider, probe, required in (
+                ("official", official_probe, args.require_official_core),
+                ("purism", purism_probe, args.require_purism_core),
+            ):
+                key = f"{provider}_core"
+                if probe:
+                    report["checks"][key] = validate_official_core(
+                        probe, creation_report, run, outside, environment, logs, provider,
+                    )
+                else:
+                    report["checks"][key] = {
+                        "status": "not_run", "reason": f"{provider} Core probe not supplied",
+                    }
+                    if required:
+                        raise RuntimeError(f"{provider} Core comparison is required but no probe was supplied")
             import_output = command(
                 "import-edit-recipe",
                 [str(installed), str(IMPORT_EDIT_RECIPE), str(run / "import-edit")],
@@ -254,6 +388,16 @@ def main() -> int:
             )
             import_report = Path(import_output.splitlines()[-1]).resolve(strict=True)
             report["checks"]["import_edit"] = validate_import_edit(import_report, run)
+            for provider, probe in (("official", official_probe), ("purism", purism_probe)):
+                key = f"{provider}_core_import"
+                if probe:
+                    report["checks"][key] = validate_official_import_edit(
+                        probe, import_report, run, outside, environment, logs, provider,
+                    )
+                else:
+                    report["checks"][key] = {
+                        "status": "not_run", "reason": f"{provider} Core probe not supplied",
+                    }
             capabilities = json.loads(command(
                 "capabilities", [str(installed), "-c",
                                  "import json, kasane; print(json.dumps(kasane.capabilities()))"],
