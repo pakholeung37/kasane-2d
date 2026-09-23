@@ -34,7 +34,7 @@ session.redo()?;
 # Ok::<(), kasane_sdk::SdkError>(())
 ```
 
-`AuthoringSession::begin_edit(label, expected_version)` 创建隔离候选文档。`EditSession::commit` 发布一次 revision；丢弃 `EditSession` 回滚。任一方法失败后，即便调用者捕获错误，`commit` 仍返回 `EDIT_ABORTED`。`session.edit` 是自动提交的闭包形式。无内容变化的批次不产生历史或事件，也不清除 redo。history 默认最多 50 条、256 MiB；`with_history_limits` 可配置，`history_state` 与 `estimated_content_bytes` 提供容量估算。超预算在发布前失败，成功提交才淘汰旧条目；估算包括持久内容的集合、字符串和数组 capacity，并不是 RSS 硬上限。
+`AuthoringSession::begin_edit(label, expected_version)` 创建隔离候选文档。`EditSession::commit` 发布一次 revision；丢弃 `EditSession` 回滚。任一方法失败后，即便调用者捕获错误，`commit` 仍返回 `EDIT_ABORTED`。`session.edit` 是自动提交的闭包形式。无内容且无身份变化的批次不产生历史或事件，也不清除 redo；同批次删除并以相同 ID、相同内容重建会推进 revision，使旧句柄过期。history 默认最多 50 条、256 MiB；`with_history_limits` 可配置，`history_state` 与 `estimated_content_bytes` 提供容量估算。超预算在发布前失败，成功提交才淘汰旧条目；估算包括持久内容的集合、字符串和数组 capacity，并不是 RSS 硬上限。
 
 读取返回对象副本。`geometry()` 的 `positions` 是源坐标：根 mesh 为 `CanvasPixels`，有变形父对象时为 `ParentLocal(parent_id)`；`vertex_ids` 是稳定顶点身份，`triangles` 引用这些 ID。`evaluate(values)` 不修改会话状态，输出 positions 是 Runtime 坐标，根对象转换公式为 `(x-origin.x)/ppu`、`(origin.y-y)/ppu`。UV 保留 core 约定；源数组不会被 renderer 的纹理翻转改写。
 
@@ -50,12 +50,14 @@ Part、Transform、SceneBinding 也有 `create`/`replace`、ID 列表与对象�
 
 `replace_canvas` 与 `replace_draw_order_groups` 也走候选批次。`draw_order_groups` 返回显式组的副本，文档没有显式组时返回 `None`。`references_to` 查询当前已发布文档的引用者；`erase_object` 在仍有引用时返回 `OBJECT_REFERENCED` 和 `referrers`。跨批次删除后即使用同一 ID 重建，旧句柄仍过期。
 
+`validate_structure()` 返回所有发现的持久内容、对象顺序、引用和对象字段问题；提交前也运行同一检查，失败不会发布候选。它不读取纹理文件。`diagnose_geometry(checks)` 另行返回创作提示：小面积三角形、同一 mesh 内不一致的绕序，以及根 mesh 超出指定画布范围。面积阈值使用源坐标单位；有变形父节点的 mesh 不做画布范围检查。提示不阻止编辑，也不能判断作品外观是否合理。
+
 BlendShape key table、constraint、binding、Glue 和 Offscreen 均提供 `create`/`replace`、ID 列表与对象副本查询，强类型对象由 core 校验。Part binding 与 Offscreen 的 keyform 映射若需同时扩容，使用 `replace_part_binding_with_offscreen` 原子更新两者。
 
 `prepare_png_asset` 读取 PNG、计算尺寸与 SHA-256，返回绝对路径资源描述；它不修改文档。`rectangle_mesh` 创建四顶点、两三角形的根 mesh 描述，UV 为四角。材质和坐标源字段仍可用 core 的强类型 `Mesh` 表达。显式批次适合大量顶点写回，避免每步重建 candidate。
 
 ## 尚未交付的契约
 
-结构全量验证、保存和跨保存历史、资源诊断、Python wheel、wgpu 观察与统一验收入口均未实现。当前只在内存里创作和求值；资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
+保存和跨保存历史、资源诊断、Python wheel、wgpu 观察与统一验收入口均未实现。当前只在内存里创作和求值；资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
 
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

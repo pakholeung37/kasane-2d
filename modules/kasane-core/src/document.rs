@@ -9,12 +9,14 @@ mod offscreen;
 mod parameters;
 mod parts;
 mod references;
+mod structure;
 mod transactions;
 mod transforms;
 mod validation;
 mod vertices;
 
 pub use checkpoint::DocumentCheckpoint;
+pub use structure::StructureIssue;
 pub use validation::*;
 
 use crate::draw_order::DrawOrderGroup;

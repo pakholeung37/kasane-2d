@@ -479,4 +479,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 同轮再补充：BlendShape key table/constraint/binding、Glue 和 Offscreen 已接入同一候选提交路径，提供读写和句柄；Part binding 与 Offscreen 映射的联合替换入口也已接入。新增效果对象契约测试覆盖完整组合、无效约束回滚、联合扩容与 undo/redo。SDK 当前 23 项测试通过；S1e 全量诊断、S0 性能与 Python 兼容性、后续 S2–S5 仍待实施。
 
+2026-09-23 提交 `b7e6d5a` 后续实施：修复同批次删除并以同 ID、同内容重建被误判 no-op 的问题；身份变化现会发布 revision、记录历史，且 undo/redo 不恢复旧句柄。增加 core `validate_structure` 与 SDK 提交前检查，校验全部持久对象集合、顺序、关系与 core 字段规则，checkpoint 恢复路径由单元测试覆盖。增加独立的源几何 warning 诊断。SDK 当前 25 项契约测试通过；[初步合成模型测量](SDK-PERFORMANCE.md)记录 8/512 mesh 的内容估算与候选/校验时间。S2 工程资源闭环、Python 兼容性、真实大模型性能、S3–S5 仍待实施。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

@@ -417,6 +417,7 @@ impl DocumentSession {
         &mut self,
         candidate: Document,
         kind: kasane_core::ChangeKind,
+        identity_changed: bool,
     ) -> Result<bool, Status> {
         if self.history.active() {
             return Err(Status::error(
@@ -424,7 +425,9 @@ impl DocumentSession {
                 "Finish the legacy action first",
             ));
         }
-        let changed = self.document.publish_candidate(candidate, kind)?;
+        let changed = self
+            .document
+            .publish_candidate(candidate, kind, identity_changed)?;
         if changed {
             self.history
                 .clear(self.document.revision(), Some("HISTORY_EXTERNAL_EDIT"));

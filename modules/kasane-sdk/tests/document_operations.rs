@@ -1,5 +1,8 @@
 use kasane_core::{draw_order::DrawOrderGroup, Canvas, Vec2};
-use kasane_sdk::{prepare_png_asset, rectangle_mesh, AuthoringSession, ObjectKind};
+use kasane_sdk::{
+    prepare_png_asset, rectangle_mesh, AuthoringSession, GeometryBounds, GeometryChecks,
+    GeometryDiagnosticKind, ObjectKind,
+};
 
 fn id(n: u32) -> String {
     format!("00000000-0000-4000-8000-{n:012x}")
@@ -48,6 +51,7 @@ fn canvas_and_draw_order_publish_together_and_reject_invalid_groups() {
     })
     .unwrap();
     assert_eq!(sdk.version().revision, before.revision + 1);
+    assert!(sdk.validate_structure().is_empty());
     assert_eq!(sdk.canvas().pixels_per_unit, 20.0);
     assert_eq!(sdk.draw_order_groups(), Some(groups));
     assert_eq!(
@@ -114,4 +118,89 @@ fn referenced_delete_is_rejected_and_recreated_id_does_not_revive_handle() {
         sdk.resolve_handle(&old_handle).unwrap_err().code.as_ref(),
         "STALE_HANDLE"
     );
+}
+
+#[test]
+fn identical_same_batch_recreation_is_an_identity_change() {
+    let mut sdk = session();
+    let old = sdk.handle(ObjectKind::Mesh, &id(3)).unwrap();
+    let mesh = sdk.mesh(&id(3)).unwrap();
+    let before = sdk.version();
+    let (_, receipt) = sdk
+        .edit("recreate", Some(before), |edit| {
+            edit.erase_object(&id(3))?;
+            edit.create_mesh(mesh)
+        })
+        .unwrap();
+    assert!(receipt.changed);
+    assert_eq!(receipt.after.revision, before.revision + 1);
+    assert_eq!(sdk.mesh_ids(), &[id(3)]);
+    assert_eq!(
+        sdk.resolve_handle(&old).unwrap_err().code.as_ref(),
+        "STALE_HANDLE"
+    );
+    let current = sdk.handle(ObjectKind::Mesh, &id(3)).unwrap();
+    sdk.undo().unwrap();
+    assert_eq!(
+        sdk.resolve_handle(&current).unwrap_err().code.as_ref(),
+        "STALE_HANDLE"
+    );
+    assert_eq!(
+        sdk.resolve_handle(&old).unwrap_err().code.as_ref(),
+        "STALE_HANDLE"
+    );
+    sdk.redo().unwrap();
+    assert_eq!(
+        sdk.resolve_handle(&current).unwrap_err().code.as_ref(),
+        "STALE_HANDLE"
+    );
+}
+
+#[test]
+fn geometry_warnings_are_separate_from_structural_validity() {
+    let mut sdk = session();
+    let mut mesh = sdk.mesh(&id(3)).unwrap();
+    mesh.triangles[1] = [0, 3, 2];
+    sdk.edit("flip triangle", None, |edit| edit.replace_mesh(mesh))
+        .unwrap();
+    assert!(sdk.validate_structure().is_empty());
+    let version = sdk.version();
+    let warnings = sdk.diagnose_geometry(GeometryChecks::default()).unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert_eq!(
+        warnings[0].kind,
+        GeometryDiagnosticKind::InconsistentWinding
+    );
+    assert_eq!(warnings[0].triangle_index, Some(1));
+
+    let warnings = sdk
+        .diagnose_geometry(GeometryChecks {
+            min_triangle_area: 201.0,
+            canvas_bounds: Some(GeometryBounds {
+                min: Vec2::new(0.0, 0.0),
+                max: Vec2::new(50.0, 50.0),
+            }),
+        })
+        .unwrap();
+    assert_eq!(
+        warnings
+            .iter()
+            .filter(|issue| issue.kind == GeometryDiagnosticKind::SmallTriangle)
+            .count(),
+        2
+    );
+    assert!(warnings
+        .iter()
+        .any(|issue| issue.kind == GeometryDiagnosticKind::OutsideCanvasBounds));
+    assert_eq!(
+        sdk.diagnose_geometry(GeometryChecks {
+            min_triangle_area: -1.0,
+            canvas_bounds: None,
+        })
+        .unwrap_err()
+        .code
+        .as_ref(),
+        "INVALID_DIAGNOSTIC_OPTIONS"
+    );
+    assert_eq!(sdk.version(), version);
 }

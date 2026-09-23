@@ -1,12 +1,14 @@
-//! In-memory Rust authoring vertical slice. Project IO and the remaining
-//! Document Bridge object families will be added in later implementation batches.
+//! In-memory Rust authoring SDK. Project IO and external harnesses are later stages.
+mod diagnostics;
+
+pub use diagnostics::{GeometryBounds, GeometryChecks, GeometryDiagnostic, GeometryDiagnosticKind};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use kasane_core::document::DocumentCheckpoint;
+use kasane_core::document::{DocumentCheckpoint, StructureIssue};
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::preview::PreviewState;
 use kasane_core::{
@@ -183,11 +185,20 @@ pub struct TopologyReplacement {
 struct HistoryEntry {
     label: String,
     checkpoint: DocumentCheckpoint,
+    identity_keys: HashSet<ObjectKey>,
 }
 
 impl HistoryEntry {
     fn estimated_bytes(&self) -> usize {
-        self.checkpoint.estimated_bytes() + self.label.capacity() + std::mem::size_of::<String>()
+        self.checkpoint.estimated_bytes()
+            + self.label.capacity()
+            + std::mem::size_of::<String>()
+            + self.identity_keys.capacity() * std::mem::size_of::<ObjectKey>()
+            + self
+                .identity_keys
+                .iter()
+                .map(|key| key.id.capacity())
+                .sum::<usize>()
     }
 }
 
@@ -356,6 +367,9 @@ impl AuthoringSession {
     pub fn references_to(&self, id: &str) -> Vec<String> {
         self.project.document().references_to(id)
     }
+    pub fn validate_structure(&self) -> Vec<StructureIssue> {
+        self.project.document().validate_structure()
+    }
     pub fn blend_key_table(&self, id: &str) -> Option<BlendShapeKeyTable> {
         self.project.document().get_blend_key_table(id).cloned()
     }
@@ -520,6 +534,7 @@ impl AuthoringSession {
             aborted: false,
             kind: ChangeKind::None,
             object_ids: Vec::new(),
+            erased_keys: HashSet::new(),
         })
     }
 
@@ -547,8 +562,8 @@ impl AuthoringSession {
             .map_err(|status| SdkError::from_status(status, "undo", Vec::new()))?;
         self.preview.retain_parameters(self.project.document());
         self.preview.invalidate();
-        self.refresh_incarnations(&before_keys);
         let entry = self.done.pop_back().expect("history entry still exists");
+        self.refresh_incarnations(&before_keys, &entry.identity_keys);
         let receipt = EditReceipt {
             label: entry.label.clone(),
             before,
@@ -574,8 +589,8 @@ impl AuthoringSession {
             .map_err(|status| SdkError::from_status(status, "redo", Vec::new()))?;
         self.preview.retain_parameters(self.project.document());
         self.preview.invalidate();
-        self.refresh_incarnations(&before_keys);
         let entry = self.redo.pop().expect("history entry still exists");
+        self.refresh_incarnations(&before_keys, &entry.identity_keys);
         let receipt = EditReceipt {
             label: entry.label.clone(),
             before,
@@ -659,32 +674,46 @@ impl AuthoringSession {
     }
 
     fn object_exists(&self, kind: ObjectKind, id: &str) -> bool {
-        let doc = self.project.document();
-        match kind {
-            ObjectKind::Asset => doc.get_asset(id).is_some(),
-            ObjectKind::Mesh => doc.get_mesh(id).is_some(),
-            ObjectKind::Parameter => doc.get_parameter(id).is_some(),
-            ObjectKind::MeshBinding => doc.get_binding(id).is_some(),
-            ObjectKind::Part => doc.get_part(id).is_some(),
-            ObjectKind::Transform => doc.get_transform(id).is_some(),
-            ObjectKind::SceneBinding => doc.get_scene_binding(id).is_some(),
-            ObjectKind::BlendKeyTable => doc.get_blend_key_table(id).is_some(),
-            ObjectKind::BlendConstraint => doc.get_blend_constraint(id).is_some(),
-            ObjectKind::BlendBinding => doc.get_blend_binding(id).is_some(),
-            ObjectKind::Glue => doc.get_glue(id).is_some(),
-            ObjectKind::Offscreen => doc.get_offscreen(id).is_some(),
-        }
+        object_exists_in(self.project.document(), kind, id)
     }
 
-    fn refresh_incarnations(&mut self, before: &HashSet<ObjectKey>) {
+    fn refresh_incarnations(
+        &mut self,
+        before: &HashSet<ObjectKey>,
+        identity_keys: &HashSet<ObjectKey>,
+    ) {
         let after = self.object_keys();
-        for key in before.symmetric_difference(&after) {
-            self.incarnations.insert(key.clone(), self.next_incarnation);
+        let mut changed: HashSet<_> = before.symmetric_difference(&after).cloned().collect();
+        changed.extend(
+            identity_keys
+                .iter()
+                .filter(|key| after.contains(*key))
+                .cloned(),
+        );
+        for key in changed {
+            self.incarnations.insert(key, self.next_incarnation);
             self.next_incarnation = self
                 .next_incarnation
                 .checked_add(1)
                 .expect("incarnation counter exhausted");
         }
+    }
+}
+
+fn object_exists_in(doc: &Document, kind: ObjectKind, id: &str) -> bool {
+    match kind {
+        ObjectKind::Asset => doc.get_asset(id).is_some(),
+        ObjectKind::Mesh => doc.get_mesh(id).is_some(),
+        ObjectKind::Parameter => doc.get_parameter(id).is_some(),
+        ObjectKind::MeshBinding => doc.get_binding(id).is_some(),
+        ObjectKind::Part => doc.get_part(id).is_some(),
+        ObjectKind::Transform => doc.get_transform(id).is_some(),
+        ObjectKind::SceneBinding => doc.get_scene_binding(id).is_some(),
+        ObjectKind::BlendKeyTable => doc.get_blend_key_table(id).is_some(),
+        ObjectKind::BlendConstraint => doc.get_blend_constraint(id).is_some(),
+        ObjectKind::BlendBinding => doc.get_blend_binding(id).is_some(),
+        ObjectKind::Glue => doc.get_glue(id).is_some(),
+        ObjectKind::Offscreen => doc.get_offscreen(id).is_some(),
     }
 }
 
@@ -696,6 +725,7 @@ pub struct EditSession<'a> {
     aborted: bool,
     kind: ChangeKind,
     object_ids: Vec<String>,
+    erased_keys: HashSet<ObjectKey>,
 }
 
 impl EditSession<'_> {
@@ -754,8 +784,17 @@ impl EditSession<'_> {
     }
     pub fn erase_object(&mut self, id: &str) -> Result<(), SdkError> {
         self.ensure_active("erase_object")?;
+        let original = self
+            .session
+            .object_keys()
+            .into_iter()
+            .find(|key| key.id == id);
         let result = self.document().erase_object(id);
-        self.record(result, "erase_object", id)
+        self.record(result, "erase_object", id)?;
+        if let Some(key) = original {
+            self.erased_keys.insert(key);
+        }
+        Ok(())
     }
     pub fn create_asset(&mut self, asset: ImageAsset) -> Result<(), SdkError> {
         self.ensure_active("create_asset")?;
@@ -1136,7 +1175,21 @@ impl EditSession<'_> {
     pub fn commit(mut self) -> Result<EditReceipt, SdkError> {
         self.ensure_active("commit")?;
         let candidate = self.candidate.take().expect("edit candidate exists");
-        let changed = !self.session.project.document().same_content(&candidate);
+        if let Some(issue) = candidate.validate_structure().into_iter().next() {
+            return Err(SdkError::from_status(
+                issue.status,
+                "commit",
+                vec![issue.object_id],
+            ));
+        }
+        let identity_keys: HashSet<_> = self
+            .erased_keys
+            .iter()
+            .filter(|key| object_exists_in(&candidate, key.kind, &key.id))
+            .cloned()
+            .collect();
+        let identity_changed = !identity_keys.is_empty();
+        let changed = identity_changed || !self.session.project.document().same_content(&candidate);
         let before_keys = changed.then(|| self.session.object_keys());
         let previous = changed.then(|| self.session.project.document().checkpoint());
         let mut evict_count = 0usize;
@@ -1145,7 +1198,12 @@ impl EditSession<'_> {
             let candidate_bytes = candidate.estimated_content_bytes();
             let entry_bytes = checkpoint.estimated_bytes()
                 + self.label.capacity()
-                + std::mem::size_of::<String>();
+                + std::mem::size_of::<String>()
+                + identity_keys.capacity() * std::mem::size_of::<ObjectKey>()
+                + identity_keys
+                    .iter()
+                    .map(|key| key.id.capacity())
+                    .sum::<usize>();
             let redo_bytes: usize = self
                 .session
                 .redo
@@ -1181,7 +1239,7 @@ impl EditSession<'_> {
         }
         self.session
             .project
-            .publish_authoring_candidate(candidate, self.kind)
+            .publish_authoring_candidate(candidate, self.kind, identity_changed)
             .map_err(|s| SdkError::from_status(s, "commit", self.object_ids.clone()))?;
         if changed {
             self.session
@@ -1189,7 +1247,7 @@ impl EditSession<'_> {
                 .retain_parameters(self.session.project.document());
         }
         if let Some(keys) = &before_keys {
-            self.session.refresh_incarnations(keys);
+            self.session.refresh_incarnations(keys, &identity_keys);
         }
         if let Some(checkpoint) = previous {
             for _ in 0..evict_count {
@@ -1198,6 +1256,7 @@ impl EditSession<'_> {
             self.session.done.push_back(HistoryEntry {
                 label: self.label.clone(),
                 checkpoint,
+                identity_keys,
             });
             self.session.redo.clear();
         }

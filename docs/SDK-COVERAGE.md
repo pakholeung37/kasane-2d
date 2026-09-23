@@ -80,3 +80,5 @@
 | `inspect_model` | import inspection | 待 S2 |
 
 core 额外提供的 canvas 和 draw-order groups 读取/替换已由 `canvas`、`draw_order_groups`、`replace_canvas` 和 `replace_draw_order_groups` 接入，见 `document_operations`。观察入口在 S4 范围。
+
+SDK 新增 `validate_structure` 和提交前全结构检查，core 侧覆盖 checkpoint 恢复后的校验；`diagnose_geometry` 提供与结构错误分开的创作提示。见 `document_operations` 和 core `structure` 单元测试。资源诊断仍在 S2 范围。

@@ -42,6 +42,7 @@ impl Document {
         &mut self,
         candidate: Document,
         declared_kind: ChangeKind,
+        identity_changed: bool,
     ) -> Result<bool, Status> {
         if self.transaction_active || candidate.transaction_active || candidate.batch_build_active {
             return Err(Status::error("EDIT_ACTIVE", "Finish the active edit first"));
@@ -52,12 +53,13 @@ impl Document {
                 "Candidate document ID differs",
             ));
         }
-        if self.same_content(&candidate) {
+        if !identity_changed && self.same_content(&candidate) {
             return Ok(false);
         }
         // A declared metadata edit only keeps evaluation caches when the
         // persistent difference is provably limited to mesh display names.
-        let metadata_only = declared_kind == ChangeKind::Metadata
+        let metadata_only = !identity_changed
+            && declared_kind == ChangeKind::Metadata
             && self.same_content_except_mesh_names(&candidate);
         let mut candidate = candidate;
         let mut content = DocumentCheckpoint(DocumentContent::default());
