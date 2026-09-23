@@ -75,4 +75,6 @@ S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照�
 
 同轮续接 `Edit.replace_canvas`、`replace_parameter`、`erase_object` 与层级关系设置，及 mesh binding 快照查询。`replace_parameter` 保留原对象的 runtime ID 等未在简化 Python 参数表单中列出的字段。覆盖清单现为 69/115 已绑定、46 项待绑定；层级关系设置目前只完成了失败回滚测试，后续还需随 Part/Transform 创建接口验证成功路径。
 
+继续接入不透明 `ObjectHandle`、`handle`/`resolve_handle`/`mesh_by_handle`、绘制顺序组读写及自定义历史限制构造。句柄在普通属性修改后保持有效，消失再恢复的对象会令旧句柄过期。覆盖清单现为 77/115 已绑定、38 项待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

@@ -4,14 +4,15 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use kasane_core::{
-    Appearance, BindingAxis, Canvas, DrawableFrame, MeshBinding, MeshKeyform, Parameter, Vec2,
+    draw_order::DrawOrderGroup, Appearance, BindingAxis, Canvas, DrawableFrame, MeshBinding,
+    MeshKeyform, Parameter, Vec2,
 };
 use kasane_sdk::{
-    prepare_png_asset, rectangle_mesh, AuthoringSession, EditReceipt, SdkError, SourceSpace,
-    Version,
+    prepare_png_asset, rectangle_mesh, AuthoringSession, EditReceipt, HistoryLimits, ObjectHandle,
+    ObjectKind, SdkError, SourceSpace, Version,
 };
 use pyo3::create_exception;
-use pyo3::exceptions::{PyException, PyRuntimeError};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 
@@ -36,6 +37,7 @@ type MeshBindingTuple = (
     Vec<BindingForm>,
     VersionTuple,
 );
+type DrawOrderTuple = (String, Vec<String>, i32, i32);
 type GeometryTuple = (
     VersionTuple,
     String,
@@ -137,6 +139,61 @@ fn binding_tuple(binding: MeshBinding, version: Version) -> MeshBindingTuple {
     )
 }
 
+fn object_kind(value: &str) -> PyResult<ObjectKind> {
+    match value {
+        "asset" => Ok(ObjectKind::Asset),
+        "mesh" => Ok(ObjectKind::Mesh),
+        "parameter" => Ok(ObjectKind::Parameter),
+        "mesh_binding" => Ok(ObjectKind::MeshBinding),
+        "part" => Ok(ObjectKind::Part),
+        "transform" => Ok(ObjectKind::Transform),
+        "scene_binding" => Ok(ObjectKind::SceneBinding),
+        "blend_key_table" => Ok(ObjectKind::BlendKeyTable),
+        "blend_constraint" => Ok(ObjectKind::BlendConstraint),
+        "blend_binding" => Ok(ObjectKind::BlendBinding),
+        "glue" => Ok(ObjectKind::Glue),
+        "offscreen" => Ok(ObjectKind::Offscreen),
+        _ => Err(PyValueError::new_err(format!(
+            "Unknown object kind: {value}"
+        ))),
+    }
+}
+
+fn object_kind_name(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::Asset => "asset",
+        ObjectKind::Mesh => "mesh",
+        ObjectKind::Parameter => "parameter",
+        ObjectKind::MeshBinding => "mesh_binding",
+        ObjectKind::Part => "part",
+        ObjectKind::Transform => "transform",
+        ObjectKind::SceneBinding => "scene_binding",
+        ObjectKind::BlendKeyTable => "blend_key_table",
+        ObjectKind::BlendConstraint => "blend_constraint",
+        ObjectKind::BlendBinding => "blend_binding",
+        ObjectKind::Glue => "glue",
+        ObjectKind::Offscreen => "offscreen",
+    }
+}
+
+#[pyclass(name = "ObjectHandle")]
+struct NativeHandle {
+    inner: ObjectHandle,
+}
+
+#[pymethods]
+impl NativeHandle {
+    #[getter]
+    fn id(&self) -> &str {
+        self.inner.id()
+    }
+
+    #[getter]
+    fn kind(&self) -> &'static str {
+        object_kind_name(self.inner.kind())
+    }
+}
+
 fn frame_tuple(frame: &DrawableFrame) -> EvaluationTuple {
     (
         frame
@@ -193,6 +250,39 @@ impl NativeSession {
         );
         let session =
             AuthoringSession::new(document_id, canvas).map_err(|error| sdk_failure(py, error))?;
+        Ok(Self {
+            inner: Arc::new(Mutex::new(session)),
+        })
+    }
+
+    #[staticmethod]
+    #[allow(clippy::too_many_arguments)]
+    fn with_history_limits(
+        py: Python<'_>,
+        document_id: &str,
+        width: f32,
+        height: f32,
+        origin_x: f32,
+        origin_y: f32,
+        pixels_per_unit: f32,
+        max_steps: usize,
+        max_bytes: usize,
+    ) -> PyResult<Self> {
+        let canvas = Canvas::new(
+            width,
+            height,
+            Vec2::new(origin_x, origin_y),
+            pixels_per_unit,
+        );
+        let session = AuthoringSession::with_history_limits(
+            document_id,
+            canvas,
+            HistoryLimits {
+                max_steps,
+                max_bytes,
+            },
+        )
+        .map_err(|error| sdk_failure(py, error))?;
         Ok(Self {
             inner: Arc::new(Mutex::new(session)),
         })
@@ -272,6 +362,20 @@ impl NativeSession {
             canvas.origin.y,
             canvas.pixels_per_unit,
         ))
+    }
+
+    fn draw_order_groups(&self) -> PyResult<Option<Vec<DrawOrderTuple>>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .draw_order_groups()
+            .map(|groups| {
+                groups
+                    .into_iter()
+                    .map(|g| (g.owner, g.items, g.min_order, g.max_order))
+                    .collect()
+            }))
     }
 
     fn evaluation_revision(&self) -> PyResult<u64> {
@@ -456,6 +560,36 @@ impl NativeSession {
         Ok(session
             .binding_for_mesh(mesh_id)
             .map(|binding| binding_tuple(binding, session.version())))
+    }
+
+    fn handle(&self, py: Python<'_>, kind: &str, id: &str) -> PyResult<NativeHandle> {
+        let kind = object_kind(kind)?;
+        self.inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .handle(kind, id)
+            .map(|inner| NativeHandle { inner })
+            .map_err(|error| sdk_failure(py, error))
+    }
+
+    fn resolve_handle(&self, py: Python<'_>, handle: PyRef<'_, NativeHandle>) -> PyResult<()> {
+        self.inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .resolve_handle(&handle.inner)
+            .map_err(|error| sdk_failure(py, error))
+    }
+
+    fn mesh_by_handle(
+        &self,
+        py: Python<'_>,
+        handle: PyRef<'_, NativeHandle>,
+    ) -> PyResult<MeshTuple> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        session
+            .mesh_by_handle(&handle.inner)
+            .map(|mesh| mesh_tuple(mesh, session.version()))
+            .map_err(|error| sdk_failure(py, error))
     }
 
     fn find_meshes_by_name(&self, name: &str) -> PyResult<Vec<MeshTuple>> {
@@ -826,6 +960,7 @@ enum Command {
     SetTransformPart(String, Option<String>),
     SetDeformParent(String, String),
     SetMeshPart(String, String),
+    ReplaceDrawOrderGroups(Vec<DrawOrderGroup>),
 }
 
 #[pyclass]
@@ -862,6 +997,26 @@ impl NativeEdit {
 
 #[pymethods]
 impl NativeEdit {
+    fn replace_draw_order_groups(
+        &mut self,
+        py: Python<'_>,
+        groups: Vec<DrawOrderTuple>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_draw_order_groups")?;
+        self.commands.push(Command::ReplaceDrawOrderGroups(
+            groups
+                .into_iter()
+                .map(|(owner, items, min_order, max_order)| DrawOrderGroup {
+                    owner,
+                    items,
+                    min_order,
+                    max_order,
+                })
+                .collect(),
+        ));
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn replace_canvas(
         &mut self,
@@ -1135,6 +1290,9 @@ impl NativeEdit {
                             edit.set_deform_parent(&id, &parent)?
                         }
                         Command::SetMeshPart(id, part) => edit.set_mesh_part(&id, &part)?,
+                        Command::ReplaceDrawOrderGroups(groups) => {
+                            edit.replace_draw_order_groups(groups)?
+                        }
                     }
                 }
                 Ok(())
@@ -1175,6 +1333,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("SdkFailure", module.py().get_type::<SdkFailure>())?;
     module.add_class::<NativeSession>()?;
     module.add_class::<NativeEdit>()?;
+    module.add_class::<NativeHandle>()?;
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
     Ok(())
 }

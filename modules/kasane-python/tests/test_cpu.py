@@ -286,6 +286,51 @@ class CpuWheelTests(unittest.TestCase):
                 self.assertEqual(model.version, before)
                 self.assertEqual(model.parameter_ids(), [])
 
+    def test_handles_keep_identity_and_expire_after_undo(self):
+        model = session()
+        with model.edit("create") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        handle = model.handle("mesh", MESH)
+        self.assertEqual(handle.id, MESH)
+        self.assertEqual(handle.kind, "mesh")
+        model.resolve_handle(handle)
+        self.assertEqual(model.mesh_by_handle(handle), model.mesh(MESH))
+        with model.edit("rename") as edit:
+            edit.rename_mesh(MESH, "renamed")
+        self.assertEqual(model.mesh_by_handle(handle).name, "renamed")
+        with self.assertRaises(kasane.SdkFailure) as wrong_kind:
+            model.mesh_by_handle(model.handle("asset", ASSET))
+        self.assertEqual(wrong_kind.exception.code, "WRONG_OBJECT_KIND")
+        with self.assertRaises(ValueError):
+            model.handle("bad kind", MESH)
+        model.undo()
+        model.undo()
+        model.redo()
+        with self.assertRaises(kasane.SdkFailure) as stale:
+            model.resolve_handle(handle)
+        self.assertEqual(stale.exception.code, "STALE_HANDLE")
+
+    def test_draw_order_groups_and_history_limits(self):
+        model = kasane.Session.with_history_limits(DOCUMENT, 100, 100, (50, 50), 10, 1, 10**7)
+        self.assertEqual(model.history_state().max_steps, 1)
+        self.assertIsNone(model.draw_order_groups)
+        with model.edit("create") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        group = kasane.DrawOrderGroup("", [MESH], -100, 100)
+        with model.edit("order") as edit:
+            edit.replace_draw_order_groups([group])
+        self.assertEqual(model.draw_order_groups, [group])
+        self.assertEqual(model.history_lengths(), (1, 0))
+        with self.assertRaises(kasane.SdkFailure) as invalid:
+            with model.edit("invalid order") as edit:
+                edit.replace_draw_order_groups([kasane.DrawOrderGroup("", [], 0, 0)])
+        self.assertEqual(invalid.exception.code, "INVALID_DRAW_GROUP")
+        self.assertEqual(model.draw_order_groups, [group])
+        model.undo()
+        self.assertIsNone(model.draw_order_groups)
+
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:
             root = Path(directory).resolve()

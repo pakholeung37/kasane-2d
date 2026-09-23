@@ -79,7 +79,9 @@
     "test": "test_canvas_parameter_replace_and_erase_are_atomic"
   },
   "Edit.replace_draw_order_groups": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_draw_order_groups",
+    "test": "test_draw_order_groups_and_history_limits"
   },
   "Edit.replace_glue": {
     "status": "pending"
@@ -156,10 +158,14 @@
     "status": "pending"
   },
   "ObjectHandle.id": {
-    "status": "pending"
+    "status": "bound",
+    "python": "ObjectHandle.id",
+    "test": "test_handles_keep_identity_and_expire_after_undo"
   },
   "ObjectHandle.kind": {
-    "status": "pending"
+    "status": "bound",
+    "python": "ObjectHandle.kind",
+    "test": "test_handles_keep_identity_and_expire_after_undo"
   },
   "Session.asset": {
     "status": "bound",
@@ -239,7 +245,9 @@
     "test": "test_queries_geometry_history_and_events"
   },
   "Session.draw_order_groups": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.draw_order_groups",
+    "test": "test_draw_order_groups_and_history_limits"
   },
   "Session.edit": {
     "status": "bound",
@@ -285,7 +293,9 @@
     "test": "test_queries_geometry_history_and_events"
   },
   "Session.handle": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.handle",
+    "test": "test_handles_keep_identity_and_expire_after_undo"
   },
   "Session.history_lengths": {
     "status": "bound",
@@ -313,7 +323,9 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Session.mesh_by_handle": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.mesh_by_handle",
+    "test": "test_handles_keep_identity_and_expire_after_undo"
   },
   "Session.mesh_ids": {
     "status": "bound",
@@ -412,7 +424,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.resolve_handle": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.resolve_handle",
+    "test": "test_handles_keep_identity_and_expire_after_undo"
   },
   "Session.save_project": {
     "status": "bound",
@@ -464,7 +478,9 @@
     "status": "pending"
   },
   "Session.with_history_limits": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.with_history_limits",
+    "test": "test_draw_order_groups_and_history_limits"
   },
   "free.prepare_png_asset": {
     "status": "bound",

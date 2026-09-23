@@ -33,3 +33,5 @@
 同日续测：追加查询、预览和 `new_project` 绑定后重新构建并在同一仓库外 venv 安装 wheel，`test_cpu.py` 9 项通过；`cargo clippy -p kasane-python --all-targets -- -D warnings` 通过。覆盖检查当前为 59/115 已绑定、56 项待绑定。新增测试验证快照数据与版本同时读取、预览修改不影响独立求值、预览失败保留状态、名称查询与缺失错误、对象 ID 列表、历史事件和工程重置。
 
 再续测：加入 canvas/parameter 替换、删除、层级关系编辑与 mesh binding 快照；重新构建安装仓库外 wheel 后，`test_cpu.py` 11 项通过。覆盖清单为 69/115 已绑定、46 项待绑定。层级关系编辑的当前 Python 测试验证失败时同批次回滚，成功路径等待 Part/Transform 创建绑定后补齐。
+
+再续测：句柄有效期、绘制顺序组的提交/拒绝/撤销，以及历史步数上限。仓库外 wheel 的 `test_cpu.py` 13 项通过；`cargo clippy -p kasane-python -p kasane-sdk -p kasane-project --all-targets -- -D warnings` 通过；覆盖清单为 77/115，余 38 项。

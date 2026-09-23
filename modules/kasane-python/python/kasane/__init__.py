@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Mapping, NamedTuple, Sequence
 from weakref import WeakSet
 
-from ._native import NativeSession, SdkFailure, capabilities
+from ._native import NativeSession, ObjectHandle, SdkFailure, capabilities
 
 Version = tuple[int, int, int]
 Point = tuple[float, float]
@@ -36,6 +36,13 @@ class CanvasSnapshot(NamedTuple):
     origin_x: float
     origin_y: float
     pixels_per_unit: float
+
+
+class DrawOrderGroup(NamedTuple):
+    owner: str
+    items: list[str]
+    min_order: int
+    max_order: int
 
 
 class GeometrySnapshot(NamedTuple):
@@ -184,6 +191,13 @@ class Edit:
             )
         )
 
+    def replace_draw_order_groups(self, groups: Sequence[DrawOrderGroup]) -> None:
+        self._call(
+            lambda: self._native.replace_draw_order_groups(
+                [(g.owner, list(g.items), g.min_order, g.max_order) for g in groups]
+            )
+        )
+
     def erase_object(self, object_id: str) -> None:
         self._call(lambda: self._native.erase_object(object_id))
 
@@ -298,6 +312,29 @@ class Session:
         session._native = native
         _sessions.add(session)
         return session
+
+    @classmethod
+    def with_history_limits(
+        cls,
+        document_id: str,
+        width: float,
+        height: float,
+        origin: Point,
+        pixels_per_unit: float,
+        max_steps: int,
+        max_bytes: int,
+    ) -> Session:
+        native = NativeSession.with_history_limits(
+            document_id,
+            width,
+            height,
+            origin[0],
+            origin[1],
+            pixels_per_unit,
+            max_steps,
+            max_bytes,
+        )
+        return cls._from_native(native)
 
     def edit(self, label: str, expected_version: Version | None = None) -> Edit:
         return Edit(self._native.start_edit(label, expected_version))
@@ -423,6 +460,15 @@ class Session:
     def binding_for_mesh(self, mesh_id: str) -> MeshBindingSnapshot | None:
         return _binding_snapshot(self._native.binding_for_mesh(mesh_id))
 
+    def handle(self, kind: str, object_id: str) -> ObjectHandle:
+        return self._native.handle(kind, object_id)
+
+    def resolve_handle(self, handle: ObjectHandle) -> None:
+        self._native.resolve_handle(handle)
+
+    def mesh_by_handle(self, handle: ObjectHandle) -> MeshSnapshot:
+        return MeshSnapshot(*self._native.mesh_by_handle(handle))
+
     def find_meshes_by_name(self, name: str) -> list[MeshSnapshot]:
         return [MeshSnapshot(*mesh) for mesh in self._native.find_meshes_by_name(name)]
 
@@ -499,6 +545,11 @@ class Session:
         return CanvasSnapshot(*self._native.canvas())
 
     @property
+    def draw_order_groups(self) -> list[DrawOrderGroup] | None:
+        raw = self._native.draw_order_groups()
+        return [DrawOrderGroup(*group) for group in raw] if raw is not None else None
+
+    @property
     def evaluation_revision(self) -> int:
         return self._native.evaluation_revision()
 
@@ -535,6 +586,7 @@ __all__ = [
     "AssetSnapshot",
     "CanvasSnapshot",
     "DrawableSample",
+    "DrawOrderGroup",
     "Edit",
     "EditEvent",
     "Evaluation",
@@ -545,6 +597,7 @@ __all__ = [
     "MeshSnapshot",
     "MeshBindingSnapshot",
     "MeshKeyform",
+    "ObjectHandle",
     "ParameterSample",
     "ParameterSnapshot",
     "ResourceIssue",
