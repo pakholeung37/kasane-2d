@@ -67,3 +67,5 @@ S3 CPU 门禁：外部 CPython 3.14 venv 的 28 项 wheel 测试、仓库外独�
 S4 首批 GPU 实测：`cargo test -p kasane-sdk-observe` 的 2 项测试在当前 macOS arm64 GPU 上通过，含未保存 Session 观察及同一 Observer 的连续几何、纹理、view 变化；`cargo clippy` 无警告。带 `observe` feature 的仓库外 wheel 的 `test_observe.py` 2 项通过，覆盖 RGBA/PNG、纹理 revision、资源缺失错误、逐样本运行报告、失败报告、focus crop、contact sheet，以及 mask/Offscreen 场景；裁剪 PNG 的像素逐行等于完整合成帧相同区域。报告声明 `RGBA8Unorm`、线性数据、不额外转换的预乘 alpha 和透明背景。默认 CPU wheel 重新构建后的 28 项测试通过，且能力探测报告 GPU 观察关闭；覆盖检查 115/116、0 待绑定。完整 S4 门禁尚未执行。
 
 观察 recipe 实测：仓库外安装的 feature wheel 运行 `examples/sdk/python_observe_recipe.py`，在 `target/sdk-acceptance/5c7e2ae6ac784b1eb80cfc4c4790a269` 产出 3 帧、3 个 focus crop、contact sheet 和报告；三帧 PNG hash 不同，adapter 为 Apple M4 / Metal，报告状态 `frames_complete`，参数 sweep 后 Session preview 值不变。此本地证据目录不纳入 Git；需要复核时重新运行 recipe 即可。
+
+观察来源续测：增加 `input_sha256`，涵盖求值帧、验证后的纹理 hash 与输出 view；`test_observe.py` 验证几何、纹理、view 修改后的输入指纹变化与相同输入下的稳定性。报告补充 SDK 版本、原生二进制 hash、平台及明确的 session/generation/document revision。仓库外 feature wheel 的 2 项测试、Rust GPU 2 项测试及 Clippy 重新通过；默认 CPU wheel 的 28 项测试再次通过。`target/sdk-acceptance/10f9a2b6b5f74a5b8655105c3f225de5` 的三帧图像及输入指纹均不同，报告状态 `frames_complete`。

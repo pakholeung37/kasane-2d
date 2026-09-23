@@ -15,5 +15,6 @@ kasane-render = { path = "../kasane-render" }
 kasane-render-wgpu = { path = "../kasane-render-wgpu" }
 wgpu = { workspace = true }
 png = { workspace = true }
+sha2 = { workspace = true }
 
 [dev-dependencies]

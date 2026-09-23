@@ -74,6 +74,7 @@ class GpuWheelTests(unittest.TestCase):
                 self.assertEqual(destination.read_bytes(), first.png)
             self.assertTrue(any(first.rgba[i] for i in range(3, len(first.rgba), 4)))
             self.assertEqual(first.version, model.version)
+            self.assertEqual(len(first.input_sha256), 64)
             first_revision = first.texture_revisions[0].revision
             with model.edit("move") as edit:
                 edit.update_positions(MESH, [0, 1, 2, 3], [
@@ -81,6 +82,7 @@ class GpuWheelTests(unittest.TestCase):
                 ])
             second = observer.observe(model)
             self.assertNotEqual(first.rgba, second.rgba)
+            self.assertNotEqual(first.input_sha256, second.input_sha256)
             self.assertEqual(second.texture_revisions[0].revision, first_revision)
             with TemporaryDirectory() as directory:
                 changed = Path(directory).resolve() / "texture.png"
@@ -91,14 +93,22 @@ class GpuWheelTests(unittest.TestCase):
                 self.assertGreater(third.texture_revisions[0].revision, first_revision)
                 self.assertNotEqual(third.texture_revisions[0].sha256,
                                     first.texture_revisions[0].sha256)
+                self.assertNotEqual(third.input_sha256, second.input_sha256)
                 observer.set_fit_long_side(32)
                 fourth = observer.observe(model)
                 self.assertNotEqual(third.rgba, fourth.rgba)
+                self.assertNotEqual(third.input_sha256, fourth.input_sha256)
                 self.assertEqual(third.texture_revisions, fourth.texture_revisions)
                 runs = Path(directory).resolve() / "runs"
                 run = observer.observe_run(model, [{}, {}], runs, focus=[MESH, MISSING])
                 report = json.loads(run.report.read_text(encoding="utf-8"))
                 self.assertEqual(report["status"], "frames_complete")
+                self.assertEqual(len(report["sdk_binary_sha256"]), 64)
+                self.assertEqual(report["frames"][0]["input_sha256"], fourth.input_sha256)
+                self.assertEqual(report["frames"][0]["input_sha256"],
+                                 report["frames"][1]["input_sha256"])
+                self.assertEqual(report["samples"],
+                                 json.loads((run.directory / "samples.json").read_text()))
                 self.assertEqual(len(report["frames"]), 2)
                 self.assertEqual(len(run.frames), 2)
                 self.assertEqual(len(run.crops), 2)

@@ -1,5 +1,6 @@
 //! A reusable device and renderer for offscreen observation.
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::future::Future;
 use std::sync::mpsc;
 use std::time::Duration;
@@ -11,6 +12,7 @@ use kasane_render_wgpu::{
     WgpuTextureCatalog,
 };
 use kasane_sdk::Version;
+use sha2::{Digest, Sha256};
 
 use crate::{ObservationError, ObservationInput, ResolvedTexture};
 
@@ -38,6 +40,8 @@ pub struct DrawableBounds {
 
 #[derive(Clone, Debug)]
 pub struct ObservedFrame {
+    /// Hash of the evaluated frame, validated texture content, and output view.
+    pub input_sha256: String,
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
@@ -78,6 +82,15 @@ struct OwnedTexture {
     height: u32,
     sha256: String,
     revision: u64,
+}
+
+struct DigestWriter<'a>(&'a mut Sha256);
+
+impl std::fmt::Write for DigestWriter<'_> {
+    fn write_str(&mut self, value: &str) -> std::fmt::Result {
+        self.0.update(value.as_bytes());
+        Ok(())
+    }
 }
 
 pub struct Observer {
@@ -219,6 +232,22 @@ impl Observer {
 
     pub fn observe(&mut self, input: &ObservationInput) -> Result<ObservedFrame, ObservationError> {
         let resolved = input.resolve_textures()?;
+        let mut digest = Sha256::new();
+        {
+            let mut digest_writer = DigestWriter(&mut digest);
+            write!(
+                digest_writer,
+                "kasane-observation-input-v1:{:?}:{:?}:{:?}",
+                input.frame,
+                resolved
+                    .iter()
+                    .map(|texture| (&texture.asset.id, &texture.data.sha256))
+                    .collect::<Vec<_>>(),
+                self.config,
+            )
+            .expect("digest writer is infallible");
+        }
+        let input_sha256 = format!("{:x}", digest.finalize());
         self.upload_textures(resolved);
         let mut catalog = WgpuTextureCatalog::new(
             self.textures
@@ -390,6 +419,7 @@ impl Observer {
             .collect();
         texture_revisions.sort_by(|a, b| a.asset_id.cmp(&b.asset_id));
         Ok(ObservedFrame {
+            input_sha256,
             width: self.config.width,
             height: self.config.height,
             rgba,

@@ -999,6 +999,7 @@ dependencies = [
  "kasane-render-wgpu",
  "kasane-sdk",
  "png",
+ "sha2",
  "wgpu",
 ]
 

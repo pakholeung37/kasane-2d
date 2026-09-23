@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+from importlib.metadata import version as package_version
 import json
 import math
 from pathlib import Path
+import platform
 import struct
 from typing import Mapping, NamedTuple, Sequence
 from uuid import UUID, uuid4
@@ -13,6 +15,7 @@ from weakref import WeakSet
 import zlib
 
 from ._native import NativeSession, ObjectHandle, SdkFailure, capabilities
+from . import _native as _native_module
 try:
     from ._native import NativeObserver, ObservationFailure
 except ImportError:
@@ -114,6 +117,7 @@ class DrawableBounds(NamedTuple):
 
 class ObservedFrame(NamedTuple):
     version: Version
+    input_sha256: str
     evaluation_revision: int
     document_id: str
     source_revision: int
@@ -1259,9 +1263,9 @@ class Observer:
     def observe(self, session: Session, values: Mapping[str, float] | None = None) -> ObservedFrame:
         raw = self._native.observe(session._native, dict(values or {}))
         metadata, width, height, rgba, png, textures, adapter_name, backend = raw
-        version, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
+        version, input_sha256, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
         return ObservedFrame(
-            version, evaluation_revision, document_id, source_revision,
+            version, input_sha256, evaluation_revision, document_id, source_revision,
             [ParameterSample(*item) for item in parameters], CanvasSnapshot(*canvas),
             scale, offset, [DrawableBounds(*item) for item in bounds],
             width, height, rgba, png,
@@ -1288,7 +1292,15 @@ class Observer:
         entries: list[dict] = []
         sample_entries: list[dict] = []
         diagnostics: list[dict] = []
-        report = {"schema_version": 1, "status": "running", "frames": entries}
+        with Path(_native_module.__file__).open("rb") as native_binary:
+            binary_sha256 = hashlib.file_digest(native_binary, "sha256").hexdigest()
+        report = {
+            "schema_version": 1,
+            "sdk_version": package_version("kasane"),
+            "sdk_binary_sha256": binary_sha256,
+            "platform": platform.platform(),
+            "status": "running", "frames": entries, "samples": sample_entries,
+        }
         try:
             for index, requested in enumerate(samples):
                 frame = self.observe(session, requested)
@@ -1330,6 +1342,10 @@ class Observer:
                     "index": index, "path": str(path.relative_to(directory)),
                     "sha256": hashlib.sha256(frame.png).hexdigest(),
                     "version": frame.version,
+                    "session_id": frame.version[0],
+                    "generation": frame.version[1],
+                    "document_revision": frame.version[2],
+                    "input_sha256": frame.input_sha256,
                     "source_revision": frame.source_revision,
                     "evaluation_revision": frame.evaluation_revision,
                     "document_id": frame.document_id,

@@ -25,6 +25,7 @@ fn observation_failure(py: Python<'_>, error: ObservationError) -> PyErr {
 type NativeFrameTuple = (
     (
         VersionTuple,
+        String,
         u64,
         String,
         u64,
@@ -98,6 +99,7 @@ impl NativeObserver {
         Ok((
             (
                 version_tuple(frame.version),
+                frame.input_sha256,
                 frame.evaluation_revision,
                 frame.document_id,
                 frame.source_revision,
