@@ -81,6 +81,9 @@ pub(super) struct DrawUniform {
     pub(super) view_a: [f32; 4],
     pub(super) view_b: [f32; 4],
     pub(super) view_origin: [f32; 4],
+    pub(super) mask_a: [f32; 4],
+    pub(super) mask_b: [f32; 4],
+    pub(super) mask_origin: [f32; 4],
 }
 
 #[derive(Clone, Copy)]
@@ -103,6 +106,7 @@ pub(super) struct ResourceInput<'a> {
     pub(super) destination: Option<DestinationBinding<'a>>,
 }
 
+#[derive(Clone)]
 pub(super) struct DrawResources {
     pub(super) vertex_buffer: wgpu::Buffer,
     pub(super) index_buffer: wgpu::Buffer,
@@ -769,6 +773,8 @@ impl WgpuBasicRenderer {
                 surface_to_model,
                 queue,
                 geometry: None,
+                bindings: None,
+                dirty_masks: None,
             };
             context.encode_masks()?;
             for id in prepared.active_offscreens.iter().copied() {

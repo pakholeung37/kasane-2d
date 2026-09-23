@@ -636,6 +636,7 @@ dependencies = [
  "bytemuck",
  "kasane-core",
  "kasane-render",
+ "png",
  "wgpu",
 ]
 

@@ -12,6 +12,9 @@ struct DrawUniform {
     view_a: vec4<f32>,
     view_b: vec4<f32>,
     view_origin: vec4<f32>,
+    mask_a: vec4<f32>,
+    mask_b: vec4<f32>,
+    mask_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var main_texture: texture_2d<f32>;
@@ -42,7 +45,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         1.0,
     );
     output.uv = input.uv;
-    output.mask_point = input.mask_point;
+    output.mask_point = input.mask_point.x * draw.mask_a.xy
+        + input.mask_point.y * draw.mask_b.xy + draw.mask_origin.xy;
     return output;
 }
 
@@ -76,6 +80,9 @@ struct DrawUniform {
     view_a: vec4<f32>,
     view_b: vec4<f32>,
     view_origin: vec4<f32>,
+    mask_a: vec4<f32>,
+    mask_b: vec4<f32>,
+    mask_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var main_texture: texture_2d<f32>;
@@ -106,7 +113,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         1.0,
     );
     output.uv = input.uv;
-    output.mask_point = input.mask_point;
+    output.mask_point = input.mask_point.x * draw.mask_a.xy
+        + input.mask_point.y * draw.mask_b.xy + draw.mask_origin.xy;
     return output;
 }
 
@@ -134,6 +142,9 @@ struct DrawUniform {
     view_a: vec4<f32>,
     view_b: vec4<f32>,
     view_origin: vec4<f32>,
+    mask_a: vec4<f32>,
+    mask_b: vec4<f32>,
+    mask_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var main_texture: texture_2d<f32>;
@@ -166,7 +177,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         1.0,
     );
     output.uv = input.uv;
-    output.mask_point = input.mask_point;
+    output.mask_point = input.mask_point.x * draw.mask_a.xy
+        + input.mask_point.y * draw.mask_b.xy + draw.mask_origin.xy;
     return output;
 }
 
@@ -209,6 +221,9 @@ struct DrawUniform {
     view_a: vec4<f32>,
     view_b: vec4<f32>,
     view_origin: vec4<f32>,
+    mask_a: vec4<f32>,
+    mask_b: vec4<f32>,
+    mask_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var main_texture: texture_2d<f32>;
@@ -241,7 +256,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         1.0,
     );
     output.uv = input.uv;
-    output.mask_point = input.mask_point;
+    output.mask_point = input.mask_point.x * draw.mask_a.xy
+        + input.mask_point.y * draw.mask_b.xy + draw.mask_origin.xy;
     return output;
 }
 
@@ -279,6 +295,9 @@ struct DrawUniform {
     view_a: vec4<f32>,
     view_b: vec4<f32>,
     view_origin: vec4<f32>,
+    mask_a: vec4<f32>,
+    mask_b: vec4<f32>,
+    mask_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var main_texture: texture_2d<f32>;
@@ -331,6 +350,9 @@ struct DrawUniform {
     view_a: vec4<f32>,
     view_b: vec4<f32>,
     view_origin: vec4<f32>,
+    mask_a: vec4<f32>,
+    mask_b: vec4<f32>,
+    mask_origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var main_texture: texture_2d<f32>;
@@ -363,7 +385,8 @@ fn vs_main(input: VertexInput) -> VertexOutput {
         1.0,
     );
     output.uv = input.uv;
-    output.mask_point = input.mask_point;
+    output.mask_point = input.mask_point.x * draw.mask_a.xy
+        + input.mask_point.y * draw.mask_b.xy + draw.mask_origin.xy;
     return output;
 }
 "#;
@@ -395,11 +418,11 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     source = vec4<f32>(source.rgb * draw.multiply_color.rgb, source.a);
     source = vec4<f32>(source.rgb + draw.screen_color.rgb - source.rgb * draw.screen_color.rgb, source.a * draw.opacity);
     if (draw.mask_flags.x != 0u) {
-        source *= mask_alpha(input.mask_point);
+        source.a *= mask_alpha(input.mask_point);
     }
     let destination_uv = input.position.xy / draw.target_size;
     let destination = to_straight(textureSample(destination_texture, destination_sampler, destination_uv));
-    return composite_blend(to_straight(source), destination, draw.blend_modes.x, draw.blend_modes.y);
+    return composite_blend(source, destination, draw.blend_modes.x, draw.blend_modes.y);
 }
 "#;
 

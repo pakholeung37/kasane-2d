@@ -188,6 +188,13 @@ fn quad(id: &str, texture: &str) -> Drawable {
 }
 
 fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRenderStats) {
+    render_fixture_with_texture_change(frame, None)
+}
+
+fn render_fixture_with_texture_change(
+    frame: &DrawableFrame,
+    texture_change: Option<(&str, [u8; 4])>,
+) -> (Vec<u8>, kasane_render_wgpu::WgpuRenderStats) {
     let instance = wgpu::Instance::default();
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter required for the WGPU acceptance test");
@@ -237,7 +244,7 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
         .iter()
         .map(|texture| texture.create_view(&wgpu::TextureViewDescriptor::default()))
         .collect();
-    let textures = WgpuTextureCatalog::new(
+    let mut textures = WgpuTextureCatalog::new(
         colors
             .iter()
             .zip(&views)
@@ -253,6 +260,9 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
             })
             .collect(),
     );
+    for (name, _) in colors {
+        textures.set_revision(name, 1);
+    }
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("output"),
         size: wgpu::Extent3d {
@@ -277,6 +287,24 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
         },
     )
     .unwrap();
+    renderer.sync_model(&device, frame, &textures).unwrap();
+    for drawable in &frame.drawables {
+        assert_eq!(Arc::strong_count(&drawable.uvs), 1);
+        assert_eq!(Arc::strong_count(&drawable.indices), 1);
+    }
+    renderer
+        .update_view(
+            &device,
+            ViewportConfig {
+                transform: Affine2 {
+                    origin: Vec2::new(1.0, 0.0),
+                    ..Affine2::IDENTITY
+                },
+                target_extent: Vec2::new(64.0, 64.0),
+                mask_scale: 1.0,
+            },
+        )
+        .unwrap();
     let mut scene_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("scene"),
     });
@@ -289,20 +317,22 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
                 output: &output_view,
                 output_mode: WgpuOutputMode::Replace,
             },
-            frame,
             &textures,
+        )
+        .unwrap();
+    assert!(first.vertex_upload_bytes > 0);
+    assert_eq!(first.mask_redraws, first.masks);
+    queue.submit([scene_encoder.finish()]);
+    renderer
+        .update_view(
+            &device,
             ViewportConfig {
-                transform: Affine2 {
-                    origin: Vec2::new(1.0, 0.0),
-                    ..Affine2::IDENTITY
-                },
+                transform: Affine2::IDENTITY,
                 target_extent: Vec2::new(64.0, 64.0),
                 mask_scale: 1.0,
             },
         )
         .unwrap();
-    assert!(first.vertex_upload_bytes > 0);
-    queue.submit([scene_encoder.finish()]);
     let mut scene_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("scene-again"),
     });
@@ -315,18 +345,92 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
                 output: &output_view,
                 output_mode: WgpuOutputMode::Replace,
             },
-            frame,
             &textures,
-            ViewportConfig {
-                transform: Affine2::IDENTITY,
-                target_extent: Vec2::new(64.0, 64.0),
-                mask_scale: 1.0,
-            },
         )
         .unwrap();
     assert_eq!(stats.vertex_upload_bytes, 0);
     assert_eq!(stats.index_upload_bytes, 0);
     assert_eq!(stats.geometry_buffer_creations, 0);
+    assert_eq!(stats.mask_redraws, 0);
+    queue.submit([scene_encoder.finish()]);
+    let mut rejected = frame.clone();
+    rejected.canvas.width = 0.0;
+    assert_eq!(
+        renderer
+            .sync_model(&device, &rejected, &textures)
+            .unwrap_err()
+            .code,
+        "INVALID_CANVAS"
+    );
+    assert!(renderer
+        .update_view(
+            &device,
+            ViewportConfig {
+                transform: Affine2::IDENTITY,
+                target_extent: Vec2::new(0.0, 64.0),
+                mask_scale: 1.0,
+            }
+        )
+        .is_err());
+    let missing_textures = WgpuTextureCatalog::new(HashMap::new());
+    let mut rejected_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("rejected-texture"),
+    });
+    assert_eq!(
+        renderer
+            .encode(
+                WgpuEncodeTarget {
+                    device: &device,
+                    queue: &queue,
+                    encoder: &mut rejected_encoder,
+                    output: &output_view,
+                    output_mode: WgpuOutputMode::Replace,
+                },
+                &missing_textures,
+            )
+            .unwrap_err()
+            .code,
+        "MISSING_TEXTURE"
+    );
+    if let Some((name, rgba)) = texture_change {
+        let index = colors.iter().position(|(id, _)| *id == name).unwrap();
+        queue.write_texture(
+            sources[index].as_image_copy(),
+            &rgba,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        textures.set_revision(name, 2);
+    }
+    let mut scene_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("scene-stable"),
+    });
+    let stable = renderer
+        .encode(
+            WgpuEncodeTarget {
+                device: &device,
+                queue: &queue,
+                encoder: &mut scene_encoder,
+                output: &output_view,
+                output_mode: WgpuOutputMode::Replace,
+            },
+            &textures,
+        )
+        .unwrap();
+    assert_eq!(stable.vertex_upload_bytes, 0);
+    assert_eq!(stable.index_upload_bytes, 0);
+    assert_eq!(stable.geometry_buffer_creations, 0);
+    assert_eq!(stable.uniform_buffer_creations, 0);
+    assert_eq!(stable.bind_group_creations, 0);
+    assert_eq!(stable.mask_redraws, usize::from(texture_change.is_some()));
     queue.submit([scene_encoder.finish()]);
     let readback = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("readback"),
@@ -368,7 +472,7 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
         .unwrap()
         .unwrap();
     let pixels = readback.get_mapped_range(..).to_vec();
-    (pixels, stats)
+    (pixels, stable)
 }
 
 fn center(pixels: &[u8]) -> [u8; 4] {
@@ -395,6 +499,23 @@ fn invisible_raw_mask_source_affects_visible_mesh() {
         (i16::from(pixel[3]) - 128).abs() <= 2,
         "masked center: {pixel:?}"
     );
+}
+
+#[test]
+fn texture_revision_repaints_mask_after_in_place_upload() {
+    let mut source = quad("source", "half");
+    source.visible = false;
+    let mut target = quad("target", "red");
+    target.masks = vec!["source".into()];
+    let frame = DrawableFrame {
+        canvas: Canvas::new(64.0, 64.0, Vec2::default(), 1.0),
+        drawables: vec![source, target],
+        ..Default::default()
+    };
+    let (pixels, stats) =
+        render_fixture_with_texture_change(&frame, Some(("half", [255, 255, 255, 0])));
+    assert_eq!(stats.mask_redraws, 1);
+    assert_eq!(center(&pixels), [0, 0, 0, 0]);
 }
 
 #[test]
@@ -656,4 +777,13 @@ fn renderer_validates_format_and_rebuilds_for_resize() {
         "UNSUPPORTED_TARGET_FORMAT"
     );
     assert_eq!(renderer.target().format, wgpu::TextureFormat::Bgra8Unorm);
+    let (other_device, _) =
+        block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).unwrap();
+    assert_eq!(
+        renderer
+            .resize(&other_device, renderer.target())
+            .unwrap_err()
+            .code,
+        "DEVICE_MISMATCH"
+    );
 }

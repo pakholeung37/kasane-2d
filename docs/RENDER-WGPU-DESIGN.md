@@ -1,14 +1,14 @@
 # `kasane-render-wgpu` 迁移架构
 
-状态：2026-09-23，首轮实现进行中；下文的完成标准尚未全部达到。本文接续 [渲染边界方案](RENDER-BOUNDARY-PROPOSAL.md) 已落地的 `ScenePlan`，目标是让 WGPU 成为可实际出图、可长期复用资源的后端。
+状态：2026-09-23，WGPU 后端已能由独立离屏宿主实际出图；正式应用宿主尚待迁移。本文接续 [渲染边界方案](RENDER-BOUNDARY-PROPOSAL.md) 已落地的 `ScenePlan`。
 
 ## 现状与迁移决定
 
 - `kasane-render::ScenePlan` 已提供稠密 `MeshId` / `TargetId` / `MaskId`、target 内有序 `Draw` / `Composite`、原始 mask 源、活动 target 和 mask bounds。`ScenePlan::update` 校验外部 `DrawableFrame`，不保留整帧。
-- Godot 后端直接消费 `ScenePlan`。WGPU 后端仍调用兼容层 `prepare_frame`，再解析 `RenderPass` 重建 target 树；它另行遍历字符串 ID、计算 mask bounds，并在每次提交时创建顶点、索引、uniform buffer 与 bind group。
-- 旧 WGPU 代码包含固定混合、遮罩、嵌套离屏和扩展混合的尝试，但当前测试都不创建设备、不编码或读回 GPU 图像；仓库里也没有调用它的宿主。编译通过不等于渲染可用。
+- Godot 后端直接消费 `ScenePlan`。新的 `WgpuRenderer` 也从 `ScenePlan` 获取目标顺序、遮罩与目标读取关系，并拥有持续复用的 GPU 资源。旧的 `prepare_frame`/`WgpuBasicRenderer` API 仍在同一 crate 中供现有调用者过渡；新入口不解析旧 `RenderPass`。
+- WGPU 已有真实设备上的像素测试与独立离屏宿主。Godot 现在只用于参考图像对照，未来应用宿主不会使用 Godot。
 
-**决定：重建 WGPU 后端，以 `ScenePlan` 为唯一场景协议。** 旧实现的 WGSL 混合公式、坐标换算和测试用例可作为迁移线索；不保留 `WgpuBasicRenderer`、`WgpuFramePlanner`、三种外置 attachment pool 和 `PreparedFrame` 公共 API 的兼容负担。`kasane-render` 的兼容流暂留给已有调用者，不为 WGPU 扩展它。
+**决定：以 `ScenePlan` 为新 WGPU 入口的场景协议。** 旧实现的 WGSL 混合公式、坐标换算和测试用例用作迁移线索。`WgpuBasicRenderer`、`WgpuFramePlanner`、外置 attachment pool 和 `PreparedFrame` 公共 API 暂留供现有调用者过渡，不作为新应用宿主的入口。
 
 ## 分层与所有权
 
@@ -24,24 +24,25 @@ kasane-render-wgpu           WgpuRenderer
 
 `WgpuRenderer` 持有 `ScenePlan` 和属于一个 `wgpu::Device` 的资源；设备丢失后宿主重建 renderer。宿主继续负责 adapter、窗口 surface、图片解码/上传和输出目标。后端提供可单独运行的离屏示例/测试宿主，保证 crate 不只是一个未接线的库。
 
-建议的最小调用形态（表达职责，并非已存在的 Rust API）：
+当前的最小调用形态（省略错误处理与创建代码）：
 
 ```rust
-renderer.sync_model(&device, &queue, &frame,
-                    &textures, view_config)?;       // 模型提交：预检后同步，不持有帧
-renderer.update_view(&device, view_config)?;       // 后续仅相机变化时单独调用
-renderer.encode(&device, &mut encoder,
-                &textures, output_view)?;           // 不调用 queue.submit
+renderer.sync_model(&device, &frame, &textures)?;   // 模型提交，不借用帧
+renderer.update_view(&device, view_config)?;       // 后续相机变化时单独调用
+renderer.encode(WgpuEncodeTarget {
+    device: &device, queue: &queue, encoder: &mut encoder,
+    output: &output_view, output_mode: WgpuOutputMode::Replace,
+}, &textures)?;                                    // 不调用 queue.submit
 queue.submit([encoder.finish()]);                   // 宿主决定提交和观察完成
 ```
 
-模型提交和视图更新分开。纯相机/窗口变化不得重新求值、读取旧 `DrawableFrame` 或上传模型顶点。`encode` 所需的动态顶点与外观已经同步进后端缓存。输入纹理用借用的 view、尺寸与内容版本描述；未提供可靠内容版本的宿主必须能显式通知纹理失效。相同 native view 的原地像素更新也要使相关 mask 重绘。renderer 不持有上游帧的 `Arc`，以保留 `PreviewState` 的帧缓冲回收路径。
+模型提交和视图更新分开。`sync_model` 验证并复制渲染所需的动态数据、拓扑和外观；返回后调用者可释放帧。纯相机/窗口变化不重新求值或读取调用者的旧帧，稳定模型在 `encode` 时不重新上传模型顶点。输入纹理由宿主提供借用的 view、尺寸和可选内容版本；没有版本的纹理会保守地重绘相关 mask。相同 view 原地更新像素时，宿主应递增版本。renderer 不持有上游帧的 `Arc`，以保留 `PreviewState` 的帧缓冲回收路径。当前实现仍在 `encode` 时同步 GPU 缓存，不在 `sync_model` 时上传。
 
 宿主输出只要求可渲染的 view。后端始终先绘制到自己拥有的主颜色 target，再将它绘制到宿主输出；这样主 target 的扩展混合无需宿主提供 `COPY_SRC` texture。输出配置显式选择覆盖输出或按预乘 alpha 叠加到已有内容。首次实现允许这一次额外的全屏 pass，待正确性和成本测量后再考虑无 destination read 时的直绘快路。输出格式与内部工作格式分开协商，明确 alpha、sRGB 解码/编码与采样规则；格式选择必须经过像素对照，不能仅凭旧 shader 推断 Godot 等价。
 
-### 现有 Godot 应用的接入边界
+### 新应用宿主的接入边界
 
-当前 `kasane-godot` 预览返回 Godot `Texture2D`/mesh view，并由 Godot 的 viewport、截图 ready 状态机和选区覆盖层展示结果。因此实现 WGPU 绘制核心不等于应用已经切换。先用独立离屏宿主证明 WGPU 的输出与性能，再为应用选定可验证的展示路径：直接使用 WGPU 的应用宿主，或经验证的 Godot 纹理互操作。逐帧 GPU→CPU 读回再上传只用于测试/诊断，不作为正式预览路径。应用切换时还需给选区覆盖层提供与 backend 无关的已求值几何查询，并重新验证截图完成状态；保留 Godot 后端作迁移期的图像对照。
+当前 `kasane-godot` 预览返回 Godot `Texture2D`/mesh view，并由 Godot 的 viewport、截图 ready 状态机和选区覆盖层展示结果。正式迁移需要一个新的、直接持有 WGPU device/queue/surface 的应用宿主，接入模型提交、相机更新、源纹理生命周期、窗口 resize、预览展示与截图完成观察；选区覆盖层需要与后端无关的已求值几何查询。逐帧 GPU→CPU 读回再上传只用于测试/诊断。`examples/offscreen.rs` 是验证渲染正确性的最小独立宿主，Godot 后端只保留作迁移期的参考图像对照。
 
 ## 一帧的处理顺序
 
@@ -64,7 +65,7 @@ queue.submit([encoder.finish()]);                   // 宿主决定提交和观�
 | destination snapshot | 实际读取所在的 `TargetId` + 尺寸/格式 | 每个需读取的 target 保留一份，**每次读取前**更新内容 |
 | pipeline | 工作/输出格式、blend 类型、mask 和 destination 变体 | 创建设备资源时缓存；不按 drawable 创建 |
 
-预算由 WGPU 物理描述计费：附件的实际 bytes-per-pixel、尺寸、同时存活资源，以及 resize 时新旧附件重叠。默认应用预算可沿用 512 MiB，但不是共享层对 WGPU 的固定成本估算。检查 `Device::limits`、format capability、索引/缓冲区和 copy 用法；失败在创建纹理或写命令之前返回带对象 ID 的 `Status`。暂不引入通用 frame graph、mask atlas、bindless 或跨 target 生命周期复用。
+当前预算按附件的 8 位 RGBA 实际尺寸、去重后的 mask 与 destination snapshot 计费，默认上限 512 MiB；同时检查 `Device::limits` 中的纹理及 mesh buffer 尺寸，并检查输出格式的保证用法与混合能力。仍需补齐 resize 时新旧附件重叠峰值以及全部 GPU buffer 的内存统计。暂不引入通用 frame graph、mask atlas、bindless 或跨 target 生命周期复用。
 
 坐标契约保持模型 Y 向上、canvas/target Y 向下，源 UV 的翻转与三角形绕序由 WGPU 边界统一处理；mask 采样坐标始终为 canvas 像素。颜色缓存使用预乘 alpha 进行普通合成；固定 Additive/Multiplicative、`raw_blend_mode` 和 offscreen `blend_mode` 按现有 Godot/官方对照用例逐项验收。工作格式、纹理色彩空间与混合方程须在 GPU 读回下确认，不能把旧 WGSL 的存在当作正确性证据。
 
@@ -80,12 +81,16 @@ queue.submit([encoder.finish()]);                   // 宿主决定提交和观�
 
 `render-wgpu` 可用的完成标准：平面、mask、嵌套 offscreen、目标颜色读取及混合矩阵实际 GPU 渲染通过；增量刷新与资源生命周期有统计和测试；外部宿主可仅通过公开 API 创建、提交、展示和销毁 renderer。应用完成迁移的标准另含第 5 步的预览、覆盖层、截图和端到端验收。
 
-## 首轮实现记录
+## 当前实现与验收记录
 
 - 将原先集中在 `lib.rs` 的实现拆为 `api`（公开数据类型）、`resources`（附件池）、`pipeline`（管线与基础渲染器）、`encoding`（场景命令编码）、`geometry`（顶点及坐标变换）、`shaders`、`compat`（旧规划入口）和 `modern`（`ScenePlan` 入口）。`lib.rs` 仅负责模块装配与公开导出；旧公开 API 暂时保持可用。
 - 新增 `WgpuRenderer`，直接从 `ScenePlan` 构建目标顺序，不解析 `RenderPass`；内部持有主颜色 target、离屏/mask/destination 池，并提供由宿主提交的 `encode`、便利 `render` 和 `resize` 入口。输出可选择覆盖或预乘 alpha 叠加。主目标的 destination read 不要求宿主输出 texture 具备 `COPY_SRC`。
 - 修复旧 shader 的 WGSL 多分量赋值、非遮罩扩展 shader 缺少函数定义及 Rust/WGSL uniform 对齐问题。这些问题在之前只有 CPU 规划测试时不会暴露。
 - 网格和原始 mask 源复用相同的 GPU 顶点/索引缓存；视图矩阵放进 uniform。实际 GPU 用例在同一 renderer 的相机变化后检查模型顶点/索引上传字节为零。
-- `gpu_smoke.rs` 的 11 个真实 GPU 用例已读回验证平面、不可见 raw mask 源、普通/反向及离屏 mask、普通/嵌套离屏、固定 Additive/Multiplicative、无宿主 `COPY_SRC` 的目标颜色读取、连续两次读取必须得到最新目标内容，以及格式/尺寸切换。这些是构造用例，尚未替代完整 Godot/官方 GPU 图像矩阵。
+- `sync_model`、`update_view` 和 `encode` 已拆开；`sync_model` 复制渲染数据而不持有调用者的帧或拓扑 `Arc`。非法模型或视图提交保留上一成功状态；encode 前检查纹理目录。模型网格、composite/present 几何、uniform buffer 和 bind group 均可复用；统计上传、创建、mask 重绘及附件字节数。
+- 纹理目录支持内容版本。稳定版本的 mask 可跳过重绘，原地上传后递增版本会触发重绘；没有版本时保守重绘。
+- `gpu_smoke.rs` 的 12 个真实 GPU 用例读回验证平面、不可见 raw mask 源、普通/反向及离屏 mask、普通/嵌套离屏、固定 Additive/Multiplicative、无宿主 `COPY_SRC` 的目标颜色读取、连续两次目标读取、纹理原地更新、错误后恢复与格式/尺寸切换。
+- 独立宿主运行命令：`cargo run -p kasane-render-wgpu --example offscreen --locked -- target/wgpu-minimal.png`。它创建 device、源纹理和输出目标，提交绘制，读回并校验像素，再输出 PNG。
+- 混合矩阵对照命令：`python3 tools/compare_wgpu_blends.py`（需要 Pillow、NumPy 和 Godot 可执行文件；可用 `--godot` 指定）。独立 WGPU 宿主对照现有 Godot shader 参考脚本，在 18 种颜色模式 × 5 种 alpha 模式 × 8 组 mesh/offscreen、遮罩及透明度样本中，720/720 格逐字节一致。可额外传入 `--official-probe target/wgpu-official-probe/kasane_framework_gpu_probe`，直接对照固定版本的官方 Framework GPU 探针：720/720 格通过，最大字节差为 1。探针可用 `cmake -S tools/probes -B target/wgpu-official-probe -DKASANE_CUBISM_ROOT="$PWD/third_party/CubismSdkForNative-5-r.5" -DKASANE_BUILD_GPU_PROBE=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5` 和 `cmake --build target/wgpu-official-probe --target kasane_framework_gpu_probe -j6` 构建。这个矩阵验证混合公式，不代替完整模型/应用端到端验收。
 
-仍需完成：独立的模型提交/纯视图更新 API（当前 `encode` 仍借用一帧进行材质与 mask 编码）、uniform/bind group 与 composite 几何缓存、纹理内容版本和精确峰值预算、更多混合/反向遮罩及参考图像验收、正式应用宿主接入。旧公开兼容 API 暂留在同一 crate 中，迁移稳定后再移除。
+剩余后端工作：精确峰值显存统计、纹理和 GPU buffer 资源寿命的性能压测、官方 Framework 完整模型图像覆盖。正式应用还需新 WGPU 宿主的预览、选区覆盖层、截图与生命周期接入；旧公开兼容 API 待新入口稳定后移除。

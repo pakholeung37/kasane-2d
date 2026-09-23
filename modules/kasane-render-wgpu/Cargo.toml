@@ -10,3 +10,6 @@ bytemuck = { workspace = true }
 kasane-core = { path = "../kasane-core" }
 kasane-render = { path = "../kasane-render" }
 wgpu = { workspace = true }
+
+[dev-dependencies]
+png = { workspace = true }

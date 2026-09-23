@@ -50,6 +50,7 @@ pub(super) struct ScenePipelines<'a> {
 }
 
 pub(super) struct MaskRenderInfo {
+    pub(super) key: MaskKey,
     pub(super) width: u32,
     pub(super) height: u32,
     pub(super) origin: Vec2,
@@ -140,6 +141,8 @@ pub(super) struct SceneEncoder<'renderer, 'context, 'frame, 'texture> {
     pub(super) surface_to_model: Affine2,
     pub(super) queue: &'context wgpu::Queue,
     pub(super) geometry: Option<&'context mut modern::GeometryCache>,
+    pub(super) bindings: Option<&'context mut modern::BindingCache>,
+    pub(super) dirty_masks: Option<&'context HashSet<MaskKey>>,
 }
 
 pub(super) struct TargetEncoding<'frame, 'context> {
@@ -156,8 +159,10 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
     pub(super) fn encode_masks(&mut self) -> Result<(), Status> {
         let masks: Vec<MaskRenderInfo> = self
             .mask_pool
+            .masks
             .iter()
-            .map(|mask| MaskRenderInfo {
+            .map(|(key, mask)| MaskRenderInfo {
+                key: key.clone(),
                 width: mask.width,
                 height: mask.height,
                 origin: mask.origin,
@@ -168,6 +173,12 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
             .collect();
 
         for mask in masks {
+            if self
+                .dirty_masks
+                .is_some_and(|dirty| !dirty.contains(&mask.key))
+            {
+                continue;
+            }
             let transform = Affine2 {
                 a: Vec2::new(mask.scale, 0.0),
                 b: Vec2::new(0.0, mask.scale),
@@ -221,8 +232,25 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 let resource = if let Some(cache) = self.geometry.as_deref_mut() {
                     let (vertex_buffer, index_buffer) =
                         cache.sync(self.device, self.queue, source_id, &vertices, &indices);
-                    self.renderer
-                        .create_resources_with_geometry(input, vertex_buffer, index_buffer)
+                    if let Some(bindings) = self.bindings.as_deref_mut() {
+                        bindings.prepare(
+                            modern::DrawKey::MaskSource {
+                                mask: mask.key.clone(),
+                                mesh: source_id.clone(),
+                            },
+                            self.renderer,
+                            self.queue,
+                            input,
+                            vertex_buffer,
+                            index_buffer,
+                        )
+                    } else {
+                        self.renderer.create_resources_with_geometry(
+                            input,
+                            vertex_buffer,
+                            index_buffer,
+                        )
+                    }
                 } else {
                     self.renderer.create_resources(input)
                 };
@@ -524,8 +552,22 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                         &vertices,
                         &indices,
                     );
-                    self.renderer
-                        .create_resources_with_geometry(input, vertex_buffer, index_buffer)
+                    if let Some(bindings) = self.bindings.as_deref_mut() {
+                        bindings.prepare(
+                            modern::DrawKey::Mesh(item.drawable_id.to_owned()),
+                            self.renderer,
+                            self.queue,
+                            input,
+                            vertex_buffer,
+                            index_buffer,
+                        )
+                    } else {
+                        self.renderer.create_resources_with_geometry(
+                            input,
+                            vertex_buffer,
+                            index_buffer,
+                        )
+                    }
                 } else {
                     self.renderer.create_resources(input)
                 };
@@ -568,10 +610,28 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                     .find(|offscreen| offscreen.id == id)
                     .ok_or_else(|| Status::error("INVALID_RENDER_PLAN", id))?;
                 let destination_read = offscreen.blend_mode != 0;
+                let cache_geometry = self.geometry.is_some();
+                let source_scale = Affine2 {
+                    a: Vec2::new(surface.width as f32, 0.0),
+                    b: Vec2::new(0.0, surface.height as f32),
+                    origin: Vec2::new(0.0, 0.0),
+                };
                 let vertices = quad_vertices(
-                    (surface.width, surface.height),
-                    composite_transform,
-                    self.surface_to_model,
+                    if cache_geometry {
+                        (1, 1)
+                    } else {
+                        (surface.width, surface.height)
+                    },
+                    if cache_geometry {
+                        Affine2::IDENTITY
+                    } else {
+                        composite_transform
+                    },
+                    if cache_geometry {
+                        Affine2::IDENTITY
+                    } else {
+                        self.surface_to_model
+                    },
                 );
                 let indices = quad_indices();
                 let mask_data = if offscreen.masks.is_empty() {
@@ -598,6 +658,16 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                     offscreen.screen_color,
                     offscreen.opacity,
                 );
+                if cache_geometry {
+                    uniform = with_view_transform(
+                        uniform,
+                        compose_affine(composite_transform, source_scale),
+                    );
+                    uniform = with_mask_transform(
+                        uniform,
+                        compose_affine(self.surface_to_model, source_scale),
+                    );
+                }
                 if let Some((_, bounds, inverted)) = &mask_data {
                     uniform.mask_bounds = *bounds;
                     uniform.mask_flags = [1, u32::from(*inverted), 0, 0];
@@ -623,16 +693,39 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                     None
                 };
                 let resource_index = self.resources.len();
-                self.resources
-                    .push(self.renderer.create_resources(ResourceInput {
-                        device: self.device,
-                        texture_view: &surface.view,
-                        vertices: &vertices,
-                        indices: &indices,
-                        uniform,
-                        mask: mask_binding,
-                        destination: destination_binding,
-                    }));
+                let input = ResourceInput {
+                    device: self.device,
+                    texture_view: &surface.view,
+                    vertices: &vertices,
+                    indices: &indices,
+                    uniform,
+                    mask: mask_binding,
+                    destination: destination_binding,
+                };
+                let resource = if let Some(bindings) = self.bindings.as_deref_mut() {
+                    let (vertex_buffer, index_buffer) = self
+                        .geometry
+                        .as_deref_mut()
+                        .expect("binding cache requires geometry cache")
+                        .sync(
+                            self.device,
+                            self.queue,
+                            &format!("\0composite:{id}"),
+                            &vertices,
+                            &indices,
+                        );
+                    bindings.prepare(
+                        modern::DrawKey::Composite(id.to_owned()),
+                        self.renderer,
+                        self.queue,
+                        input,
+                        vertex_buffer,
+                        index_buffer,
+                    )
+                } else {
+                    self.renderer.create_resources(input)
+                };
+                self.resources.push(resource);
                 commands.push(SceneCommand {
                     resource_index,
                     pipeline: if destination_read {

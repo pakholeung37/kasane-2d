@@ -25,7 +25,7 @@ pub enum TargetItem {
     Composite(TargetId),
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MeshPlan {
     pub id: String,
     pub target: TargetId,
@@ -34,7 +34,7 @@ pub struct MeshPlan {
     mask_sources: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TargetPlan {
     /// Empty only for the host's main target.
     pub id: String,
@@ -46,7 +46,7 @@ pub struct TargetPlan {
     mask_sources: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct MaskPlan {
     /// Unique raw mesh inputs, in first-occurrence order.
     pub sources: Vec<MeshId>,
@@ -88,11 +88,11 @@ impl Bounds2 {
     }
 }
 
-/// Owns IDs, dependencies, immutable topology and small layout data,
+/// Owns IDs, dependencies and small layout data, and weakly tracks topology,
 /// but never a published frame or dynamic positions.
 /// Indices are scoped to this scene's current successful update. External
 /// callers cannot mutate its validated records through this API.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ScenePlan {
     validator: crate::validation::FrameValidator,
     canvas: Canvas,

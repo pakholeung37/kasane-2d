@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use kasane_core::evaluation::{Drawable, DrawableFrame, RenderCommand};
 use kasane_core::geometry::validate_render_mesh;
@@ -12,16 +12,16 @@ pub fn validate_frame(frame: &DrawableFrame) -> Status {
     })
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Topology {
-    uvs: Arc<[Vec2]>,
-    indices: Arc<[u32]>,
+    uvs: Weak<[Vec2]>,
+    indices: Weak<[u32]>,
     vertices: usize,
 }
 
-/// Retains immutable topology only. Owning the Arcs prevents address reuse and
-/// forces Arc::make_mut callers to detach before modifying validated data.
-#[derive(Debug, Default)]
+/// Tracks immutable topology without holding the caller's frame buffers alive.
+/// Weak handles prevent address reuse and are invalidated by `Arc::make_mut`.
+#[derive(Clone, Debug, Default)]
 pub(crate) struct FrameValidator {
     topology: Vec<Option<Topology>>,
 }
@@ -33,8 +33,14 @@ impl FrameValidator {
             let cached = &mut self.topology[slot];
             if cached.as_ref().is_some_and(|previous| {
                 previous.vertices == drawable.positions.len()
-                    && Arc::ptr_eq(&previous.uvs, &drawable.uvs)
-                    && Arc::ptr_eq(&previous.indices, &drawable.indices)
+                    && previous
+                        .uvs
+                        .upgrade()
+                        .is_some_and(|uvs| Arc::ptr_eq(&uvs, &drawable.uvs))
+                    && previous
+                        .indices
+                        .upgrade()
+                        .is_some_and(|indices| Arc::ptr_eq(&indices, &drawable.indices))
             }) {
                 // Converted coordinates are still checked below on every frame.
                 return Status::ok();
@@ -43,8 +49,8 @@ impl FrameValidator {
                 validate_render_mesh(&drawable.positions, &drawable.uvs, &drawable.indices);
             if status.is_ok() {
                 *cached = Some(Topology {
-                    uvs: Arc::clone(&drawable.uvs),
-                    indices: Arc::clone(&drawable.indices),
+                    uvs: Arc::downgrade(&drawable.uvs),
+                    indices: Arc::downgrade(&drawable.indices),
                     vertices: drawable.positions.len(),
                 });
             }
@@ -257,11 +263,11 @@ mod tests {
     }
 
     #[test]
-    fn cache_pins_topology_and_revalidates_copy_on_write_and_replacement() {
+    fn cache_tracks_topology_without_pin_and_revalidates_mutation() {
         let mut validator = FrameValidator::default();
         let mut value = frame();
         assert!(validator.validate(&value).is_ok());
-        assert_eq!(Arc::strong_count(&value.drawables[0].indices), 2);
+        assert_eq!(Arc::strong_count(&value.drawables[0].indices), 1);
         Arc::make_mut(&mut value.drawables[0].indices)[2] = 9;
         assert_eq!(validator.validate(&value).code, "INVALID_INDEX");
         value.drawables[0].indices = Arc::from([0, 1, 2]);

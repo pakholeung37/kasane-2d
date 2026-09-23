@@ -44,8 +44,8 @@ fn make_workload(
     }
 
     let mask_count = mask_count.min(drawable_count.saturating_sub(1));
-    for index in 1..=mask_count {
-        drawables[index].masks.push("mesh-0".to_owned());
+    for drawable in drawables.iter_mut().skip(1).take(mask_count) {
+        drawable.masks.push("mesh-0".to_owned());
     }
 
     let offscreen_count = offscreen_count.min(drawable_count);

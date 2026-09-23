@@ -2,17 +2,65 @@
 //! available while callers migrate, but is not used to plan this path.
 use super::*;
 use kasane_render::{surface_layout, ScenePlan, TargetItem};
+use std::sync::Arc;
 
 /// Owns all resources for one device and one output size/format.
 /// The host owns the device, queue, source textures and final output view.
 pub struct WgpuRenderer {
+    device: wgpu::Device,
     renderer: WgpuBasicRenderer,
     scene: ScenePlan,
+    model: Option<RenderSnapshot>,
+    viewport: Option<ViewportConfig>,
     color: WgpuSurface,
     surfaces: WgpuSurfacePool,
     masks: WgpuMaskPool,
     destinations: WgpuDestinationPool,
     geometry: GeometryCache,
+    bindings: BindingCache,
+    mask_signatures: HashMap<MaskKey, MaskSignature>,
+    model_generation: u64,
+}
+
+/// The render-relevant portion of a submitted frame. Its topology arrays are
+/// copied so the renderer never pins buffers owned by the caller's frame.
+struct RenderSnapshot {
+    frame: DrawableFrame,
+}
+
+impl RenderSnapshot {
+    fn from_frame(frame: &DrawableFrame) -> Self {
+        let drawables = frame
+            .drawables
+            .iter()
+            .map(|drawable| {
+                let mut owned = drawable.clone();
+                owned.runtime_id.clear();
+                owned.part_id.clear();
+                owned.uvs = Arc::from(drawable.uvs.as_ref().to_vec());
+                owned.indices = Arc::from(drawable.indices.as_ref().to_vec());
+                owned
+            })
+            .collect();
+        let offscreens = frame
+            .offscreens
+            .iter()
+            .map(|offscreen| {
+                let mut owned = offscreen.clone();
+                owned.runtime_id.clear();
+                owned.owner_part_id.clear();
+                owned
+            })
+            .collect();
+        Self {
+            frame: DrawableFrame {
+                canvas: frame.canvas,
+                drawables,
+                offscreens,
+                ..Default::default()
+            },
+        }
+    }
 }
 
 /// Host-owned objects needed to encode one scene. Submit the encoder before
@@ -41,6 +89,111 @@ pub struct WgpuRenderStats {
     pub vertex_upload_bytes: u64,
     pub index_upload_bytes: u64,
     pub geometry_buffer_creations: u64,
+    pub uniform_buffer_creations: u64,
+    pub bind_group_creations: u64,
+    pub mask_redraws: usize,
+    pub attachment_bytes: u64,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct MaskSignature {
+    attachment: wgpu::TextureView,
+    model_generation: u64,
+    sources: Vec<(wgpu::TextureView, u64)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) enum DrawKey {
+    MaskSource { mask: MaskKey, mesh: String },
+    Mesh(String),
+    Composite(String),
+    Present,
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct BoundViews {
+    texture: wgpu::TextureView,
+    mask: Option<wgpu::TextureView>,
+    destination: Option<wgpu::TextureView>,
+}
+
+impl BoundViews {
+    fn from_input(input: &ResourceInput<'_>) -> Self {
+        Self {
+            texture: input.texture_view.clone(),
+            mask: input.mask.map(|mask| mask.view.clone()),
+            destination: input
+                .destination
+                .map(|destination| destination.view.clone()),
+        }
+    }
+}
+
+struct CachedBindings {
+    views: BoundViews,
+    resources: DrawResources,
+}
+
+#[derive(Default)]
+pub(super) struct BindingCache {
+    entries: HashMap<DrawKey, CachedBindings>,
+    used: HashSet<DrawKey>,
+    uniform_buffer_creations: u64,
+    bind_group_creations: u64,
+}
+
+impl BindingCache {
+    fn begin_frame(&mut self) {
+        self.used.clear();
+        self.uniform_buffer_creations = 0;
+        self.bind_group_creations = 0;
+    }
+
+    fn finish_frame(&mut self, masks: &WgpuMaskPool) {
+        self.entries.retain(|key, _| {
+            self.used.contains(key)
+                || matches!(key, DrawKey::MaskSource { mask, .. } if masks.masks.contains_key(mask))
+        });
+    }
+
+    pub(super) fn prepare(
+        &mut self,
+        key: DrawKey,
+        renderer: &WgpuBasicRenderer,
+        queue: &wgpu::Queue,
+        input: ResourceInput<'_>,
+        vertex_buffer: wgpu::Buffer,
+        index_buffer: wgpu::Buffer,
+    ) -> DrawResources {
+        let views = BoundViews::from_input(&input);
+        self.used.insert(key.clone());
+        if let Some(cached) = self.entries.get_mut(&key) {
+            if cached.views == views {
+                queue.write_buffer(
+                    &cached.resources._uniform_buffer,
+                    0,
+                    bytemuck::bytes_of(&input.uniform),
+                );
+                cached.resources.vertex_buffer = vertex_buffer;
+                cached.resources.index_buffer = index_buffer;
+                cached.resources.index_count = input.indices.len() as u32;
+                return cached.resources.clone();
+            }
+        }
+        let bind_groups =
+            2 + u64::from(views.mask.is_some()) + u64::from(views.destination.is_some());
+        let resources = renderer.create_resources_with_geometry(input, vertex_buffer, index_buffer);
+        self.entries.insert(
+            key,
+            CachedBindings {
+                views,
+                resources: resources.clone(),
+            },
+        );
+        self.uniform_buffer_creations += 1;
+        self.bind_group_creations += bind_groups;
+        resources
+    }
 }
 
 #[derive(Default)]
@@ -142,13 +295,19 @@ impl WgpuRenderer {
         let renderer = WgpuBasicRenderer::new(device, target)?;
         let color = create_color(device, target);
         Ok(Self {
+            device: device.clone(),
             renderer,
             scene: ScenePlan::default(),
+            model: None,
+            viewport: None,
             color,
             surfaces: WgpuSurfacePool::new(target.format),
             masks: WgpuMaskPool::new(),
             destinations: WgpuDestinationPool::new(),
             geometry: GeometryCache::default(),
+            bindings: BindingCache::default(),
+            mask_signatures: HashMap::new(),
+            model_generation: 0,
         })
     }
 
@@ -162,6 +321,7 @@ impl WgpuRenderer {
         device: &wgpu::Device,
         target: WgpuTargetConfig,
     ) -> Result<(), Status> {
+        self.ensure_device(device)?;
         validate_target(device, target)?;
         if self.target() == target {
             return Ok(());
@@ -171,21 +331,60 @@ impl WgpuRenderer {
             self.surfaces = WgpuSurfacePool::new(target.format);
             self.masks.clear();
             self.destinations.clear();
+            self.bindings = BindingCache::default();
+            self.mask_signatures.clear();
         } else {
             self.renderer.planner.target = target;
         }
         self.color = create_color(device, target);
+        self.viewport = None;
         Ok(())
     }
 
-    /// Encode one evaluated frame into a host-owned encoder. The host chooses
-    /// when to submit and how to observe GPU completion. No frame is retained.
+    /// Validate and publish a model submission without retaining the caller's
+    /// frame or its topology allocations. A rejected submission keeps the last
+    /// successful model available for rendering.
+    pub fn sync_model(
+        &mut self,
+        device: &wgpu::Device,
+        frame: &DrawableFrame,
+        textures: &WgpuTextureCatalog<'_>,
+    ) -> Result<(), Status> {
+        self.ensure_device(device)?;
+        let mut candidate = self.scene.clone();
+        candidate.update(frame, textures)?;
+        if let Some(viewport) = self.viewport {
+            lower_scene(&candidate, frame, viewport, self.target(), device)?;
+        }
+        let snapshot = RenderSnapshot::from_frame(frame);
+        self.scene = candidate;
+        self.model = Some(snapshot);
+        self.model_generation = self.model_generation.wrapping_add(1);
+        Ok(())
+    }
+
+    /// Validate a camera or output-view change without revalidating the model.
+    /// The previous view remains active when the new layout is rejected.
+    pub fn update_view(
+        &mut self,
+        device: &wgpu::Device,
+        viewport: ViewportConfig,
+    ) -> Result<(), Status> {
+        self.ensure_device(device)?;
+        let model = self.model.as_ref().ok_or_else(|| {
+            Status::error("MISSING_MODEL", "Submit a model before updating the view.")
+        })?;
+        lower_scene(&self.scene, &model.frame, viewport, self.target(), device)?;
+        self.viewport = Some(viewport);
+        Ok(())
+    }
+
+    /// Encode the last submitted model and view into a host-owned encoder.
+    /// The host chooses when to submit and how to observe GPU completion.
     pub fn encode(
         &mut self,
         target: WgpuEncodeTarget<'_>,
-        frame: &DrawableFrame,
         textures: &WgpuTextureCatalog<'_>,
-        viewport: ViewportConfig,
     ) -> Result<WgpuRenderStats, Status> {
         let WgpuEncodeTarget {
             device,
@@ -194,17 +393,39 @@ impl WgpuRenderer {
             output,
             output_mode,
         } = target;
-        self.scene.update(frame, textures)?;
+        self.ensure_device(device)?;
+        let frame = &self
+            .model
+            .as_ref()
+            .ok_or_else(|| Status::error("MISSING_MODEL", "Submit a model before encoding."))?
+            .frame;
+        let viewport = self
+            .viewport
+            .ok_or_else(|| Status::error("MISSING_VIEW", "Update the view before encoding."))?;
+        for drawable in &frame.drawables {
+            let texture = textures
+                .get(&drawable.texture_asset_id)
+                .ok_or_else(|| Status::error("MISSING_TEXTURE", &drawable.texture_asset_id))?;
+            if texture.width == 0 || texture.height == 0 {
+                return Err(Status::error("INVALID_TEXTURE", &drawable.texture_asset_id));
+            }
+        }
         self.geometry.vertex_upload_bytes = 0;
         self.geometry.index_upload_bytes = 0;
         self.geometry.buffer_creations = 0;
-        self.geometry
-            .entries
-            .retain(|id, _| self.scene.mesh_id(id).is_some());
+        self.bindings.begin_frame();
+        self.geometry.entries.retain(|id, _| {
+            id == "\0present"
+                || id
+                    .strip_prefix("\0composite:")
+                    .is_some_and(|name| self.scene.target_id(name).is_some())
+                || self.scene.mesh_id(id).is_some()
+        });
         let prepared = lower_scene(&self.scene, frame, viewport, self.target(), device)?;
         let graph = build_scene_from_plan(&self.scene, frame);
         self.surfaces.sync(device, &prepared)?;
         self.masks.sync(device, frame, &prepared, viewport)?;
+        let (dirty_masks, next_signatures) = self.mask_updates(textures)?;
         let target = self.target();
         sync_destinations(
             &mut self.destinations,
@@ -236,6 +457,8 @@ impl WgpuRenderer {
                 surface_to_model,
                 queue,
                 geometry: Some(&mut self.geometry),
+                bindings: Some(&mut self.bindings),
+                dirty_masks: Some(&dirty_masks),
             };
             context.encode_masks()?;
             for id in prepared.active_offscreens.iter().copied() {
@@ -256,24 +479,40 @@ impl WgpuRenderer {
         }
         // The backend-owned color target makes destination reads independent
         // of the host output texture's COPY_SRC capability.
-        let presentation = self.renderer.create_resources(ResourceInput {
+        let presentation_vertices = quad_vertices(
+            (target.width, target.height),
+            Affine2::IDENTITY,
+            Affine2::IDENTITY,
+        );
+        let presentation_indices = quad_indices();
+        let (vertex_buffer, index_buffer) = self.geometry.sync(
             device,
-            texture_view: &self.color.view,
-            vertices: &quad_vertices(
-                (target.width, target.height),
-                Affine2::IDENTITY,
-                Affine2::IDENTITY,
-            ),
-            indices: &quad_indices(),
-            uniform: draw_uniform(
-                (target.width, target.height),
-                [1.0; 4],
-                [0.0, 0.0, 0.0, 1.0],
-                1.0,
-            ),
-            mask: None,
-            destination: None,
-        });
+            queue,
+            "\0present",
+            &presentation_vertices,
+            &presentation_indices,
+        );
+        let presentation = self.bindings.prepare(
+            DrawKey::Present,
+            &self.renderer,
+            queue,
+            ResourceInput {
+                device,
+                texture_view: &self.color.view,
+                vertices: &presentation_vertices,
+                indices: &presentation_indices,
+                uniform: draw_uniform(
+                    (target.width, target.height),
+                    [1.0; 4],
+                    [0.0, 0.0, 0.0, 1.0],
+                    1.0,
+                ),
+                mask: None,
+                destination: None,
+            },
+            vertex_buffer,
+            index_buffer,
+        );
         resources.push(presentation);
         encode_render_pass(
             encoder,
@@ -290,6 +529,8 @@ impl WgpuRenderer {
             },
             "kasane.wgpu.scene-plan.present",
         );
+        self.bindings.finish_frame(&self.masks);
+        self.mask_signatures = next_signatures;
         Ok(WgpuRenderStats {
             active_surfaces: self.surfaces.len(),
             masks: self.masks.len(),
@@ -297,7 +538,68 @@ impl WgpuRenderer {
             vertex_upload_bytes: self.geometry.vertex_upload_bytes,
             index_upload_bytes: self.geometry.index_upload_bytes,
             geometry_buffer_creations: self.geometry.buffer_creations,
+            uniform_buffer_creations: self.bindings.uniform_buffer_creations,
+            bind_group_creations: self.bindings.bind_group_creations,
+            mask_redraws: dirty_masks.len(),
+            attachment_bytes: attachment_bytes(
+                &self.color,
+                &self.surfaces,
+                &self.masks,
+                &self.destinations,
+            ),
         })
+    }
+
+    fn mask_updates(
+        &self,
+        textures: &WgpuTextureCatalog<'_>,
+    ) -> Result<(HashSet<MaskKey>, HashMap<MaskKey, MaskSignature>), Status> {
+        let frame = &self.model.as_ref().expect("validated model").frame;
+        let mut dirty = HashSet::new();
+        let mut next = HashMap::new();
+        for (key, mask) in &self.masks.masks {
+            let mut sources = Vec::with_capacity(mask.source_ids.len());
+            let mut has_revisions = true;
+            for id in &mask.source_ids {
+                let drawable = frame
+                    .drawables
+                    .iter()
+                    .find(|drawable| drawable.id == *id)
+                    .ok_or_else(|| Status::error("INVALID_MASK", id))?;
+                let texture = textures
+                    .get(&drawable.texture_asset_id)
+                    .ok_or_else(|| Status::error("MISSING_TEXTURE", &drawable.texture_asset_id))?;
+                if let Some(revision) = textures.revision(&drawable.texture_asset_id) {
+                    sources.push((texture.view.clone(), revision));
+                } else {
+                    has_revisions = false;
+                }
+            }
+            if has_revisions {
+                let signature = MaskSignature {
+                    attachment: mask.view.clone(),
+                    model_generation: self.model_generation,
+                    sources,
+                };
+                if self.mask_signatures.get(key) != Some(&signature) {
+                    dirty.insert(key.clone());
+                }
+                next.insert(key.clone(), signature);
+            } else {
+                dirty.insert(key.clone());
+            }
+        }
+        Ok((dirty, next))
+    }
+
+    fn ensure_device(&self, device: &wgpu::Device) -> Result<(), Status> {
+        if *device != self.device {
+            return Err(Status::error(
+                "DEVICE_MISMATCH",
+                "Recreate the WGPU renderer after changing devices.",
+            ));
+        }
+        Ok(())
     }
 
     /// Convenience wrapper for hosts that do not need to add commands to the
@@ -311,6 +613,8 @@ impl WgpuRenderer {
         textures: &WgpuTextureCatalog<'_>,
         viewport: ViewportConfig,
     ) -> Result<WgpuRenderStats, Status> {
+        self.sync_model(device, frame, textures)?;
+        self.update_view(device, viewport)?;
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("kasane.wgpu.scene-plan.encoder"),
         });
@@ -322,9 +626,7 @@ impl WgpuRenderer {
                 output,
                 output_mode: WgpuOutputMode::Replace,
             },
-            frame,
             textures,
-            viewport,
         )?;
         queue.submit([encoder.finish()]);
         Ok(stats)
@@ -352,6 +654,28 @@ fn validate_target(device: &wgpu::Device, target: WgpuTargetConfig) -> Result<()
         return Err(Status::error(
             "UNSUPPORTED_TARGET_FORMAT",
             "The WGPU scene target requires an 8-bit RGBA or BGRA format.",
+        ));
+    }
+    let required_usages = wgpu::TextureUsages::RENDER_ATTACHMENT
+        | wgpu::TextureUsages::TEXTURE_BINDING
+        | wgpu::TextureUsages::COPY_SRC
+        | wgpu::TextureUsages::COPY_DST;
+    let features = target.format.guaranteed_format_features(device.features());
+    if !features.allowed_usages.contains(required_usages)
+        || !features.flags.contains(
+            wgpu::TextureFormatFeatureFlags::FILTERABLE
+                | wgpu::TextureFormatFeatureFlags::BLENDABLE,
+        )
+    {
+        return Err(Status::error(
+            "UNSUPPORTED_TARGET_FORMAT",
+            "The output format lacks the required render, sample, copy, or blend capability.",
+        ));
+    }
+    if texture_bytes(target.width, target.height) > kasane_render::OFFSCREEN_BUDGET_BYTES as u64 {
+        return Err(Status::error(
+            "OFFSCREEN_BUDGET_EXCEEDED",
+            "The output target alone exceeds the WGPU attachment budget.",
         ));
     }
     Ok(())
@@ -390,6 +714,21 @@ fn lower_scene<'a>(
     target: WgpuTargetConfig,
     device: &wgpu::Device,
 ) -> Result<PreparedFrame<'a>, Status> {
+    for drawable in &frame.drawables {
+        let vertex_bytes =
+            (drawable.positions.len() as u64).saturating_mul(std::mem::size_of::<Vertex>() as u64);
+        let index_bytes =
+            (drawable.indices.len() as u64).saturating_mul(std::mem::size_of::<u32>() as u64);
+        if vertex_bytes > device.limits().max_buffer_size
+            || index_bytes > device.limits().max_buffer_size
+            || drawable.indices.len() > u32::MAX as usize
+        {
+            return Err(Status::error(
+                "GPU_BUFFER_LIMIT",
+                format!("{} exceeds the device mesh buffer limit.", drawable.id),
+            ));
+        }
+    }
     if !viewport.mask_scale.is_finite() || viewport.mask_scale <= 0.0 {
         return Err(Status::error(
             "INVALID_MASK_SCALE",
@@ -448,9 +787,10 @@ fn lower_scene<'a>(
         mask_consumers.insert(group.id.clone(), scene.targets()[group.parent.0].id.clone());
     }
     // This is a physical preflight, independent of the compatibility planner.
-    let main_bytes = u64::from(target.width) * u64::from(target.height) * 4;
-    let surface_bytes = surface_size.width as u64 * surface_size.height as u64 * 4;
-    let mut bytes = main_bytes + scene.active_target_count() as u64 * surface_bytes;
+    let main_bytes = texture_bytes(target.width, target.height);
+    let surface_bytes = texture_bytes(surface_size.width as u32, surface_size.height as u32);
+    let mut bytes = main_bytes
+        .saturating_add((scene.active_target_count() as u64).saturating_mul(surface_bytes));
     for (index, owner) in scene.targets().iter().enumerate() {
         let reads = owner.items.iter().any(|item| match item {
             TargetItem::Draw(id) => {
@@ -464,21 +804,47 @@ fn lower_scene<'a>(
             }
         });
         if reads && (index == 0 || owner.active) {
-            bytes += if index == 0 {
+            bytes = bytes.saturating_add(if index == 0 {
                 main_bytes
             } else {
                 surface_bytes
-            };
+            });
         }
     }
-    for mesh in scene.meshes() {
-        if let Some(mask) = mesh.mask {
-            bytes += mask_bytes(scene, mask, viewport.mask_scale, limit)?;
+    let mut mask_keys = HashSet::new();
+    let mask_limit = device.limits().max_texture_dimension_2d.min(4096);
+    for (mesh, drawable) in scene.meshes().iter().zip(&frame.drawables) {
+        if mesh.mask.is_some() {
+            let key = MaskKey::new(
+                &drawable.masks,
+                viewport.mask_scale,
+                &scene.targets()[mesh.target.0].id,
+            );
+            if mask_keys.insert(key) {
+                let layout = mask_layout_with_limit(
+                    frame,
+                    &drawable.masks,
+                    viewport.mask_scale,
+                    mask_limit,
+                )?;
+                bytes = bytes.saturating_add(texture_bytes(layout.width, layout.height));
+            }
         }
     }
-    for group in scene.targets().iter().skip(1).filter(|group| group.active) {
-        if let Some(mask) = group.mask {
-            bytes += mask_bytes(scene, mask, viewport.mask_scale.max(1.0), limit)?;
+    for (group, offscreen) in scene
+        .targets()
+        .iter()
+        .skip(1)
+        .zip(&frame.offscreens)
+        .filter(|(group, _)| group.active)
+    {
+        if group.mask.is_some() {
+            let scale = viewport.mask_scale.max(1.0);
+            let key = MaskKey::new(&offscreen.masks, scale, &scene.targets()[group.parent.0].id);
+            if mask_keys.insert(key) {
+                let layout = mask_layout_with_limit(frame, &offscreen.masks, scale, mask_limit)?;
+                bytes = bytes.saturating_add(texture_bytes(layout.width, layout.height));
+            }
         }
     }
     if bytes > kasane_render::OFFSCREEN_BUDGET_BYTES as u64 {
@@ -497,23 +863,32 @@ fn lower_scene<'a>(
     })
 }
 
-fn mask_bytes(
-    scene: &ScenePlan,
-    mask: kasane_render::MaskId,
-    scale: f64,
-    limit: i32,
-) -> Result<u64, Status> {
-    let bounds = scene.masks()[mask.0].bounds.grow(4.0);
-    let width = bounds.size.x.ceil().max(1.0);
-    let height = bounds.size.y.ceil().max(1.0);
-    let density = (scale as f32).min(limit.min(4096) as f32 / width.max(height));
-    if !density.is_finite() || density <= 0.0 {
-        return Err(Status::error(
-            "INVALID_MASK_SCALE",
-            "Mask layout overflowed.",
-        ));
-    }
-    Ok((width * density).ceil() as u64 * (height * density).ceil() as u64 * 4)
+fn texture_bytes(width: u32, height: u32) -> u64 {
+    u64::from(width) * u64::from(height) * 4
+}
+
+fn attachment_bytes(
+    main: &WgpuSurface,
+    surfaces: &WgpuSurfacePool,
+    masks: &WgpuMaskPool,
+    destinations: &WgpuDestinationPool,
+) -> u64 {
+    texture_bytes(main.width, main.height)
+        + surfaces
+            .surfaces
+            .values()
+            .map(|surface| texture_bytes(surface.width, surface.height))
+            .sum::<u64>()
+        + masks
+            .masks
+            .values()
+            .map(|mask| texture_bytes(mask.width, mask.height))
+            .sum::<u64>()
+        + destinations
+            .snapshots
+            .values()
+            .map(|snapshot| texture_bytes(snapshot.width, snapshot.height))
+            .sum::<u64>()
 }
 
 fn build_scene_from_plan<'a>(scene: &'a ScenePlan, frame: &'a DrawableFrame) -> SceneGraph<'a> {

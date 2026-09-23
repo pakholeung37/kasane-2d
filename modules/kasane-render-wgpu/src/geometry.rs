@@ -19,6 +19,9 @@ pub(super) fn draw_uniform(
         view_a: [1.0, 0.0, 0.0, 0.0],
         view_b: [0.0, 1.0, 0.0, 0.0],
         view_origin: [0.0; 4],
+        mask_a: [1.0, 0.0, 0.0, 0.0],
+        mask_b: [0.0, 1.0, 0.0, 0.0],
+        mask_origin: [0.0; 4],
     }
 }
 
@@ -26,6 +29,13 @@ pub(super) fn with_view_transform(mut uniform: DrawUniform, transform: Affine2) 
     uniform.view_a = [transform.a.x, transform.a.y, 0.0, 0.0];
     uniform.view_b = [transform.b.x, transform.b.y, 0.0, 0.0];
     uniform.view_origin = [transform.origin.x, transform.origin.y, 0.0, 0.0];
+    uniform
+}
+
+pub(super) fn with_mask_transform(mut uniform: DrawUniform, transform: Affine2) -> DrawUniform {
+    uniform.mask_a = [transform.a.x, transform.a.y, 0.0, 0.0];
+    uniform.mask_b = [transform.b.x, transform.b.y, 0.0, 0.0];
+    uniform.mask_origin = [transform.origin.x, transform.origin.y, 0.0, 0.0];
     uniform
 }
 

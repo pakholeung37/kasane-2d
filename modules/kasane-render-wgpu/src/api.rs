@@ -79,15 +79,30 @@ pub struct WgpuTexture<'a> {
 /// borrows the host-created texture views.
 pub struct WgpuTextureCatalog<'a> {
     textures: HashMap<String, WgpuTexture<'a>>,
+    revisions: HashMap<String, u64>,
 }
 
 impl<'a> WgpuTextureCatalog<'a> {
     pub fn new(textures: HashMap<String, WgpuTexture<'a>>) -> Self {
-        Self { textures }
+        Self {
+            textures,
+            revisions: HashMap::new(),
+        }
     }
 
     pub fn get(&self, id: &str) -> Option<&WgpuTexture<'a>> {
         self.textures.get(id)
+    }
+
+    /// Declare the content revision of a host texture. Reusing a revision
+    /// promises that its pixels have not changed, even when the view is reused.
+    /// Without a revision, dependent masks are conservatively redrawn.
+    pub fn set_revision(&mut self, id: impl Into<String>, revision: u64) {
+        self.revisions.insert(id.into(), revision);
+    }
+
+    pub fn revision(&self, id: &str) -> Option<u64> {
+        self.revisions.get(id).copied()
     }
 }
 
