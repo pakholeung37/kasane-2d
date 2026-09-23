@@ -6,7 +6,7 @@
 
 - `kasane-render::ScenePlan` 已提供稠密 `MeshId` / `TargetId` / `MaskId`、target 内有序 `Draw` / `Composite`、原始 mask 源、活动 target 和 mask bounds。`ScenePlan::update` 校验外部 `DrawableFrame`，不保留整帧。
 - Godot 后端直接消费 `ScenePlan`。新的 `WgpuRenderer` 也从 `ScenePlan` 获取目标顺序、遮罩与目标读取关系，并拥有持续复用的 GPU 资源。旧的 `prepare_frame`/`WgpuBasicRenderer` API 仍在同一 crate 中供现有调用者过渡；新入口不解析旧 `RenderPass`。
-- WGPU 已有真实设备上的像素测试与独立离屏宿主。Godot 现在只用于参考图像对照，未来应用宿主不会使用 Godot。
+- WGPU 已有真实设备上的像素测试与独立离屏宿主。Godot 版本继续可用，在以 WGPU 为核心的版本完全可用前不会移除；迁移验证也使用 Godot 图像作对照。未来的 WGPU editor 不依赖 Godot，其 UI 架构仍待确定。
 
 **决定：以 `ScenePlan` 为新 WGPU 入口的场景协议。** 旧实现的 WGSL 混合公式、坐标换算和测试用例用作迁移线索。`WgpuBasicRenderer`、`WgpuFramePlanner`、外置 attachment pool 和 `PreparedFrame` 公共 API 暂留供现有调用者过渡，不作为新应用宿主的入口。
 
@@ -42,7 +42,7 @@ queue.submit([encoder.finish()]);                   // 宿主决定提交和观�
 
 ### 新应用宿主的接入边界
 
-当前 `kasane-godot` 预览返回 Godot `Texture2D`/mesh view，并由 Godot 的 viewport、截图 ready 状态机和选区覆盖层展示结果。正式迁移需要一个新的、直接持有 WGPU device/queue/surface 的应用宿主，接入模型提交、相机更新、源纹理生命周期、窗口 resize、预览展示与截图完成观察；选区覆盖层需要与后端无关的已求值几何查询。逐帧 GPU→CPU 读回再上传只用于测试/诊断。`examples/offscreen.rs` 是验证渲染正确性的最小独立宿主，Godot 后端只保留作迁移期的参考图像对照。
+当前 `kasane-godot` 预览返回 Godot `Texture2D`/mesh view，并由 Godot 的 viewport、截图 ready 状态机和选区覆盖层展示结果。正式迁移需要一个新的、直接持有 WGPU device/queue/surface 的应用宿主，接入模型提交、相机更新、源纹理生命周期、窗口 resize、预览展示与截图完成观察；选区覆盖层需要与后端无关的已求值几何查询。逐帧 GPU→CPU 读回再上传只用于测试/诊断。`examples/offscreen.rs` 是验证渲染正确性的最小独立宿主；`apps/wgpu-validate` 已接入真实模型导入、求值、纹理上传、离屏输出和截图，`apps/wgpu-viewer` 复用其模型与纹理层，直接向窗口 surface 展示。Godot 应用仍作为可用版本维护，并提供迁移期参考图像。新 editor 的交互与 UI 架构仍未确定。
 
 ## 一帧的处理顺序
 
@@ -92,5 +92,6 @@ queue.submit([encoder.finish()]);                   // 宿主决定提交和观�
 - `gpu_smoke.rs` 的 12 个真实 GPU 用例读回验证平面、不可见 raw mask 源、普通/反向及离屏 mask、普通/嵌套离屏、固定 Additive/Multiplicative、无宿主 `COPY_SRC` 的目标颜色读取、连续两次目标读取、纹理原地更新、错误后恢复与格式/尺寸切换。
 - 独立宿主运行命令：`cargo run -p kasane-render-wgpu --example offscreen --locked -- target/wgpu-minimal.png`。它创建 device、源纹理和输出目标，提交绘制，读回并校验像素，再输出 PNG。
 - 混合矩阵对照命令：`python3 tools/compare_wgpu_blends.py`（需要 Pillow、NumPy 和 Godot 可执行文件；可用 `--godot` 指定）。独立 WGPU 宿主对照现有 Godot shader 参考脚本，在 18 种颜色模式 × 5 种 alpha 模式 × 8 组 mesh/offscreen、遮罩及透明度样本中，720/720 格逐字节一致。可额外传入 `--official-probe target/wgpu-official-probe/kasane_framework_gpu_probe`，直接对照固定版本的官方 Framework GPU 探针：720/720 格通过，最大字节差为 1。探针可用 `cmake -S tools/probes -B target/wgpu-official-probe -DKASANE_CUBISM_ROOT="$PWD/third_party/CubismSdkForNative-5-r.5" -DKASANE_BUILD_GPU_PROBE=ON -DCMAKE_POLICY_VERSION_MINIMUM=3.5` 和 `cmake --build target/wgpu-official-probe --target kasane_framework_gpu_probe -j6` 构建。这个矩阵验证混合公式，不代替完整模型/应用端到端验收。
+- 真实模型双路径入口：`python3 tools/validate_wgpu_real_models.py` 运行 Ren 默认姿态与 `ParamAngleX=15` 的完整门禁；`compare_wgpu_real_model.py` 可单独运行指定 case。Godot 与 WGPU 分别输出 2048×2048 截图、帧摘要和运行报告，再比较整图、前景分区与具有求值几何的离屏对象区域。2026-09-23 在 Apple M4 上，生产使用的线性 mipmap 纹理路径及两个姿态均通过：两边完整 mip 链 SHA-256 一致，每个姿态各 29 个图像区域检查通过，最大通道差均为 1/255，参数变化使两边图像都改变。默认姿态的 198 个 drawable、24 个 offscreen、246 条命令一致；窗口 viewer 已实际 present，并在两帧冒烟检查中完成 resize。仍需更广的真实模型、连续参数更新、资源寿命/峰值和 editor 交互验收。
 
-剩余后端工作：精确峰值显存统计、纹理和 GPU buffer 资源寿命的性能压测、官方 Framework 完整模型图像覆盖。正式应用还需新 WGPU 宿主的预览、选区覆盖层、截图与生命周期接入；旧公开兼容 API 待新入口稳定后移除。
+剩余后端工作：精确峰值显存统计、纹理和 GPU buffer 资源寿命的性能压测、官方 Framework 完整模型图像覆盖。正式 editor 还需接入预览、选区覆盖层、截图观察与完整生命周期；当前窗口 viewer 仅验证直接展示与 resize。旧公开兼容 API 待新入口稳定后移除。

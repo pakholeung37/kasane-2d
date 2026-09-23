@@ -1,0 +1,12 @@
+[package]
+name = "kasane-wgpu-viewer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+kasane-wgpu-validate = { path = "../wgpu-validate" }
+kasane-render-wgpu = { path = "../../modules/kasane-render-wgpu" }
+wgpu = { workspace = true }
+winit = "0.30.13"

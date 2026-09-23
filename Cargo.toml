@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "apps/wgpu-validate",
+    "apps/wgpu-viewer",
     "modules/kasane-core",
     "modules/kasane-render",
     "modules/kasane-render-godot",
