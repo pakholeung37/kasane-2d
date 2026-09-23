@@ -8,22 +8,21 @@ from pathlib import Path
 import re
 
 ROOT = Path(__file__).resolve().parents[3]
-SDK = ROOT / "modules/kasane-sdk/src/lib.rs"
+SDK = ROOT / "modules/kasane-sdk/src"
 MANIFEST = Path(__file__).resolve().parents[1] / "python-coverage.json"
 TESTS = Path(__file__).resolve().parents[1] / "tests/test_cpu.py"
 
 
 def public_api() -> set[str]:
-    source = SDK.read_text(encoding="utf-8")
+    sources = {
+        name: (SDK / f"{name}.rs").read_text(encoding="utf-8")
+        for name in ("session", "project_io", "edit", "types", "assets")
+    }
     sections = {
-        "Session": source.split("impl AuthoringSession {", 1)[1].split(
-            "pub struct EditSession", 1
-        )[0],
-        "Edit": source.split("impl EditSession<'_> {", 1)[1].split("fn merge_kind", 1)[0],
-        "ObjectHandle": source.split("impl ObjectHandle {", 1)[1].split(
-            "pub struct MeshProperties", 1
-        )[0],
-        "free": source.split("fn merge_kind", 1)[1],
+        "Session": sources["session"] + sources["project_io"],
+        "Edit": sources["edit"],
+        "ObjectHandle": sources["types"],
+        "free": sources["assets"],
     }
     result = set()
     for owner, body in sections.items():
