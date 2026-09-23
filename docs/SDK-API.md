@@ -77,4 +77,6 @@ S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照�
 
 继续接入不透明 `ObjectHandle`、`handle`/`resolve_handle`/`mesh_by_handle`、绘制顺序组读写及自定义历史限制构造。句柄在普通属性修改后保持有效，消失再恢复的对象会令旧句柄过期。覆盖清单现为 77/115 已绑定、38 项待绑定。
 
+Part 已支持创建、读取和完整字段替换；组织父节点与 mesh 的 Part 归属已通过成功路径测试。覆盖清单更新至 80/115，剩余 35 项。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

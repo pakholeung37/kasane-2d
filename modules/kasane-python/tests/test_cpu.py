@@ -17,6 +17,8 @@ ASSET = "00000000-0000-4000-8000-000000000002"
 MESH = "00000000-0000-4000-8000-000000000003"
 PARAMETER = "00000000-0000-4000-8000-000000000004"
 BINDING = "00000000-0000-4000-8000-000000000005"
+PART = "00000000-0000-4000-8000-000000000006"
+CHILD_PART = "00000000-0000-4000-8000-000000000007"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -330,6 +332,30 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(model.draw_order_groups, [group])
         model.undo()
         self.assertIsNone(model.draw_order_groups)
+
+    def test_parts_and_organization_parent_publish(self):
+        model = session()
+        with model.edit("base") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        with model.edit("parts") as edit:
+            edit.create_part(PART, "root")
+            edit.create_part(CHILD_PART, "child")
+            edit.set_organization_parent(CHILD_PART, PART)
+            edit.set_mesh_part(MESH, CHILD_PART)
+        self.assertEqual(model.part_ids(), [PART, CHILD_PART])
+        child = model.part(CHILD_PART)
+        self.assertEqual(child.parent_id, PART)
+        self.assertEqual(child.runtime_id, CHILD_PART)
+        self.assertEqual(model.validate_structure(), [])
+        with model.edit("rename part") as edit:
+            edit.replace_part(CHILD_PART, "renamed", PART, False, 2.5)
+        self.assertEqual(model.part(CHILD_PART).name, "renamed")
+        self.assertEqual(model.part(CHILD_PART).runtime_id, CHILD_PART)
+        self.assertFalse(model.part(CHILD_PART).enabled)
+        self.assertEqual(model.part(CHILD_PART).draw_order, 2.5)
+        model.undo()
+        self.assertEqual(model.part(CHILD_PART).name, "child")
 
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:

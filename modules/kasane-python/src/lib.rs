@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use kasane_core::{
     draw_order::DrawOrderGroup, Appearance, BindingAxis, Canvas, DrawableFrame, MeshBinding,
-    MeshKeyform, Parameter, Vec2,
+    MeshKeyform, Parameter, Part, Vec2,
 };
 use kasane_sdk::{
     prepare_png_asset, rectangle_mesh, AuthoringSession, EditReceipt, HistoryLimits, ObjectHandle,
@@ -38,6 +38,7 @@ type MeshBindingTuple = (
     VersionTuple,
 );
 type DrawOrderTuple = (String, Vec<String>, i32, i32);
+type PartTuple = (String, String, String, String, bool, f32, VersionTuple);
 type GeometryTuple = (
     VersionTuple,
     String,
@@ -562,6 +563,21 @@ impl NativeSession {
             .map(|binding| binding_tuple(binding, session.version())))
     }
 
+    fn part(&self, id: &str) -> PyResult<Option<PartTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session.part(id).map(|part| {
+            (
+                part.id,
+                part.runtime_id,
+                part.name,
+                part.parent_id,
+                part.enabled,
+                part.draw_order,
+                version_tuple(session.version()),
+            )
+        }))
+    }
+
     fn handle(&self, py: Python<'_>, kind: &str, id: &str) -> PyResult<NativeHandle> {
         let kind = object_kind(kind)?;
         self.inner
@@ -961,6 +977,8 @@ enum Command {
     SetDeformParent(String, String),
     SetMeshPart(String, String),
     ReplaceDrawOrderGroups(Vec<DrawOrderGroup>),
+    CreatePart(Part),
+    ReplacePart(Part),
 }
 
 #[pyclass]
@@ -997,6 +1015,52 @@ impl NativeEdit {
 
 #[pymethods]
 impl NativeEdit {
+    #[pyo3(signature = (id, name, parent_id="", enabled=true, draw_order=0.0))]
+    fn create_part(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+        parent_id: &str,
+        enabled: bool,
+        draw_order: f32,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_part")?;
+        self.commands.push(Command::CreatePart(Part {
+            id,
+            name,
+            parent_id: parent_id.into(),
+            enabled,
+            draw_order,
+            ..Part::default()
+        }));
+        Ok(())
+    }
+
+    fn replace_part(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+        parent_id: String,
+        enabled: bool,
+        draw_order: f32,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_part")?;
+        let original = self.session.lock().map_err(|_| poisoned())?.part(&id);
+        let mut part = original.unwrap_or_else(|| Part {
+            runtime_id: id.clone(),
+            ..Part::default()
+        });
+        part.id = id;
+        part.name = name;
+        part.parent_id = parent_id;
+        part.enabled = enabled;
+        part.draw_order = draw_order;
+        self.commands.push(Command::ReplacePart(part));
+        Ok(())
+    }
+
     fn replace_draw_order_groups(
         &mut self,
         py: Python<'_>,
@@ -1293,6 +1357,8 @@ impl NativeEdit {
                         Command::ReplaceDrawOrderGroups(groups) => {
                             edit.replace_draw_order_groups(groups)?
                         }
+                        Command::CreatePart(part) => edit.create_part(part)?,
+                        Command::ReplacePart(part) => edit.replace_part(part)?,
                     }
                 }
                 Ok(())

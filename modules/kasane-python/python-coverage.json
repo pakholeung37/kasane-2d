@@ -40,7 +40,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Edit.create_part": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_part",
+    "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.create_scene_binding": {
     "status": "pending"
@@ -98,7 +100,9 @@
     "test": "test_canvas_parameter_replace_and_erase_are_atomic"
   },
   "Edit.replace_part": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_part",
+    "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.replace_part_binding_with_offscreen": {
     "status": "pending"
@@ -123,12 +127,12 @@
   "Edit.set_mesh_part": {
     "status": "bound",
     "python": "Edit.set_mesh_part",
-    "test": "test_parent_edit_errors_roll_back_entire_batch"
+    "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.set_organization_parent": {
     "status": "bound",
     "python": "Edit.set_organization_parent",
-    "test": "test_parent_edit_errors_roll_back_entire_batch"
+    "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.set_scene_keyform": {
     "status": "pending"
@@ -371,7 +375,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.part": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.part",
+    "test": "test_parts_and_organization_parent_publish"
   },
   "Session.part_ids": {
     "status": "bound",

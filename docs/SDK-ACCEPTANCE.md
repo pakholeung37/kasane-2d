@@ -35,3 +35,5 @@
 再续测：加入 canvas/parameter 替换、删除、层级关系编辑与 mesh binding 快照；重新构建安装仓库外 wheel 后，`test_cpu.py` 11 项通过。覆盖清单为 69/115 已绑定、46 项待绑定。层级关系编辑的当前 Python 测试验证失败时同批次回滚，成功路径等待 Part/Transform 创建绑定后补齐。
 
 再续测：句柄有效期、绘制顺序组的提交/拒绝/撤销，以及历史步数上限。仓库外 wheel 的 `test_cpu.py` 13 项通过；`cargo clippy -p kasane-python -p kasane-sdk -p kasane-project --all-targets -- -D warnings` 通过；覆盖清单为 77/115，余 38 项。
+
+Part 续测：同批次创建父子 Part、设置组织父节点与 mesh Part、替换 Part 字段、undo 恢复。仓库外 wheel 的 `test_cpu.py` 14 项通过；覆盖清单为 80/115，余 35 项。

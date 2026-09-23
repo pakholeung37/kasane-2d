@@ -101,6 +101,16 @@ class MeshBindingSnapshot(NamedTuple):
     version: Version
 
 
+class PartSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    name: str
+    parent_id: str
+    enabled: bool
+    draw_order: float
+    version: Version
+
+
 class ResourceIssue(NamedTuple):
     asset_id: str
     code: str
@@ -195,6 +205,29 @@ class Edit:
         self._call(
             lambda: self._native.replace_draw_order_groups(
                 [(g.owner, list(g.items), g.min_order, g.max_order) for g in groups]
+            )
+        )
+
+    def create_part(
+        self,
+        part_id: str,
+        name: str,
+        parent_id: str = "",
+        enabled: bool = True,
+        draw_order: float = 0,
+    ) -> None:
+        self._call(
+            lambda: self._native.create_part(
+                part_id, name, parent_id, enabled, draw_order
+            )
+        )
+
+    def replace_part(
+        self, part_id: str, name: str, parent_id: str, enabled: bool, draw_order: float
+    ) -> None:
+        self._call(
+            lambda: self._native.replace_part(
+                part_id, name, parent_id, enabled, draw_order
             )
         )
 
@@ -460,6 +493,10 @@ class Session:
     def binding_for_mesh(self, mesh_id: str) -> MeshBindingSnapshot | None:
         return _binding_snapshot(self._native.binding_for_mesh(mesh_id))
 
+    def part(self, part_id: str) -> PartSnapshot | None:
+        raw = self._native.part(part_id)
+        return PartSnapshot(*raw) if raw is not None else None
+
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)
 
@@ -600,6 +637,7 @@ __all__ = [
     "ObjectHandle",
     "ParameterSample",
     "ParameterSnapshot",
+    "PartSnapshot",
     "ResourceIssue",
     "SaveResult",
     "SdkFailure",
