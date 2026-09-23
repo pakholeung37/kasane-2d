@@ -68,6 +68,14 @@ def run(output: Path) -> Path:
         )
         edit.set_deform_parent(MESH_A, ROTATION)
         edit.set_deform_parent(MESH_B, WARP)
+        edit.update_positions(
+            MESH_A, [0, 1, 2, 3],
+            [(-4.5, 3), (-1.5, 3), (-1.5, -0.5), (-4.5, -0.5)],
+        )
+        edit.update_positions(
+            MESH_B, [0, 1, 2, 3],
+            [(0.2, 0.2), (0.8, 0.2), (0.8, 0.8), (0.2, 0.8)],
+        )
     positions_a = session.mesh(MESH_A).positions
     positions_b = session.mesh(MESH_B).positions
     with session.edit("two animated meshes") as edit:
@@ -75,12 +83,12 @@ def run(output: Path) -> Path:
         edit.create_mesh_binding(
             BINDING_A, MESH_A, [kasane.Axis(PARAMETER, [0, 1])],
             [kasane.MeshKeyform([0], positions_a),
-             kasane.MeshKeyform([1], [(x + 6, y + 2) for x, y in positions_a])],
+             kasane.MeshKeyform([1], [(x + 0.6, y + 0.2) for x, y in positions_a])],
         )
         edit.create_mesh_binding(
             BINDING_B, MESH_B, [kasane.Axis(PARAMETER, [0, 1])],
             [kasane.MeshKeyform([0], positions_b),
-             kasane.MeshKeyform([1], [(x - 8, y + 4) for x, y in positions_b])],
+             kasane.MeshKeyform([1], [(x - 0.1, y + 0.05) for x, y in positions_b])],
         )
     assert session.validate_structure() == []
     assert session.diagnose_resources() == []

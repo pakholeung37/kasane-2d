@@ -1,6 +1,6 @@
 # SDK 阶段验收记录
 
-本文件记录已经实际运行的 SDK 验收；S3 CPU 验收已完成，完整 agent 创作 SDK 仍须完成 [实施计划](SDK-IMPLEMENTATION-PLAN.md) 中的 S4–S5。
+本文件记录已经实际运行的 SDK 验收；S3 CPU 与 S4 功能性 GPU wheel 门禁已通过，完整 agent 创作 SDK 仍须完成 [实施计划](SDK-IMPLEMENTATION-PLAN.md) 中的外部运行时与图像真值对照。
 
 ## S2：工程与资源闭环（2026-09-23）
 
@@ -73,3 +73,9 @@ S4 首批 GPU 实测：`cargo test -p kasane-sdk-observe` 的 2 项测试在当�
 统一 wheel 门禁首跑：`python3.14 tools/validate_sdk.py --wheel <feature-wheel> --python <CPython-3.14> --require-gpu` 的报告位于 `target/sdk-acceptance/bd63cbfbfb8c4dca8c0b13c66b389278/report.json`，状态 `passed`，CPU 28 项、GPU 2 项、3 帧和 3 个 crop 均通过，adapter 为 Apple M4/Metal。CPU wheel 单独运行生成 `target/sdk-acceptance/6b201df9bcff4beaa44aa8679364d381/report.json`，状态 `partial`，GPU 标为 `not_run`。两次均使用仓库外新建的临时 venv；日志、wheel hash、源码 revision 与输入 hash 写入各自目录。此门禁覆盖 S3/S4 wheel 功能，尚不代表 S5 完整 agent 创作验收。
 
 S5 新建流程首跑：`examples/sdk/python_two_asset_recipe.py` 在外部 wheel 中使用 2×2 与 4×4 本地 PNG 建两个不同位置的 mesh、part、Rotation→Warp 和参数 keyform；0/0.5/1 的中点插值最大误差为 `7.62939453125e-05` 原像素，保存重开采样相同，MOC3 导出 hash 为 `026dd45b531dc3bc1887dc2cec0734097373017fb522489c74a8bffd31830563`。CPU wheel 门禁见 `target/sdk-acceptance/1ceb012fb3e9455ab72317004faf6aa0/report.json`，GPU feature wheel 门禁见 `target/sdk-acceptance/8d625c2f58654c80bae20e41d397da20/report.json`；两者的 `creation_export` 均为 `passed`。外部导入编辑与二次脚本修正仍待验证。
+
+S5 三流程续测：更新两素材模型的变形局部坐标后，两个 mesh 均在 GPU 帧中可见。`examples/sdk/python_import_edit_recipe.py` 导入 `external_v50` model3，记录原 mesh/binding/asset/parameter/deformer/part ID；修改原 mesh 的几何、deformer 父级、绑定和绘制属性，保存前后工程并导出 MOC3；未修改的资源、参数、deformer 和 part 字段在重开后保持一致，前后导出 hash 不同。`python_agent_draft.py` 生成作品、ID 清单与观察报告；`python_agent_repair.py` 实际读取原图及 focus crop 的 RGBA，诊断右侧 mesh 可见宽度仅 15 像素，低于 30 像素门槛，随后修改已有 warp 控制点并重开复测，宽度达到 45 像素、非透明像素从 165 增至 1476，另一 mesh 和资源 hash 保持不变。第二脚本若未检测到问题会失败退出，不会无条件标为成功。
+
+最新仓库外 wheel 门禁：GPU feature wheel 的 `target/sdk-acceptance/9e70584df0f7481fb6d5c495b908fc48/report.json` 为 `passed`，CPU 28 项、S5 新建/导出、外部导入编辑、GPU 2 项及二次脚本修正均通过；CPU wheel 的 `target/sdk-acceptance/15279241181b4e1b89178e8ace857e2b/report.json` 为 `partial`，GPU 与二次脚本修正明确 `not_run`。完整 S5 还需官方运行时和图像真值对照；本报告中的 `passed` 只代表已执行的当前门禁。
+
+二次脚本负控制：将 handoff 中的观察报告改为修正后的图像再次运行 `python_agent_repair.py`，进程以非零状态退出并报告 `No undersized target detected; existing model was not edited`，没有生成“成功修正”报告。

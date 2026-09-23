@@ -24,8 +24,13 @@ CPU_TEST = ROOT / "modules/kasane-python/tests/test_cpu.py"
 GPU_TEST = ROOT / "modules/kasane-python/tests/test_observe.py"
 RECIPE = ROOT / "examples/sdk/python_observe_recipe.py"
 TWO_ASSET_RECIPE = ROOT / "examples/sdk/python_two_asset_recipe.py"
+IMPORT_EDIT_RECIPE = ROOT / "examples/sdk/python_import_edit_recipe.py"
+AGENT_DRAFT = ROOT / "examples/sdk/python_agent_draft.py"
+AGENT_REPAIR = ROOT / "examples/sdk/python_agent_repair.py"
 TEXTURE = ROOT / "examples/sdk/asymmetric-2x2.png"
 SECOND_TEXTURE = ROOT / "tests/fixtures/external_v50/texture_00.png"
+EXTERNAL_MODEL3 = ROOT / "tests/fixtures/external_v50/model.model3.json"
+EXTERNAL_MOC3 = ROOT / "tests/fixtures/external_v50/model.moc3"
 
 
 def sha256(path: Path) -> str:
@@ -130,6 +135,62 @@ def validate_two_asset(path: Path, run: Path) -> dict:
     }
 
 
+def validate_import_edit(path: Path, run: Path) -> dict:
+    recipe = json.loads(path.read_text(encoding="utf-8"))
+    if recipe["status"] != "passed" or not all(recipe["preserved"].values()):
+        raise RuntimeError("External import edit did not preserve untouched content")
+    if len(recipe["original_ids"]["mesh"]) != 36:
+        raise RuntimeError("External import mesh ID was not recorded")
+    if recipe["before_export_sha256"] == recipe["after_export_sha256"]:
+        raise RuntimeError("External import edit did not change the export")
+    expected_inputs = {
+        "model3_sha256": sha256(EXTERNAL_MODEL3),
+        "moc3_sha256": sha256(EXTERNAL_MOC3),
+        "texture_sha256": sha256(SECOND_TEXTURE),
+    }
+    if recipe["fixture"] != expected_inputs:
+        raise RuntimeError("External import fixture hash mismatch")
+    for key in ("before_manifest", "after_manifest", "before_export", "after_export"):
+        artifact = Path(recipe[key])
+        if not artifact.is_relative_to(run) or not artifact.is_file():
+            raise RuntimeError(f"External import artifact missing: {key}")
+    if sha256(Path(recipe["before_export"])) != recipe["before_export_sha256"]:
+        raise RuntimeError("External import before export hash mismatch")
+    if sha256(Path(recipe["after_export"])) != recipe["after_export_sha256"]:
+        raise RuntimeError("External import after export hash mismatch")
+    return {
+        "status": "passed", "report": str(path.relative_to(run)),
+        "mesh_id": recipe["original_ids"]["mesh"],
+        "before_export_sha256": recipe["before_export_sha256"],
+        "after_export_sha256": recipe["after_export_sha256"],
+    }
+
+
+def validate_agent_repair(path: Path, run: Path) -> dict:
+    result = json.loads(path.read_text(encoding="utf-8"))
+    problem = result["problem"]
+    correction = result["correction"]
+    if result["status"] != "passed" or problem["code"] != "TARGET_TOO_SMALL":
+        raise RuntimeError("Agent self-check did not identify a concrete visual problem")
+    if not (problem["before_visible_width"] < problem["minimum_visible_width"]
+            <= correction["after_visible_width"]):
+        raise RuntimeError("Agent local repair did not pass the visible-width threshold")
+    if correction["after_opaque_pixels"] <= problem["before_opaque_pixels"]:
+        raise RuntimeError("Agent repair did not increase visible crop pixels")
+    for key in (problem["evidence_crop"], correction["evidence_crop"],
+                correction["project_manifest"], correction["observation_report"]):
+        artifact = Path(key)
+        if not artifact.is_relative_to(run) or not artifact.is_file():
+            raise RuntimeError(f"Agent repair evidence missing: {artifact}")
+    return {
+        "status": "passed", "report": str(path.relative_to(run)),
+        "object_id": problem["object_id"],
+        "existing_transform_id": correction["existing_transform_id"],
+        "before_visible_width": problem["before_visible_width"],
+        "after_visible_width": correction["after_visible_width"],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", required=True, type=Path)
@@ -155,7 +216,10 @@ def main() -> int:
         "wheel": {"path": str(wheel), "sha256": sha256(wheel)},
         "inputs": {
             str(path.relative_to(ROOT)): sha256(path)
-            for path in (CPU_TEST, GPU_TEST, RECIPE, TWO_ASSET_RECIPE, TEXTURE, SECOND_TEXTURE)
+            for path in (CPU_TEST, GPU_TEST, RECIPE, TWO_ASSET_RECIPE,
+                         IMPORT_EDIT_RECIPE, AGENT_DRAFT, AGENT_REPAIR,
+                         TEXTURE, SECOND_TEXTURE,
+                         EXTERNAL_MODEL3, EXTERNAL_MOC3)
         },
         "checks": {},
     }
@@ -183,6 +247,13 @@ def main() -> int:
             )
             creation_report = Path(creation_output.splitlines()[-1]).resolve(strict=True)
             report["checks"]["creation_export"] = validate_two_asset(creation_report, run)
+            import_output = command(
+                "import-edit-recipe",
+                [str(installed), str(IMPORT_EDIT_RECIPE), str(run / "import-edit")],
+                cwd=outside, env=environment, logs=logs,
+            )
+            import_report = Path(import_output.splitlines()[-1]).resolve(strict=True)
+            report["checks"]["import_edit"] = validate_import_edit(import_report, run)
             capabilities = json.loads(command(
                 "capabilities", [str(installed), "-c",
                                  "import json, kasane; print(json.dumps(kasane.capabilities()))"],
@@ -203,8 +274,25 @@ def main() -> int:
                 report["checks"]["gpu"]["tests"] = test_count(
                     (logs / "gpu-tests.log").read_text(), "gpu-tests",
                 )
+                handoff_output = command(
+                    "agent-draft", [str(installed), str(AGENT_DRAFT), str(run / "agent")],
+                    cwd=outside, env=environment, logs=logs,
+                )
+                handoff = Path(handoff_output.splitlines()[-1]).resolve(strict=True)
+                if not handoff.is_relative_to(run / "agent"):
+                    raise RuntimeError("Agent draft wrote outside the evidence directory")
+                repair_output = command(
+                    "agent-repair", [str(installed), str(AGENT_REPAIR), str(handoff),
+                                     str(run / "agent/repair")],
+                    cwd=outside, env=environment, logs=logs,
+                )
+                repair_report = Path(repair_output.splitlines()[-1]).resolve(strict=True)
+                report["checks"]["agent_repair"] = validate_agent_repair(repair_report, run)
             else:
                 report["checks"]["gpu"] = {"status": "not_run", "reason": "GPU observation unavailable"}
+                report["checks"]["agent_repair"] = {
+                    "status": "not_run", "reason": "GPU observation unavailable",
+                }
                 if args.require_gpu:
                     raise RuntimeError("GPU observation is required but unavailable")
         report["status"] = "passed" if report["checks"]["gpu"]["status"] == "passed" else "partial"
