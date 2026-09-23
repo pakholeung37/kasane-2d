@@ -10,7 +10,7 @@ use crate::handle::NativeHandle;
 use kasane_core::{Canvas, Vec2};
 use kasane_sdk::{
     AuthoringSession, GeometryBounds, GeometryChecks, GeometryDiagnosticKind, HistoryLimits,
-    SdkError, SourceSpace,
+    MeshProperties, SdkError, SourceSpace,
 };
 use pyo3::prelude::*;
 
@@ -335,6 +335,24 @@ impl NativeSession {
         Ok(session
             .mesh(id)
             .map(|mesh| mesh_tuple(mesh, session.version())))
+    }
+
+    fn mesh_properties(&self, id: &str) -> PyResult<Option<MeshPropertiesTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session.mesh(id).map(|mesh| {
+            let props = MeshProperties::from(&mesh);
+            (
+                props.texture_asset_id,
+                appearance_tuple(props.appearance),
+                props.draw_order,
+                blend_mode_name(props.blend_mode).into(),
+                props.enabled,
+                props.double_sided,
+                props.inverted_mask,
+                props.masks,
+                version_tuple(session.version()),
+            )
+        }))
     }
 
     fn binding(&self, id: &str) -> PyResult<Option<MeshBindingTuple>> {

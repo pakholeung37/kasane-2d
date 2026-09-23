@@ -12,11 +12,40 @@ Version = tuple[int, int, int]
 Point = tuple[float, float]
 
 
+class Appearance(NamedTuple):
+    opacity: float = 1
+    multiply: tuple[float, float, float] = (1, 1, 1)
+    screen: tuple[float, float, float] = (0, 0, 0)
+
+
 class MeshSnapshot(NamedTuple):
     id: str
     name: str
     vertex_ids: list[int]
     positions: list[Point]
+    version: Version
+
+
+class MeshProperties(NamedTuple):
+    texture_asset_id: str
+    appearance: Appearance
+    draw_order: float | None
+    blend_mode: str
+    enabled: bool
+    double_sided: bool
+    inverted_mask: bool
+    masks: list[str]
+
+
+class MeshPropertiesSnapshot(NamedTuple):
+    texture_asset_id: str
+    appearance: Appearance
+    draw_order: float | None
+    blend_mode: str
+    enabled: bool
+    double_sided: bool
+    inverted_mask: bool
+    masks: list[str]
     version: Version
 
 
@@ -92,12 +121,6 @@ class ParameterSnapshot(NamedTuple):
 class Axis(NamedTuple):
     parameter_id: str
     keys: list[float]
-
-
-class Appearance(NamedTuple):
-    opacity: float = 1
-    multiply: tuple[float, float, float] = (1, 1, 1)
-    screen: tuple[float, float, float] = (0, 0, 0)
 
 
 class MeshKeyform(NamedTuple):
@@ -439,6 +462,19 @@ class Edit:
             binding_id, _mesh_form_tuple(form)
         ))
 
+    def update_mesh_properties(self, mesh_id: str, properties: MeshProperties) -> None:
+        self._call(lambda: self._native.update_mesh_properties(
+            mesh_id,
+            properties.texture_asset_id,
+            tuple(properties.appearance),
+            properties.draw_order,
+            properties.blend_mode,
+            properties.enabled,
+            properties.double_sided,
+            properties.inverted_mask,
+            list(properties.masks),
+        ))
+
     def create_scene_binding(
         self, binding_id: str, kind: str, target_id: str,
         axes: Sequence[Axis], forms: Sequence[SceneKeyform],
@@ -638,6 +674,16 @@ class Session:
         if raw is None:
             return None
         return MeshSnapshot(*raw)
+
+    def mesh_properties(self, mesh_id: str) -> MeshPropertiesSnapshot | None:
+        raw = self._native.mesh_properties(mesh_id)
+        if raw is None:
+            return None
+        texture_asset_id, appearance, draw_order, blend_mode, enabled, double_sided, inverted_mask, masks, version = raw
+        return MeshPropertiesSnapshot(
+            texture_asset_id, Appearance(*appearance), draw_order, blend_mode,
+            enabled, double_sided, inverted_mask, masks, version,
+        )
 
     def binding(self, binding_id: str) -> MeshBindingSnapshot | None:
         return _binding_snapshot(self._native.binding(binding_id))
@@ -873,6 +919,8 @@ __all__ = [
     "HistoryState",
     "ImportResult",
     "MeshSnapshot",
+    "MeshProperties",
+    "MeshPropertiesSnapshot",
     "MeshBindingSnapshot",
     "MeshKeyform",
     "ObjectHandle",

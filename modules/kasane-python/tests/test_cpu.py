@@ -549,6 +549,43 @@ class CpuWheelTests(unittest.TestCase):
             self.assertEqual(reopened.binding(BINDING).keyforms[1].draw_order, 7)
             self.assertEqual(reopened.evaluate({PARAMETER: 0.5}).drawables[0].positions[0], (-0.5, 1))
 
+    def test_mesh_properties_update_preserves_geometry(self):
+        model = session()
+        with model.edit("base") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        geometry = model.geometry(MESH)
+        original = model.mesh_properties(MESH)
+        self.assertEqual(original.texture_asset_id, ASSET)
+        self.assertEqual(original.blend_mode, "normal")
+        updated = kasane.MeshProperties(
+            ASSET, kasane.Appearance(0.6, (0.8, 1, 1), (0, 0.1, 0)),
+            5, "additive", True, False, True, [],
+        )
+        with model.edit("draw properties") as edit:
+            edit.update_mesh_properties(MESH, updated)
+        snapshot = model.mesh_properties(MESH)
+        self.assertAlmostEqual(snapshot.appearance.opacity, updated.appearance.opacity)
+        for actual, expected in zip(snapshot.appearance.multiply, updated.appearance.multiply):
+            self.assertAlmostEqual(actual, expected)
+        for actual, expected in zip(snapshot.appearance.screen, updated.appearance.screen):
+            self.assertAlmostEqual(actual, expected)
+        self.assertEqual(snapshot.draw_order, 5)
+        self.assertEqual(snapshot.blend_mode, "additive")
+        self.assertFalse(snapshot.double_sided)
+        self.assertTrue(snapshot.inverted_mask)
+        self.assertEqual(model.geometry(MESH).vertex_ids, geometry.vertex_ids)
+        self.assertEqual(model.geometry(MESH).positions, geometry.positions)
+        before = model.version
+        with self.assertRaises(ValueError):
+            with model.edit("invalid blend") as edit:
+                edit.rename_mesh(MESH, "should roll back")
+                edit.update_mesh_properties(MESH, updated._replace(blend_mode="unknown"))
+        self.assertEqual(model.version, before)
+        self.assertEqual(model.mesh(MESH).name, "face")
+        model.undo()
+        self.assertEqual(model.mesh_properties(MESH).appearance, original.appearance)
+
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:
             root = Path(directory).resolve()

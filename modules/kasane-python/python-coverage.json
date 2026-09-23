@@ -162,7 +162,9 @@
     "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.update_mesh_properties": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.update_mesh_properties",
+    "test": "test_mesh_properties_update_preserves_geometry"
   },
   "Edit.update_positions": {
     "status": "bound",

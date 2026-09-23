@@ -511,4 +511,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 mesh binding 批次：keyform 的 appearance 与 draw order 不再在 Python 桥接中丢失；支持完整 binding 替换与单 keyform 更新。仓库外 wheel 的 19 项 CPU 测试通过，清单为 95/116 Python 绑定、1 项 Rust 专用、20 项待绑定。
 
+2026-09-23 S3 mesh 绘制属性批次：Python 支持读取和更新纹理引用、外观、绘制顺序、混合模式、启用状态、双面、反转遮罩与遮罩列表；更新保留 mesh 几何和身份，非法混合模式使整批 edit 回滚。仓库外 wheel 的 20 项 CPU 测试通过，清单为 96/116 Python 绑定、1 项 Rust 专用、19 项待绑定。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

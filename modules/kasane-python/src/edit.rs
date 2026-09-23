@@ -10,7 +10,7 @@ use kasane_core::{
 };
 use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
-    AuthoringSession, EditReceipt, Version,
+    AuthoringSession, EditReceipt, MeshProperties, Version,
 };
 use pyo3::prelude::*;
 
@@ -23,6 +23,7 @@ enum Command {
     CreateMeshBinding(MeshBinding),
     ReplaceMeshBinding(MeshBinding),
     SetMeshKeyform(String, MeshKeyform),
+    UpdateMeshProperties(String, MeshProperties),
     ReplaceCanvas(Canvas),
     EraseObject(String),
     ReplaceParameter(Parameter),
@@ -595,6 +596,37 @@ impl NativeEdit {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn update_mesh_properties(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        texture_asset_id: String,
+        appearance: AppearanceTuple,
+        draw_order: Option<f32>,
+        blend_mode: &str,
+        enabled: bool,
+        double_sided: bool,
+        inverted_mask: bool,
+        masks: Vec<String>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "update_mesh_properties")?;
+        self.commands.push(Command::UpdateMeshProperties(
+            id,
+            MeshProperties {
+                texture_asset_id,
+                appearance: appearance_from_tuple(appearance),
+                draw_order,
+                blend_mode: blend_mode_from_name(blend_mode)?,
+                enabled,
+                double_sided,
+                inverted_mask,
+                masks,
+            },
+        ));
+        Ok(())
+    }
+
     fn create_scene_binding(
         &mut self,
         py: Python<'_>,
@@ -666,6 +698,9 @@ impl NativeEdit {
                         Command::CreateMeshBinding(binding) => edit.create_binding(binding)?,
                         Command::ReplaceMeshBinding(binding) => edit.replace_binding(binding)?,
                         Command::SetMeshKeyform(id, form) => edit.set_mesh_keyform(&id, form)?,
+                        Command::UpdateMeshProperties(id, props) => {
+                            edit.update_mesh_properties(&id, props)?
+                        }
                         Command::ReplaceCanvas(canvas) => edit.replace_canvas(canvas)?,
                         Command::EraseObject(id) => edit.erase_object(&id)?,
                         Command::ReplaceParameter(parameter) => {

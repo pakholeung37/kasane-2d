@@ -1,8 +1,8 @@
 //! Value conversion at the Python/Rust boundary.
 use kasane_core::{
-    Appearance, BindingAxis, DrawableFrame, MeshBinding, PartKeyform, PreciseVec2, RotationKeyform,
-    RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack, Transform,
-    TransformData, Vec2, WarpKeyform,
+    Appearance, BindingAxis, BlendMode, DrawableFrame, MeshBinding, PartKeyform, PreciseVec2,
+    RotationKeyform, RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack,
+    Transform, TransformData, Vec2, WarpKeyform,
 };
 use kasane_sdk::{ObjectKind, Version};
 use pyo3::exceptions::PyValueError;
@@ -79,6 +79,34 @@ pub(crate) type SceneBindingTuple = (
     Vec<SceneFormTuple>,
     VersionTuple,
 );
+pub(crate) type MeshPropertiesTuple = (
+    String,
+    AppearanceTuple,
+    Option<f32>,
+    String,
+    bool,
+    bool,
+    bool,
+    Vec<String>,
+    VersionTuple,
+);
+
+pub(crate) fn blend_mode_from_name(name: &str) -> PyResult<BlendMode> {
+    match name {
+        "normal" => Ok(BlendMode::Normal),
+        "additive" => Ok(BlendMode::Additive),
+        "multiplicative" => Ok(BlendMode::Multiplicative),
+        _ => Err(PyValueError::new_err("Unknown mesh blend mode")),
+    }
+}
+
+pub(crate) fn blend_mode_name(mode: BlendMode) -> &'static str {
+    match mode {
+        BlendMode::Normal => "normal",
+        BlendMode::Additive => "additive",
+        BlendMode::Multiplicative => "multiplicative",
+    }
+}
 
 fn pose_from_tuple(value: PoseTuple) -> RotationPose {
     RotationPose {
@@ -110,7 +138,7 @@ pub(crate) fn appearance_from_tuple(value: AppearanceTuple) -> Appearance {
     }
 }
 
-fn appearance_tuple(value: Appearance) -> AppearanceTuple {
+pub(crate) fn appearance_tuple(value: Appearance) -> AppearanceTuple {
     (
         value.opacity,
         (value.multiply[0], value.multiply[1], value.multiply[2]),
