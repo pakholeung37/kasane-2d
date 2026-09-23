@@ -1,0 +1,12 @@
+[package]
+name = "kasane-render-wgpu"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bytemuck = { workspace = true }
+kasane-core = { path = "../kasane-core" }
+kasane-render = { path = "../kasane-render" }
+wgpu = { workspace = true }

@@ -11,6 +11,8 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 godot = { version = "0.5", features = ["api-4-3", "experimental-threads"] }
 kasane-core = { path = "../kasane-core" }
+kasane-preview = { path = "../kasane-preview" }
+kasane-render-godot = { path = "../kasane-render-godot" }
 kasane-project = { path = "../kasane-project" }
 kasane-moc3 = { path = "../kasane-moc3" }
 serde = { workspace = true }

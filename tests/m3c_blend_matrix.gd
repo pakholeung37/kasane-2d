@@ -18,7 +18,7 @@ func run() -> void:
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	root.add_child(viewport)
 	var shaders := []
-	var base := "res://../modules/kasane-godot/shaders/"
+	var base := "res://../modules/kasane-render-godot/shaders/"
 	for name in ["drawable_extended.gdshader", "offscreen.gdshader"]:
 		var shader := Shader.new()
 		shader.code = FileAccess.get_file_as_string(base + name).replace("__BLEND_FUNCTIONS__", FileAccess.get_file_as_string(base + "blend_functions.gdshaderinc"))

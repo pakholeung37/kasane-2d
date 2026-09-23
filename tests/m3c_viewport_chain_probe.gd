@@ -30,7 +30,7 @@ func copy_destination(parent: Node) -> BackBufferCopy:
 
 func blend_material(extended: bool, opacity: float = 1.0) -> ShaderMaterial:
 	var shader := Shader.new()
-	var base := "res://../modules/kasane-godot/shaders/"
+	var base := "res://../modules/kasane-render-godot/shaders/"
 	var code := FileAccess.get_file_as_string(base + ("offscreen.gdshader" if extended else "offscreen_normal.gdshader"))
 	code = code.replace("__BLEND_FUNCTIONS__", FileAccess.get_file_as_string(base + "blend_functions.gdshaderinc"))
 	shader.code = code

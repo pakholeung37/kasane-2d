@@ -3,6 +3,7 @@ use godot::prelude::*;
 use std::collections::HashMap;
 
 use kasane_core::types::Status;
+use kasane_project::DocumentSession;
 
 use crate::conversions::{error_dict, status_to_dict, Dictionary};
 use crate::document_bridge::KasaneDocumentBridge;
@@ -48,23 +49,33 @@ impl KasaneTextureStore {
         };
         let d_bind = d.bind();
         let id_str = id.to_string();
-        let Some(_) = d_bind.session().document().get_asset(&id_str) else {
+        self.resolve_asset_from_session(d_bind.session(), &id_str)
+    }
+
+    /// Resolve an asset using an already-borrowed engine-independent session.
+    ///
+    /// This is the adapter seam used by `kasane-preview`: project IO and
+    /// validation stay outside Godot, while only the final decoded image upload
+    /// remains here.
+    pub fn resolve_asset_from_session(
+        &mut self,
+        session: &DocumentSession,
+        id_str: &str,
+    ) -> Status {
+        let Some(_) = session.document().get_asset(id_str) else {
             return Status::error("MISSING_ASSET", id_str);
         };
-        let validated_image = self.textures.get(&id_str).and_then(|t| {
+        let validated_image = self.textures.get(id_str).and_then(|t| {
             self.content_hashes
-                .get(&id_str)
+                .get(id_str)
                 .map(|hash| (hash.as_str(), t.get_width() as u32, t.get_height() as u32))
         });
-        let bytes = match d_bind
-            .session()
-            .read_asset_if_changed(&id_str, validated_image)
-        {
+        let bytes = match session.read_asset_if_changed(id_str, validated_image) {
             Ok(None) => return Status::ok(),
             Ok(Some(b)) => b,
             Err(s) => {
-                self.textures.remove(&id_str);
-                self.content_hashes.remove(&id_str);
+                self.textures.remove(id_str);
+                self.content_hashes.remove(id_str);
                 return s;
             }
         };
@@ -83,8 +94,8 @@ impl KasaneTextureStore {
         if let Some(mut img) = image {
             let _ = img.generate_mipmaps();
             if let Some(tex) = ImageTexture::create_from_image(&img) {
-                self.textures.insert(id_str.clone(), tex.upcast());
-                self.content_hashes.insert(id_str, bytes.sha256);
+                self.textures.insert(id_str.to_owned(), tex.upcast());
+                self.content_hashes.insert(id_str.to_owned(), bytes.sha256);
             }
         }
         Status::ok()

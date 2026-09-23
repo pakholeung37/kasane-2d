@@ -280,11 +280,13 @@ def all_gates_passed(report):
 def source_manifest(sdk):
     paths = []
     for directory in ('modules/kasane-core', 'modules/kasane-moc3', 'modules/kasane-project',
+                      'modules/kasane-render', 'modules/kasane-render-godot',
+                      'modules/kasane-render-wgpu', 'modules/kasane-preview',
                       'modules/kasane-godot', 'apps/editor', 'tools', 'tests'):
         paths.extend(p for p in (ROOT/directory).rglob('*')
                      if p.is_file() and p.suffix in ('.rs', '.gd', '.gdshader', '.gdshaderinc', '.py', '.cpp', '.hpp', '.toml', '.godot', '.gdextension')
                      and not any(part in ('.godot', '__pycache__', 'native') for part in p.parts))
-    paths.extend([ROOT/'Cargo.lock', ROOT/'tools/probes/CMakeLists.txt'])
+    paths.extend([ROOT/'Cargo.toml', ROOT/'Cargo.lock', ROOT/'tools/probes/CMakeLists.txt'])
     paths.extend(p for p in (sdk/'Framework/src').rglob('*') if p.is_file())
     paths.extend([sdk/'Core/lib/macos/arm64/libLive2DCubismCore.a', sdk/'Samples/Resources/Ren/Ren.moc3'])
     for directory in (sdk/'Samples/Resources/Ren', ROOT/'demos/gd-cubism-demo/assets/live2d/mao/runtime'):

@@ -2,6 +2,10 @@
 resolver = "2"
 members = [
     "modules/kasane-core",
+    "modules/kasane-render",
+    "modules/kasane-render-godot",
+    "modules/kasane-render-wgpu",
+    "modules/kasane-preview",
     "modules/kasane-godot",
     "modules/kasane-moc3",
     "modules/kasane-project",
@@ -20,3 +24,5 @@ serde_json = "1.0"
 thiserror = "2.0"
 sha2 = "0.10"
 png = "0.17"
+bytemuck = { version = "1.25", features = ["derive"] }
+wgpu = "29"

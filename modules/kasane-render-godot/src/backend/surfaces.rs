@@ -1,8 +1,9 @@
 use super::*;
 
-impl KasaneDocumentPreview {
+impl GodotRenderBackend {
     pub(super) fn update_surfaces(
         &mut self,
+        owner: &mut Gd<Node2D>,
         frame: &DrawableFrame,
         active_offscreens: &std::collections::HashSet<&str>,
         surface_size: Vector2i,
@@ -66,7 +67,7 @@ impl KasaneDocumentPreview {
                     viewport.set_transparent_background(true);
                     viewport.set_disable_3d(true);
                     viewport.set_update_mode(UpdateMode::ALWAYS);
-                    self.base_mut().add_child(&viewport);
+                    owner.add_child(&viewport);
                     let root = Node2D::new_alloc();
                     viewport.add_child(&root);
                     let mut composite = Sprite2D::new_alloc();

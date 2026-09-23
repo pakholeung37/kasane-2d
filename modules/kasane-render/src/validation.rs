@@ -4,8 +4,8 @@ use kasane_core::evaluation::{DrawableFrame, RenderCommand};
 use kasane_core::geometry::validate_render_mesh;
 use kasane_core::types::Status;
 
-/// Shared preflight for both Document evaluation and external runtime frames.
-pub(crate) fn validate_frame(frame: &DrawableFrame) -> Status {
+/// Shared preflight for editable Document frames and external runtime frames.
+pub fn validate_frame(frame: &DrawableFrame) -> Status {
     let canvas = frame.canvas;
     if !canvas.width.is_finite()
         || !canvas.height.is_finite()
@@ -175,8 +175,12 @@ mod tests {
                     Vec2::new(1.0, 0.0),
                     Vec2::new(0.0, 1.0),
                 ],
-                uvs: vec![Vec2::new(0.0, 0.0); 3].into(),
-                indices: vec![0, 1, 2].into(),
+                uvs: std::sync::Arc::from([
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(1.0, 0.0),
+                    Vec2::new(0.0, 1.0),
+                ]),
+                indices: std::sync::Arc::from([0, 1, 2]),
                 ..Default::default()
             }],
             ..Default::default()
@@ -185,85 +189,80 @@ mod tests {
 
     #[test]
     fn accepts_complete_frame_and_empty_model() {
-        let mut frame = frame();
-        assert!(validate_frame(&frame).is_ok());
-        frame.drawables.clear();
-        assert!(validate_frame(&frame).is_ok());
-    }
-
-    #[test]
-    fn accepts_core_flat_plan_but_rejects_duplicate_commands() {
-        let mut frame = frame();
-        frame.render_plan.push(RenderCommand::DrawMesh {
-            mesh_id: "mesh".into(),
-        });
-        assert!(validate_frame(&frame).is_ok());
-        frame.render_plan.push(RenderCommand::DrawMesh {
-            mesh_id: "mesh".into(),
-        });
-        assert_eq!(validate_frame(&frame).code, "INVALID_RENDER_PLAN");
-    }
-
-    #[test]
-    fn allows_zero_triangles_and_rejects_incomplete_triangles() {
-        let mut f = frame();
-        f.drawables[0].indices = vec![].into();
-        assert!(validate_frame(&f).is_ok());
-
-        for indices in [vec![0], vec![0, 1], vec![0, 1, 2, 0]] {
-            let mut f = frame();
-            f.drawables[0].indices = indices.into();
-            assert!(!validate_frame(&f).is_ok());
-        }
-    }
-
-    #[test]
-    fn rejects_out_of_range_indices_and_mismatched_uvs() {
-        let mut frame = frame();
-        std::sync::Arc::make_mut(&mut frame.drawables[0].indices)[2] = u32::MAX;
-        assert!(!validate_frame(&frame).is_ok());
-        std::sync::Arc::make_mut(&mut frame.drawables[0].indices)[2] = 2;
-        frame.drawables[0].uvs = frame.drawables[0].uvs[..2].into();
-        assert!(!validate_frame(&frame).is_ok());
-    }
-
-    #[test]
-    fn rejects_duplicate_ids_and_dangling_masks() {
-        let mut frame = frame();
-        frame.drawables.push(frame.drawables[0].clone());
-        assert!(!validate_frame(&frame).is_ok());
-        frame.drawables[1].id = "mask".into();
-        frame.drawables[0].masks = vec!["mask".into()];
-        assert!(validate_frame(&frame).is_ok());
-        frame.drawables.pop();
-        assert!(!validate_frame(&frame).is_ok());
-    }
-
-    #[test]
-    fn rejects_non_finite_and_overflowing_positions() {
-        let mut frame = frame();
-        frame.drawables[0].positions[0].x = f32::NAN;
-        assert!(!validate_frame(&frame).is_ok());
-        frame.drawables[0].positions[0].x = f32::MAX;
-        assert!(!validate_frame(&frame).is_ok());
+        let mut value = frame();
+        assert!(validate_frame(&value).is_ok());
+        value.drawables.clear();
+        assert!(validate_frame(&value).is_ok());
     }
 
     #[test]
     fn rejects_invalid_canvas_and_appearance() {
-        let mut frame = frame();
-        frame.canvas.pixels_per_unit = 0.0;
-        assert!(!validate_frame(&frame).is_ok());
-        frame.canvas.pixels_per_unit = 100.0;
-        frame.drawables[0].screen_color[1] = f32::INFINITY;
-        assert!(!validate_frame(&frame).is_ok());
+        let mut value = frame();
+        value.canvas.width = 0.0;
+        assert_eq!(validate_frame(&value).code, "INVALID_CANVAS");
+        let mut value = frame();
+        value.drawables[0].opacity = f32::NAN;
+        assert_eq!(validate_frame(&value).code, "NON_FINITE");
     }
 
     #[test]
     fn rejects_invalid_extended_blend_mode() {
-        let mut frame = frame();
-        frame.drawables[0].raw_blend_mode = Some(18);
-        assert_eq!(validate_frame(&frame).code, "UNSUPPORTED_BLEND_MODE");
-        frame.drawables[0].raw_blend_mode = Some(17 | (4 << 8));
-        assert!(validate_frame(&frame).is_ok());
+        let mut value = frame();
+        value.drawables[0].raw_blend_mode = Some(18);
+        assert_eq!(validate_frame(&value).code, "UNSUPPORTED_BLEND_MODE");
+    }
+
+    #[test]
+    fn rejects_out_of_range_indices_and_mismatched_uvs() {
+        let mut value = frame();
+        value.drawables[0].indices = std::sync::Arc::from([0, 1, 9]);
+        assert_eq!(validate_frame(&value).code, "INVALID_INDEX");
+        let mut value = frame();
+        value.drawables[0].uvs = std::sync::Arc::from([Vec2::new(0.0, 0.0)]);
+        assert_eq!(validate_frame(&value).code, "INVALID_LENGTH");
+    }
+
+    #[test]
+    fn rejects_duplicate_ids_and_dangling_masks() {
+        let mut value = frame();
+        value.drawables.push(value.drawables[0].clone());
+        assert_eq!(validate_frame(&value).code, "INVALID_ID");
+        let mut value = frame();
+        value.drawables[0].masks.push("missing".into());
+        assert_eq!(validate_frame(&value).code, "MISSING_MASK");
+    }
+
+    #[test]
+    fn rejects_non_finite_and_overflowing_positions() {
+        let mut value = frame();
+        value.drawables[0].positions[0].x = f32::INFINITY;
+        assert_eq!(validate_frame(&value).code, "NON_FINITE");
+        let mut value = frame();
+        value.canvas.pixels_per_unit = f32::MAX;
+        value.drawables[0].positions[1].x = f32::MAX;
+        assert_eq!(validate_frame(&value).code, "NON_FINITE");
+    }
+
+    #[test]
+    fn allows_zero_triangles_and_rejects_incomplete_triangles() {
+        let mut value = frame();
+        value.drawables[0].indices = std::sync::Arc::from([]);
+        assert!(validate_frame(&value).is_ok());
+        let mut value = frame();
+        value.drawables[0].indices = std::sync::Arc::from([0, 1]);
+        assert_eq!(validate_frame(&value).code, "INVALID_LENGTH");
+    }
+
+    #[test]
+    fn accepts_core_flat_plan_but_rejects_duplicate_commands() {
+        let mut value = frame();
+        value.render_plan.push(RenderCommand::DrawMesh {
+            mesh_id: "mesh".into(),
+        });
+        assert!(validate_frame(&value).is_ok());
+        value.render_plan.push(RenderCommand::DrawMesh {
+            mesh_id: "mesh".into(),
+        });
+        assert_eq!(validate_frame(&value).code, "INVALID_RENDER_PLAN");
     }
 }

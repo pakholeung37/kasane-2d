@@ -7,11 +7,13 @@ type MaskSourceSnapshot = (
     PackedVector2Array,
 );
 
-impl KasaneDocumentPreview {
+impl GodotRenderBackend {
     pub(super) fn update_mask_texture(
         &mut self,
+        owner: &mut Gd<Node2D>,
         target_id: &str,
         mask_ids: &[String],
+        mask_consumers: &HashMap<String, String>,
         requested_scale: f64,
     ) -> Option<(Variant, Vector4)> {
         if mask_ids.is_empty() {
@@ -20,8 +22,7 @@ impl KasaneDocumentPreview {
 
         // Share within a consumer viewport. Different offscreen consumers need
         // separate dependency edges so every mask is ready in the same frame.
-        let consumer = self
-            .mask_consumers
+        let consumer = mask_consumers
             .get(target_id)
             .map(String::as_str)
             .unwrap_or("");
@@ -73,7 +74,7 @@ impl KasaneDocumentPreview {
             viewport.set_transparent_background(true);
             viewport.set_disable_3d(true);
             viewport.set_update_mode(UpdateMode::ONCE);
-            self.base_mut().add_child(&viewport);
+            owner.add_child(&viewport);
             let root = Node2D::new_alloc();
             viewport.add_child(&root);
             self.masks.insert(
@@ -141,50 +142,4 @@ impl KasaneDocumentPreview {
         );
         Some((texture, mask.bounds))
     }
-}
-
-pub(super) fn consumers(frame: &DrawableFrame) -> HashMap<String, String> {
-    let mut consumers = HashMap::new();
-    let masked: std::collections::HashSet<&str> = frame
-        .drawables
-        .iter()
-        .filter(|d| !d.masks.is_empty())
-        .map(|d| d.id.as_str())
-        .chain(
-            frame
-                .offscreens
-                .iter()
-                .filter(|o| !o.masks.is_empty())
-                .map(|o| o.id.as_str()),
-        )
-        .collect();
-    if masked.is_empty() {
-        return consumers;
-    }
-    let mut stack: Vec<&str> = Vec::new();
-    for command in &frame.render_plan {
-        match command {
-            RenderCommand::BeginOffscreen { offscreen_id } => {
-                if masked.contains(offscreen_id.as_str()) {
-                    consumers.insert(
-                        offscreen_id.clone(),
-                        stack.last().copied().unwrap_or("").to_owned(),
-                    );
-                }
-                stack.push(offscreen_id);
-            }
-            RenderCommand::DrawMesh { mesh_id } => {
-                if masked.contains(mesh_id.as_str()) {
-                    consumers.insert(
-                        mesh_id.clone(),
-                        stack.last().copied().unwrap_or("").to_owned(),
-                    );
-                }
-            }
-            RenderCommand::EndOffscreen { .. } => {
-                stack.pop();
-            }
-        }
-    }
-    consumers
 }

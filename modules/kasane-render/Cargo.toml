@@ -1,0 +1,15 @@
+[package]
+name = "kasane-render"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Backend-neutral frame validation and render planning for Kasane 2D"
+
+[dependencies]
+kasane-core = { path = "../kasane-core" }
+
+[[bench]]
+name = "render_benchmark"
+harness = false
