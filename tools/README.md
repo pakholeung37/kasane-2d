@@ -52,3 +52,5 @@ python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl --require-
 ```
 
 默认结果写入 `target/sdk-acceptance/<run-id>/report.json`。CPU wheel 可不加 `--require-gpu` 运行，报告 GPU 项为 `not_run`，总体状态为 `partial`。已有官方 Core 与 Purism Core probe 时，可加 `--official-probe /absolute/path/to/kasane_document_official_probe --require-official-core --purism-probe /absolute/path/to/kasane_document_purism_probe --require-purism-core`，验证新建模型及外部模型编辑前后的逐顶点数值。
+
+完整本机门禁可用 `--full --official-probe /absolute/path/to/official-probe --purism-probe /absolute/path/to/purism-probe --godot /absolute/path/to/Godot`。`--full` 要求真实 GPU、双 Core 和图像参考，缺一项即返回失败。图像门禁使用现有 Godot↔wgpu 对照工具生成外部 model3 的参考帧，再用安装的 SDK wheel 导入同一模型、匹配 view 和纹理 profile，比较整图及 mesh crop，并保留差分 PNG 和逐项误差。

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Validate the shipped SDK wheel outside the source tree and retain evidence.
 
-The gate covers S3/S4, all three S5 recipes, and optional dual-Core numerical parity.
-Independent GPU image truth comparison remains a separate acceptance item.
+The gate covers S3/S4, all three S5 recipes, optional dual-Core numerical
+parity, and an optional independent Godot GPU image comparison.
 """
 
 from __future__ import annotations
@@ -28,6 +28,9 @@ TWO_ASSET_RECIPE = ROOT / "examples/sdk/python_two_asset_recipe.py"
 IMPORT_EDIT_RECIPE = ROOT / "examples/sdk/python_import_edit_recipe.py"
 AGENT_DRAFT = ROOT / "examples/sdk/python_agent_draft.py"
 AGENT_REPAIR = ROOT / "examples/sdk/python_agent_repair.py"
+REFERENCE_CAPTURE = ROOT / "examples/sdk/python_reference_capture.py"
+IMAGE_REFERENCE_TOOL = ROOT / "tools/compare_wgpu_real_model.py"
+IMAGE_COMPARATOR = ROOT / "tools/compare_sdk_image.py"
 TEXTURE = ROOT / "examples/sdk/asymmetric-2x2.png"
 SECOND_TEXTURE = ROOT / "tests/fixtures/external_v50/texture_00.png"
 EXTERNAL_MODEL3 = ROOT / "tests/fixtures/external_v50/model.model3.json"
@@ -55,11 +58,11 @@ def test_count(output: str, name: str) -> int:
 
 def command(
     name: str, args: list[str], *, cwd: Path, env: dict[str, str], logs: Path,
-    input_text: str | None = None,
+    input_text: str | None = None, timeout: int = 180,
 ) -> str:
     try:
         result = subprocess.run(
-            args, cwd=cwd, env=env, capture_output=True, text=True, timeout=180,
+            args, cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
             input=input_text,
         )
     except subprocess.TimeoutExpired as failure:
@@ -304,6 +307,75 @@ def validate_official_import_edit(
     }
 
 
+def validate_image_reference(
+    godot: Path, installed: Path, run: Path, outside: Path,
+    environment: dict[str, str], logs: Path,
+) -> dict:
+    reference_dir = run / "godot-reference"
+    command(
+        "godot-reference",
+        [sys.executable, str(IMAGE_REFERENCE_TOOL),
+         "--model3", str(EXTERNAL_MODEL3), "--output-dir", str(reference_dir),
+         "--godot", str(godot), "--width", "256", "--height", "256",
+         "--fit-long-side", "256", "--texture-profile", "linear_no_mipmap"],
+        cwd=outside, env=environment, logs=logs, timeout=600,
+    )
+    reference_report_path = reference_dir / "report.json"
+    reference = json.loads(reference_report_path.read_text(encoding="utf-8"))
+    if reference["status"] != "passed":
+        raise RuntimeError("Godot versus wgpu reference validation failed")
+    if reference["inputs"]["model3_sha256"] != sha256(EXTERNAL_MODEL3):
+        raise RuntimeError("Godot reference model3 hash mismatch")
+    if reference["texture_profile"] != "linear_no_mipmap":
+        raise RuntimeError("Godot reference texture profile mismatch")
+    observation_output = command(
+        "sdk-reference-capture",
+        [str(installed), str(REFERENCE_CAPTURE), str(EXTERNAL_MODEL3),
+         str(run / "sdk-reference-observation")],
+        cwd=outside, env=environment, logs=logs,
+    )
+    observation_report_path = Path(observation_output.splitlines()[-1]).resolve(strict=True)
+    if not observation_report_path.is_relative_to(run / "sdk-reference-observation"):
+        raise RuntimeError("SDK reference capture wrote outside the evidence directory")
+    observation = json.loads(observation_report_path.read_text(encoding="utf-8"))
+    if observation["status"] != "frames_complete" or len(observation["frames"]) != 1:
+        raise RuntimeError("SDK reference capture is incomplete")
+    frame = observation["frames"][0]
+    if len(frame["crops"]) != 1 or frame["view"]["width"] != 256:
+        raise RuntimeError("SDK reference focus/view is incomplete")
+    actual = observation_report_path.parent / frame["path"]
+    if sha256(actual) != frame["sha256"]:
+        raise RuntimeError("SDK reference image hash mismatch")
+    wgpu = json.loads((reference_dir / "wgpu-report.json").read_text(encoding="utf-8"))
+    for key in ("scale",):
+        if abs(wgpu["view"][key] - frame["view"][key]) > 1e-5:
+            raise RuntimeError("SDK and reference view scale differ")
+    if any(abs(a - b) > 1e-3 for a, b in zip(
+        wgpu["view"]["offset"], frame["view"]["offset"], strict=True,
+    )):
+        raise RuntimeError("SDK and reference view offsets differ")
+    reference_image = reference_dir / "godot.png"
+    bounds = frame["crops"][0]["bounds"]
+    comparison_output = command(
+        "sdk-image-comparison",
+        [sys.executable, str(IMAGE_COMPARATOR), str(reference_image), str(actual),
+         "--crop", *map(str, bounds), "--output", str(run / "sdk-image-comparison")],
+        cwd=outside, env=environment, logs=logs,
+    )
+    comparison_path = Path(comparison_output.splitlines()[-1]).resolve(strict=True)
+    comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+    if comparison["status"] != "passed":
+        raise RuntimeError("SDK image differs from the Godot reference")
+    return {
+        "status": "passed", "reference_report": str(reference_report_path.relative_to(run)),
+        "observation_report": str(observation_report_path.relative_to(run)),
+        "comparison": str(comparison_path.relative_to(run)),
+        "adapter": frame["adapter"],
+        "sdk_wgpu_png_sha_equal": sha256(actual) == sha256(reference_dir / "wgpu.png"),
+        "checks": comparison["checks"],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", required=True, type=Path)
@@ -314,11 +386,21 @@ def main() -> int:
     parser.add_argument("--require-official-core", action="store_true")
     parser.add_argument("--purism-probe", type=Path)
     parser.add_argument("--require-purism-core", action="store_true")
+    parser.add_argument("--godot", type=Path)
+    parser.add_argument("--require-image-reference", action="store_true")
+    parser.add_argument("--full", action="store_true",
+                        help="Require GPU, both Core probes, and image reference")
     args = parser.parse_args()
+    if args.full:
+        args.require_gpu = True
+        args.require_official_core = True
+        args.require_purism_core = True
+        args.require_image_reference = True
     wheel = args.wheel.resolve(strict=True)
     python = args.python.resolve(strict=True)
     official_probe = args.official_probe.resolve(strict=True) if args.official_probe else None
     purism_probe = args.purism_probe.resolve(strict=True) if args.purism_probe else None
+    godot = args.godot.resolve(strict=True) if args.godot else None
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     run = output / uuid4().hex
@@ -328,6 +410,7 @@ def main() -> int:
     report_path = run / "report.json"
     report = {
         "schema_version": 1,
+        "profile": "full" if args.full else "custom",
         "status": "running",
         "source_revision": git("rev-parse", "HEAD"),
         "workspace_dirty": bool(git("status", "--porcelain")),
@@ -337,6 +420,7 @@ def main() -> int:
             str(path.relative_to(ROOT)): sha256(path)
             for path in (CPU_TEST, GPU_TEST, RECIPE, TWO_ASSET_RECIPE,
                          IMPORT_EDIT_RECIPE, AGENT_DRAFT, AGENT_REPAIR,
+                         REFERENCE_CAPTURE, IMAGE_REFERENCE_TOOL, IMAGE_COMPARATOR,
                          TEXTURE, SECOND_TEXTURE,
                          EXTERNAL_MODEL3, EXTERNAL_MOC3)
         },
@@ -432,11 +516,26 @@ def main() -> int:
                 )
                 repair_report = Path(repair_output.splitlines()[-1]).resolve(strict=True)
                 report["checks"]["agent_repair"] = validate_agent_repair(repair_report, run)
+                if godot:
+                    report["checks"]["image_reference"] = validate_image_reference(
+                        godot, installed, run, outside, environment, logs,
+                    )
+                else:
+                    report["checks"]["image_reference"] = {
+                        "status": "not_run", "reason": "Godot reference renderer not supplied",
+                    }
+                    if args.require_image_reference:
+                        raise RuntimeError("Image reference is required but Godot was not supplied")
             else:
                 report["checks"]["gpu"] = {"status": "not_run", "reason": "GPU observation unavailable"}
                 report["checks"]["agent_repair"] = {
                     "status": "not_run", "reason": "GPU observation unavailable",
                 }
+                report["checks"]["image_reference"] = {
+                    "status": "not_run", "reason": "GPU observation unavailable",
+                }
+                if args.require_image_reference:
+                    raise RuntimeError("Image reference requires GPU observation")
                 if args.require_gpu:
                     raise RuntimeError("GPU observation is required but unavailable")
         report["status"] = "passed" if report["checks"]["gpu"]["status"] == "passed" else "partial"

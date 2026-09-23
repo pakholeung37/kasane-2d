@@ -1,6 +1,6 @@
 # SDK 阶段验收记录
 
-本文件记录已经实际运行的 SDK 验收；S3 CPU 与 S4 功能性 GPU wheel 门禁已通过，完整 agent 创作 SDK 仍须完成 [实施计划](SDK-IMPLEMENTATION-PLAN.md) 中的外部运行时与图像真值对照。
+本文件记录已经实际运行的 SDK 验收；当前 CPython 3.14/macOS arm64 上的 CPU、真实 GPU、双 Core 数值与图像真值门禁均已通过。其它平台组合尚未验收。
 
 ## S2：工程与资源闭环（2026-09-23）
 
@@ -81,3 +81,7 @@ S5 三流程续测：更新两素材模型的变形局部坐标后，两个 mesh
 二次脚本负控制：将 handoff 中的观察报告改为修正后的图像再次运行 `python_agent_repair.py`，进程以非零状态退出并报告 `No undersized target detected; existing model was not edited`，没有生成“成功修正”报告。
 
 双 Core 数值对照：`target/sdk-acceptance/fbccc3fd74454b3389433de6e6c3ad08/report.json` 记录仓库外 GPU feature wheel、Apple M4/Metal、官方 Live2D Cubism Core 6.0.1 与 Purism Core 1.1.0。两素材导出的 3 档参数共 48 坐标，对 SDK 求值的官方 Core 最大误差 `5.960464477539062e-07` 原像素、Purism 为 0；外部模型编辑前后两档参数共 32 坐标，官方最大误差 `1.1920928955078125e-05` 原像素、Purism 为 0。`official-core-comparison.json`、`purism-core-comparison.json` 及对应 import comparison 文件保留逐项 expected/actual；源 MOC3、probe 与 wheel hash 均在报告中。此轮所有已执行检查为 `passed`；独立 GPU 图像真值对照和其它平台 wheel 分发未验收。
+
+完整本机门禁：`target/sdk-acceptance/d146304c7c3c4190b274224ee7da0a5f/report.json` 的 10 项检查均为 `passed`，包括 CPU 28 项、S5 三条流程、真实 GPU 2 项、官方/Purism Core 的新建与导入编辑数值对照，以及独立 Godot GPU 图像参考。对 `external_v50` 默认姿态，SDK 观察 PNG 与 wgpu 参考 PNG hash 相同；相同 256×256 view 下直接比对 Godot 图，整图和 mesh crop 的 MAE、超阈值像素占比与最大通道误差均为 0。`sdk-image-comparison/comparison.json` 记录阈值、实际误差、参考/实际 hash，旁边保留原图和差分 PNG。比较器负控制将 20×20 区域像素改动后返回非零状态。最终 Rust SDK/observe/Python crate 测试、Clippy `-D warnings` 与 API coverage `115/116`、0 待绑定均通过。此结果适用于当前 CPython 3.14/macOS arm64、Apple M4/Metal 与所记录的外部 v5 fixture；其它环境需要重新运行同样门禁。
+
+`--full` 命令另在 `target/sdk-acceptance/aefbfe59894c43a59142d5975ceaab18/report.json` 实际运行：profile 为 `full`，10 项均 `passed`。该 profile 将 GPU、双 Core 和 Godot 参考均设为必需项。
