@@ -124,7 +124,9 @@
     "status": "pending"
   },
   "Edit.replace_transform": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_transform",
+    "test": "test_replace_transform_preserves_identity_and_full_fields"
   },
   "Edit.set_deform_parent": {
     "status": "bound",

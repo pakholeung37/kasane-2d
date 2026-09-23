@@ -79,7 +79,7 @@ S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照�
 
 Part 已支持创建、读取和完整字段替换；组织父节点与 mesh 的 Part 归属已通过成功路径测试。覆盖清单更新至 80/115，剩余 35 项。
 
-Transform 已支持旋转与 warp 两种类型的创建、读取及各自数据更新；旋转姿态和 warp 控制点使用有类型的 Python 记录。Transform 父节点、Part 归属与 mesh 变形父节点已通过同批次成功路径。覆盖清单更新至 84/115，剩余 31 项；完整 Transform 替换仍待绑定。
+Transform 已支持旋转与 warp 两种类型的创建、读取及各自数据更新；旋转姿态和 warp 控制点使用有类型的 Python 记录。Transform 父节点、Part 归属与 mesh 变形父节点已通过同批次成功路径。当时覆盖清单为 84/115，剩余 31 项；完整 Transform 替换见后续记录。
 
 PNG 资源路径又支持显式绝对基目录加相对文件名、替换 PNG、相同内容搬迁。搬迁继续使用 Rust SDK 的尺寸与内容 hash 检查，替换允许新内容。覆盖清单更新至 87/115，剩余 28 项。
 
@@ -90,5 +90,7 @@ SceneBinding 的 Part、Rotation、Warp 三种轨道现均可在 Python 中创�
 MeshBinding keyform 现在完整暴露 appearance 与 draw order；创建、快照、替换和单 keyform 更新均保留这些字段。清单更新至 95/116 项 Python 绑定、1 项 Rust 专用、20 项待绑定。
 
 Python `Session.mesh_properties` 与 `Edit.update_mesh_properties` 已覆盖 mesh 绘制属性的完整读写；更新保留几何与 mesh 身份。清单更新至 96/116 项 Python 绑定、1 项 Rust 专用、19 项待绑定。
+
+`TransformSnapshot` 现包含 appearance，可传给 `Edit.replace_transform` 进行完整 rotation/warp 替换；runtime ID 由现存对象继承。清单更新至 97/116 项 Python 绑定、1 项 Rust 专用、18 项待绑定。
 
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

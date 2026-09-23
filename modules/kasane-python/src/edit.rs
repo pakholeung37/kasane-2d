@@ -12,6 +12,7 @@ use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
     AuthoringSession, EditReceipt, MeshProperties, Version,
 };
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 enum Command {
@@ -36,6 +37,7 @@ enum Command {
     CreatePart(Part),
     ReplacePart(Part),
     CreateTransform(Transform),
+    ReplaceTransform(Transform),
     UpdateRotation(String, RotationTransform),
     UpdateWarpPoints(String, Vec<Vec2>),
     ReplaceAsset(kasane_core::ImageAsset),
@@ -228,6 +230,54 @@ impl NativeEdit {
         self.ensure_open(py, "update_rotation")?;
         self.commands
             .push(Command::UpdateRotation(id, rotation_data(rotation)));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn replace_transform(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+        part_id: Option<String>,
+        parent_id: Option<String>,
+        kind: &str,
+        rotation: Option<RotationTuple>,
+        warp: Option<WarpTuple>,
+        enabled: bool,
+        appearance: AppearanceTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_transform")?;
+        let data = match (kind, rotation, warp) {
+            ("rotation", Some(rotation), None) => TransformData::Rotation(rotation_data(rotation)),
+            ("warp", None, Some((rows, columns, quad, points))) => {
+                TransformData::Warp(WarpTransform {
+                    rows,
+                    columns,
+                    quad,
+                    points: points.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
+                })
+            }
+            _ => {
+                return Err(PyValueError::new_err(
+                    "Transform data does not match its kind",
+                ))
+            }
+        };
+        let original = self.session.lock().map_err(|_| poisoned())?.transform(&id);
+        let runtime_id = original
+            .map(|transform| transform.runtime_id)
+            .unwrap_or_else(|| id.clone());
+        self.commands.push(Command::ReplaceTransform(Transform {
+            id,
+            runtime_id,
+            name,
+            part_id: part_id.map(Into::into),
+            parent_id: parent_id.map(Into::into),
+            data,
+            enabled,
+            appearance: appearance_from_tuple(appearance),
+        }));
         Ok(())
     }
 
@@ -725,6 +775,9 @@ impl NativeEdit {
                         Command::CreatePart(part) => edit.create_part(part)?,
                         Command::ReplacePart(part) => edit.replace_part(part)?,
                         Command::CreateTransform(transform) => edit.create_transform(transform)?,
+                        Command::ReplaceTransform(transform) => {
+                            edit.replace_transform(transform)?
+                        }
                         Command::UpdateRotation(id, rotation) => {
                             edit.update_rotation(&id, rotation)?
                         }

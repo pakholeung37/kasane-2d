@@ -41,6 +41,7 @@ pub(crate) type TransformTuple = (
     Option<RotationTuple>,
     Option<WarpTuple>,
     bool,
+    AppearanceTuple,
     VersionTuple,
 );
 pub(crate) type GeometryTuple = (
@@ -447,6 +448,7 @@ pub(crate) fn transform_tuple(transform: Transform, version: Version) -> Transfo
         rotation,
         warp,
         transform.enabled,
+        appearance_tuple(transform.appearance),
         version_tuple(version),
     )
 }

@@ -49,3 +49,5 @@ SceneBinding 续测：Part、Rotation、Warp 轨道的完整表、外观字段�
 MeshBinding 续测：appearance、draw order、单 keyform 更新与完整绑定替换，保存重开后字段及中点采样一致。仓库外 wheel 的 `test_cpu.py` 19 项通过，Clippy 无警告；覆盖清单为 95/116 项 Python 绑定、1 项 Rust 专用、20 项待绑定。
 
 Mesh 绘制属性续测：更新外观、绘制顺序、混合模式与遮罩属性后，几何保持不变；非法混合模式回滚同批次改名；undo 恢复原属性。仓库外 wheel 的 `test_cpu.py` 20 项通过，覆盖清单为 96/116 项 Python 绑定、1 项 Rust 专用、19 项待绑定。
+
+Transform 完整替换续测：rotation 和 warp 的快照字段可替换并保存重开，runtime ID 保留，错误类型组合回滚，undo 恢复旧值。仓库外 wheel 的 `test_cpu.py` 21 项通过；覆盖清单为 97/116 项 Python 绑定、1 项 Rust 专用、18 项待绑定。

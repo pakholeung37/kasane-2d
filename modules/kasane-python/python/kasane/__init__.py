@@ -207,6 +207,7 @@ class TransformSnapshot(NamedTuple):
     rotation: RotationData | None
     warp: WarpData | None
     enabled: bool
+    appearance: Appearance
     version: Version
 
 
@@ -362,6 +363,17 @@ class Edit:
 
     def update_rotation(self, transform_id: str, rotation: RotationData) -> None:
         self._call(lambda: self._native.update_rotation(transform_id, _rotation_tuple(rotation)))
+
+    def replace_transform(self, transform: TransformSnapshot) -> None:
+        rotation = _rotation_tuple(transform.rotation) if transform.rotation is not None else None
+        warp = (
+            (transform.warp.rows, transform.warp.columns, transform.warp.quad, list(transform.warp.points))
+            if transform.warp is not None else None
+        )
+        self._call(lambda: self._native.replace_transform(
+            transform.id, transform.name, transform.part_id, transform.parent_id,
+            transform.kind, rotation, warp, transform.enabled, tuple(transform.appearance),
+        ))
 
     def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
         self._call(lambda: self._native.update_warp_points(transform_id, list(points)))
@@ -705,10 +717,10 @@ class Session:
         raw = self._native.transform(transform_id)
         if raw is None:
             return None
-        id, runtime_id, name, part_id, parent_id, kind, rotation, warp, enabled, version = raw
+        id, runtime_id, name, part_id, parent_id, kind, rotation, warp, enabled, appearance, version = raw
         rotation_data = RotationData(rotation[0], RotationPose((rotation[1][0], rotation[1][1]), *rotation[1][2:])) if rotation is not None else None
         warp_data = WarpData(*warp) if warp is not None else None
-        return TransformSnapshot(id, runtime_id, name, part_id, parent_id, kind, rotation_data, warp_data, enabled, version)
+        return TransformSnapshot(id, runtime_id, name, part_id, parent_id, kind, rotation_data, warp_data, enabled, Appearance(*appearance), version)
 
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)

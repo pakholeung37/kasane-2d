@@ -15,7 +15,7 @@ DrawOrderGroup = tuple[str, list[str], int, int]
 Part = tuple[str, str, str, str, bool, float, Version]
 Rotation = tuple[float, tuple[float, float, float, float, bool, bool]]
 Warp = tuple[int, int, bool, list[Point]]
-Transform = tuple[str, str, str, str | None, str | None, str, Rotation | None, Warp | None, bool, Version]
+Transform = tuple[str, str, str, str | None, str | None, str, Rotation | None, Warp | None, bool, Appearance, Version]
 Pose = tuple[float, float, float, float, bool, bool]
 SceneForm = tuple[list[float], list[Point], Pose | None, float | None, Appearance | None]
 SceneBinding = tuple[str, list[tuple[str, list[float]]], str, str, list[SceneForm], Version]
@@ -63,6 +63,11 @@ class NativeEdit:
         rows: int, columns: int, quad: bool, points: list[Point]
     ) -> None: ...
     def update_rotation(self, id: str, rotation: Rotation) -> None: ...
+    def replace_transform(
+        self, id: str, name: str, part_id: str | None, parent_id: str | None,
+        kind: str, rotation: Rotation | None, warp: Warp | None,
+        enabled: bool, appearance: Appearance
+    ) -> None: ...
     def update_warp_points(self, id: str, points: list[Point]) -> None: ...
     def create_part(
         self, id: str, name: str, parent_id: str = "", enabled: bool = True,

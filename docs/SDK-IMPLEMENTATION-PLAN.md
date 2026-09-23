@@ -513,4 +513,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 mesh 绘制属性批次：Python 支持读取和更新纹理引用、外观、绘制顺序、混合模式、启用状态、双面、反转遮罩与遮罩列表；更新保留 mesh 几何和身份，非法混合模式使整批 edit 回滚。仓库外 wheel 的 20 项 CPU 测试通过，清单为 96/116 Python 绑定、1 项 Rust 专用、19 项待绑定。
 
+2026-09-23 S3 Transform 替换批次：快照补全 appearance，Python 可用完整快照一次替换 rotation/warp Transform 的名称、层级、数据、启用状态与外观，并保留 runtime ID。保存重开、失败回滚及 undo 通过仓库外 wheel 的 21 项 CPU 测试；清单为 97/116 Python 绑定、1 项 Rust 专用、18 项待绑定。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

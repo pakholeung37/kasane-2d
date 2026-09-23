@@ -400,6 +400,51 @@ class CpuWheelTests(unittest.TestCase):
         model.undo()
         self.assertEqual(model.transform(ROTATION).rotation.base_angle, 0)
 
+    def test_replace_transform_preserves_identity_and_full_fields(self):
+        model = session()
+        points = [(0, 0), (1, 0), (0, 1), (1, 1)]
+        with model.edit("transforms") as edit:
+            edit.create_rotation_transform(
+                ROTATION, "rotate", kasane.RotationData(0, kasane.RotationPose((0, 0)))
+            )
+            edit.create_warp_transform(
+                WARP, "warp", kasane.WarpData(1, 1, True, points)
+            )
+        original = model.transform(ROTATION)
+        warp = model.transform(WARP)
+        with model.edit("replace transforms") as edit:
+            edit.replace_transform(original._replace(
+                name="turned", enabled=False,
+                appearance=kasane.Appearance(0.5),
+                rotation=kasane.RotationData(15, kasane.RotationPose((2, 3), angle=20)),
+            ))
+            edit.replace_transform(warp._replace(
+                name="curved", warp=kasane.WarpData(1, 1, True, [
+                    (0.25, 0), (1, 0), (0, 1), (1, 1)
+                ]),
+            ))
+        replaced = model.transform(ROTATION)
+        self.assertEqual(replaced.runtime_id, original.runtime_id)
+        self.assertEqual(replaced.name, "turned")
+        self.assertFalse(replaced.enabled)
+        self.assertAlmostEqual(replaced.appearance.opacity, 0.5)
+        self.assertEqual(replaced.rotation.base_angle, 15)
+        self.assertEqual(replaced.rotation.pose.origin, (2, 3))
+        self.assertAlmostEqual(model.transform(WARP).warp.points[0][0], 0.25)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.transform(ROTATION).runtime_id, original.runtime_id)
+            self.assertAlmostEqual(reopened.transform(ROTATION).appearance.opacity, 0.5)
+        version = model.version
+        with self.assertRaises(ValueError):
+            with model.edit("invalid transform") as edit:
+                edit.replace_transform(original._replace(kind="warp"))
+        self.assertEqual(model.version, version)
+        model.undo()
+        self.assertEqual(model.transform(ROTATION).name, original.name)
+
     def test_png_base_relocation_and_replacement(self):
         model = session()
         with model.edit("asset") as edit:
