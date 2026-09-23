@@ -79,4 +79,6 @@ S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照�
 
 Part 已支持创建、读取和完整字段替换；组织父节点与 mesh 的 Part 归属已通过成功路径测试。覆盖清单更新至 80/115，剩余 35 项。
 
+Transform 已支持旋转与 warp 两种类型的创建、读取及各自数据更新；旋转姿态和 warp 控制点使用有类型的 Python 记录。Transform 父节点、Part 归属与 mesh 变形父节点已通过同批次成功路径。覆盖清单更新至 84/115，剩余 31 项；完整 Transform 替换仍待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

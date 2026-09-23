@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex};
 
 use kasane_core::{
     draw_order::DrawOrderGroup, Appearance, BindingAxis, Canvas, DrawableFrame, MeshBinding,
-    MeshKeyform, Parameter, Part, Vec2,
+    MeshKeyform, Parameter, Part, PreciseVec2, RotationPose, RotationTransform, Transform,
+    TransformData, Vec2, WarpTransform,
 };
 use kasane_sdk::{
     prepare_png_asset, rectangle_mesh, AuthoringSession, EditReceipt, HistoryLimits, ObjectHandle,
@@ -39,6 +40,20 @@ type MeshBindingTuple = (
 );
 type DrawOrderTuple = (String, Vec<String>, i32, i32);
 type PartTuple = (String, String, String, String, bool, f32, VersionTuple);
+type RotationTuple = (f32, (f64, f64, f32, f32, bool, bool));
+type WarpTuple = (u32, u32, bool, Vec<PointTuple>);
+type TransformTuple = (
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<String>,
+    String,
+    Option<RotationTuple>,
+    Option<WarpTuple>,
+    bool,
+    VersionTuple,
+);
 type GeometryTuple = (
     VersionTuple,
     String,
@@ -175,6 +190,62 @@ fn object_kind_name(kind: ObjectKind) -> &'static str {
         ObjectKind::Glue => "glue",
         ObjectKind::Offscreen => "offscreen",
     }
+}
+
+fn rotation_data(value: RotationTuple) -> RotationTransform {
+    let (base_angle, (x, y, angle, scale, reflect_x, reflect_y)) = value;
+    RotationTransform {
+        base_angle,
+        pose: RotationPose {
+            origin: PreciseVec2::new(x, y),
+            angle,
+            scale,
+            reflect_x,
+            reflect_y,
+        },
+    }
+}
+
+fn transform_tuple(transform: Transform, version: Version) -> TransformTuple {
+    let (kind, rotation, warp) = match transform.data {
+        TransformData::Rotation(data) => (
+            "rotation".to_owned(),
+            Some((
+                data.base_angle,
+                (
+                    data.pose.origin.x,
+                    data.pose.origin.y,
+                    data.pose.angle,
+                    data.pose.scale,
+                    data.pose.reflect_x,
+                    data.pose.reflect_y,
+                ),
+            )),
+            None,
+        ),
+        TransformData::Warp(data) => (
+            "warp".to_owned(),
+            None,
+            Some((
+                data.rows,
+                data.columns,
+                data.quad,
+                data.points.into_iter().map(|p| (p.x, p.y)).collect(),
+            )),
+        ),
+    };
+    (
+        transform.id,
+        transform.runtime_id,
+        transform.name,
+        transform.part_id.map(|id| id.as_str().to_owned()),
+        transform.parent_id.map(|id| id.as_str().to_owned()),
+        kind,
+        rotation,
+        warp,
+        transform.enabled,
+        version_tuple(version),
+    )
 }
 
 #[pyclass(name = "ObjectHandle")]
@@ -578,6 +649,13 @@ impl NativeSession {
         }))
     }
 
+    fn transform(&self, id: &str) -> PyResult<Option<TransformTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .transform(id)
+            .map(|transform| transform_tuple(transform, session.version())))
+    }
+
     fn handle(&self, py: Python<'_>, kind: &str, id: &str) -> PyResult<NativeHandle> {
         let kind = object_kind(kind)?;
         self.inner
@@ -979,6 +1057,9 @@ enum Command {
     ReplaceDrawOrderGroups(Vec<DrawOrderGroup>),
     CreatePart(Part),
     ReplacePart(Part),
+    CreateTransform(Transform),
+    UpdateRotation(String, RotationTransform),
+    UpdateWarpPoints(String, Vec<Vec2>),
 }
 
 #[pyclass]
@@ -1015,6 +1096,83 @@ impl NativeEdit {
 
 #[pymethods]
 impl NativeEdit {
+    fn create_rotation_transform(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+        part_id: Option<String>,
+        parent_id: Option<String>,
+        rotation: RotationTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_transform")?;
+        self.commands.push(Command::CreateTransform(Transform {
+            id,
+            name,
+            part_id: part_id.map(Into::into),
+            parent_id: parent_id.map(Into::into),
+            data: TransformData::Rotation(rotation_data(rotation)),
+            ..Transform::default()
+        }));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn create_warp_transform(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        name: String,
+        part_id: Option<String>,
+        parent_id: Option<String>,
+        rows: u32,
+        columns: u32,
+        quad: bool,
+        points: Vec<PointTuple>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_transform")?;
+        self.commands.push(Command::CreateTransform(Transform {
+            id,
+            name,
+            part_id: part_id.map(Into::into),
+            parent_id: parent_id.map(Into::into),
+            data: TransformData::Warp(WarpTransform {
+                rows,
+                columns,
+                quad,
+                points: points.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
+            }),
+            ..Transform::default()
+        }));
+        Ok(())
+    }
+
+    fn update_rotation(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        rotation: RotationTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "update_rotation")?;
+        self.commands
+            .push(Command::UpdateRotation(id, rotation_data(rotation)));
+        Ok(())
+    }
+
+    fn update_warp_points(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        points: Vec<PointTuple>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "update_warp_points")?;
+        self.commands.push(Command::UpdateWarpPoints(
+            id,
+            points.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
+        ));
+        Ok(())
+    }
+
     #[pyo3(signature = (id, name, parent_id="", enabled=true, draw_order=0.0))]
     fn create_part(
         &mut self,
@@ -1359,6 +1517,13 @@ impl NativeEdit {
                         }
                         Command::CreatePart(part) => edit.create_part(part)?,
                         Command::ReplacePart(part) => edit.replace_part(part)?,
+                        Command::CreateTransform(transform) => edit.create_transform(transform)?,
+                        Command::UpdateRotation(id, rotation) => {
+                            edit.update_rotation(&id, rotation)?
+                        }
+                        Command::UpdateWarpPoints(id, points) => {
+                            edit.update_warp_points(&id, points)?
+                        }
                     }
                 }
                 Ok(())

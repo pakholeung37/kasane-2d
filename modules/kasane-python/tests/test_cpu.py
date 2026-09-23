@@ -19,6 +19,8 @@ PARAMETER = "00000000-0000-4000-8000-000000000004"
 BINDING = "00000000-0000-4000-8000-000000000005"
 PART = "00000000-0000-4000-8000-000000000006"
 CHILD_PART = "00000000-0000-4000-8000-000000000007"
+ROTATION = "00000000-0000-4000-8000-000000000008"
+WARP = "00000000-0000-4000-8000-000000000009"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -356,6 +358,43 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(model.part(CHILD_PART).draw_order, 2.5)
         model.undo()
         self.assertEqual(model.part(CHILD_PART).name, "child")
+
+    def test_transform_hierarchy_and_updates(self):
+        model = session()
+        with model.edit("base") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (0, 0), (1, 1))
+        points = [(0, 0), (1, 0), (0, 1), (1, 1)]
+        with model.edit("hierarchy") as edit:
+            edit.create_part(PART, "root")
+            edit.create_part(CHILD_PART, "child")
+            edit.create_rotation_transform(
+                ROTATION, "rotate", kasane.RotationData(0, kasane.RotationPose((0, 0))), PART
+            )
+            edit.create_warp_transform(
+                WARP, "warp", kasane.WarpData(1, 1, True, points), PART
+            )
+            edit.set_transform_parent(WARP, ROTATION)
+            edit.set_transform_part(WARP, CHILD_PART)
+            edit.set_deform_parent(MESH, WARP)
+            edit.set_mesh_part(MESH, CHILD_PART)
+        self.assertEqual(model.transform_ids(), [ROTATION, WARP])
+        self.assertEqual(model.transform(WARP).parent_id, ROTATION)
+        self.assertEqual(model.transform(WARP).part_id, CHILD_PART)
+        self.assertEqual(model.transform(WARP).warp.points, points)
+        self.assertEqual(model.geometry(MESH).space, "parent_local")
+        self.assertEqual(model.geometry(MESH).parent_id, WARP)
+        self.assertEqual(model.validate_structure(), [])
+        with model.edit("update") as edit:
+            edit.update_rotation(
+                ROTATION, kasane.RotationData(5, kasane.RotationPose((0, 0), angle=10))
+            )
+            edit.update_warp_points(WARP, [(x + 0.1, y) for x, y in points])
+        self.assertEqual(model.transform(ROTATION).rotation.base_angle, 5)
+        self.assertEqual(model.transform(ROTATION).rotation.pose.angle, 10)
+        self.assertAlmostEqual(model.transform(WARP).warp.points[0][0], 0.1, places=5)
+        model.undo()
+        self.assertEqual(model.transform(ROTATION).rotation.base_angle, 0)
 
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:

@@ -48,7 +48,9 @@
     "status": "pending"
   },
   "Edit.create_transform": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_rotation_transform / Edit.create_warp_transform",
+    "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.erase_object": {
     "status": "bound",
@@ -119,7 +121,7 @@
   "Edit.set_deform_parent": {
     "status": "bound",
     "python": "Edit.set_deform_parent",
-    "test": "test_parent_edit_errors_roll_back_entire_batch"
+    "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.set_mesh_keyform": {
     "status": "pending"
@@ -140,12 +142,12 @@
   "Edit.set_transform_parent": {
     "status": "bound",
     "python": "Edit.set_transform_parent",
-    "test": "test_parent_edit_errors_roll_back_entire_batch"
+    "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.set_transform_part": {
     "status": "bound",
     "python": "Edit.set_transform_part",
-    "test": "test_parent_edit_errors_roll_back_entire_batch"
+    "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.update_mesh_properties": {
     "status": "pending"
@@ -156,10 +158,14 @@
     "test": "test_update_positions_publishes_one_edit"
   },
   "Edit.update_rotation": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.update_rotation",
+    "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.update_warp_points": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.update_warp_points",
+    "test": "test_transform_hierarchy_and_updates"
   },
   "ObjectHandle.id": {
     "status": "bound",
@@ -458,7 +464,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.transform": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.transform",
+    "test": "test_transform_hierarchy_and_updates"
   },
   "Session.transform_ids": {
     "status": "bound",

@@ -111,6 +111,39 @@ class PartSnapshot(NamedTuple):
     version: Version
 
 
+class RotationPose(NamedTuple):
+    origin: tuple[float, float]
+    angle: float = 0
+    scale: float = 1
+    reflect_x: bool = False
+    reflect_y: bool = False
+
+
+class RotationData(NamedTuple):
+    base_angle: float
+    pose: RotationPose
+
+
+class WarpData(NamedTuple):
+    rows: int
+    columns: int
+    quad: bool
+    points: list[Point]
+
+
+class TransformSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    name: str
+    part_id: str | None
+    parent_id: str | None
+    kind: str
+    rotation: RotationData | None
+    warp: WarpData | None
+    enabled: bool
+    version: Version
+
+
 class ResourceIssue(NamedTuple):
     asset_id: str
     code: str
@@ -230,6 +263,29 @@ class Edit:
                 part_id, name, parent_id, enabled, draw_order
             )
         )
+
+    def create_rotation_transform(
+        self, transform_id: str, name: str, rotation: RotationData,
+        part_id: str | None = None, parent_id: str | None = None,
+    ) -> None:
+        self._call(lambda: self._native.create_rotation_transform(
+            transform_id, name, part_id, parent_id, _rotation_tuple(rotation)
+        ))
+
+    def create_warp_transform(
+        self, transform_id: str, name: str, warp: WarpData,
+        part_id: str | None = None, parent_id: str | None = None,
+    ) -> None:
+        self._call(lambda: self._native.create_warp_transform(
+            transform_id, name, part_id, parent_id, warp.rows, warp.columns,
+            warp.quad, list(warp.points)
+        ))
+
+    def update_rotation(self, transform_id: str, rotation: RotationData) -> None:
+        self._call(lambda: self._native.update_rotation(transform_id, _rotation_tuple(rotation)))
+
+    def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
+        self._call(lambda: self._native.update_warp_points(transform_id, list(points)))
 
     def erase_object(self, object_id: str) -> None:
         self._call(lambda: self._native.erase_object(object_id))
@@ -497,6 +553,15 @@ class Session:
         raw = self._native.part(part_id)
         return PartSnapshot(*raw) if raw is not None else None
 
+    def transform(self, transform_id: str) -> TransformSnapshot | None:
+        raw = self._native.transform(transform_id)
+        if raw is None:
+            return None
+        id, runtime_id, name, part_id, parent_id, kind, rotation, warp, enabled, version = raw
+        rotation_data = RotationData(rotation[0], RotationPose((rotation[1][0], rotation[1][1]), *rotation[1][2:])) if rotation is not None else None
+        warp_data = WarpData(*warp) if warp is not None else None
+        return TransformSnapshot(id, runtime_id, name, part_id, parent_id, kind, rotation_data, warp_data, enabled, version)
+
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)
 
@@ -618,6 +683,14 @@ def _binding_snapshot(raw) -> MeshBindingSnapshot | None:
     )
 
 
+def _rotation_tuple(rotation: RotationData):
+    pose = rotation.pose
+    return (rotation.base_angle, (
+        pose.origin[0], pose.origin[1], pose.angle, pose.scale,
+        pose.reflect_x, pose.reflect_y,
+    ))
+
+
 __all__ = [
     "Axis",
     "AssetSnapshot",
@@ -639,10 +712,14 @@ __all__ = [
     "ParameterSnapshot",
     "PartSnapshot",
     "ResourceIssue",
+    "RotationData",
+    "RotationPose",
     "SaveResult",
     "SdkFailure",
     "Session",
     "StructureIssue",
+    "TransformSnapshot",
+    "WarpData",
     "capabilities",
     "open_project",
 ]

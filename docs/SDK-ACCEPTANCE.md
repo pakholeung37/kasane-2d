@@ -37,3 +37,5 @@
 再续测：句柄有效期、绘制顺序组的提交/拒绝/撤销，以及历史步数上限。仓库外 wheel 的 `test_cpu.py` 13 项通过；`cargo clippy -p kasane-python -p kasane-sdk -p kasane-project --all-targets -- -D warnings` 通过；覆盖清单为 77/115，余 38 项。
 
 Part 续测：同批次创建父子 Part、设置组织父节点与 mesh Part、替换 Part 字段、undo 恢复。仓库外 wheel 的 `test_cpu.py` 14 项通过；覆盖清单为 80/115，余 35 项。
+
+Transform 续测：同批次创建旋转/warp、设置 Transform 父节点和 Part 归属、设置 mesh 变形父节点；更新旋转姿态与 warp 点后 undo。仓库外 wheel 的 `test_cpu.py` 15 项通过，Clippy 无警告；覆盖清单为 84/115，余 31 项。
