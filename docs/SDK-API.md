@@ -85,4 +85,6 @@ PNG 资源路径又支持显式绝对基目录加相对文件名、替换 PNG、
 
 几何提示 `Session.diagnose_geometry` 已接入，返回三角形面积、绕序与根 mesh 画布范围的提示，不修改文档。覆盖检查现包含独立的 Rust 诊断模块，清单为 116 项：88 项 Python 绑定、1 项 Rust 专用测试注入、27 项待绑定。
 
+SceneBinding 的 Part、Rotation、Warp 三种轨道现均可在 Python 中创建、读取、替换，并更新现有 keyform；快照包含 appearance 和 rotation pose。当前清单为 93/116 项 Python 绑定、1 项 Rust 专用、22 项待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

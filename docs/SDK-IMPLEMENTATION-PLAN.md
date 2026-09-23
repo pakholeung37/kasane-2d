@@ -507,4 +507,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 覆盖审计续批：修复检查器漏扫独立 `diagnostics.rs` 的问题，接入 Python 几何提示查询；将仅用于 Rust 文件系统故障注入的 `with_filesystem` 明确记录为 Rust 专用并关联测试。当前清单为 116 个公开入口：88 个 Python 绑定、1 个 Rust 专用、27 个待绑定。仓库外 wheel 的 17 项 CPU 测试通过。
 
+2026-09-23 S3 SceneBinding 批次：Python 现支持 Part、Rotation、Warp 三种轨道的完整 keyform 创建、读取、替换和单项更新，保留 appearance 与 rotation pose；测试覆盖快照副本、失败回滚和保存重开。仓库外 wheel 的 18 项 CPU 测试通过，清单为 93/116 Python 绑定、1 项 Rust 专用、22 项待绑定。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

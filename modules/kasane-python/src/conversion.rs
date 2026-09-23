@@ -1,7 +1,8 @@
 //! Value conversion at the Python/Rust boundary.
 use kasane_core::{
-    DrawableFrame, MeshBinding, PreciseVec2, RotationPose, RotationTransform, Transform,
-    TransformData,
+    Appearance, BindingAxis, DrawableFrame, MeshBinding, PartKeyform, PreciseVec2, RotationKeyform,
+    RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack, Transform,
+    TransformData, Vec2, WarpKeyform,
 };
 use kasane_sdk::{ObjectKind, Version};
 use pyo3::exceptions::PyValueError;
@@ -60,6 +61,224 @@ pub(crate) type EventTuple = (
     Vec<String>,
     bool,
 );
+pub(crate) type PoseTuple = (f64, f64, f32, f32, bool, bool);
+pub(crate) type AppearanceTuple = (f32, Point3Tuple, Point3Tuple);
+pub(crate) type Point3Tuple = (f32, f32, f32);
+pub(crate) type SceneFormTuple = (
+    Vec<f32>,
+    Vec<PointTuple>,
+    Option<PoseTuple>,
+    Option<f32>,
+    Option<AppearanceTuple>,
+);
+pub(crate) type SceneBindingTuple = (
+    String,
+    Vec<(String, Vec<f32>)>,
+    String,
+    String,
+    Vec<SceneFormTuple>,
+    VersionTuple,
+);
+
+fn pose_from_tuple(value: PoseTuple) -> RotationPose {
+    RotationPose {
+        origin: PreciseVec2::new(value.0, value.1),
+        angle: value.2,
+        scale: value.3,
+        reflect_x: value.4,
+        reflect_y: value.5,
+    }
+}
+
+fn pose_tuple(pose: RotationPose) -> PoseTuple {
+    (
+        pose.origin.x,
+        pose.origin.y,
+        pose.angle,
+        pose.scale,
+        pose.reflect_x,
+        pose.reflect_y,
+    )
+}
+
+fn appearance_from_tuple(value: AppearanceTuple) -> Appearance {
+    let (opacity, multiply, screen) = value;
+    Appearance {
+        opacity,
+        multiply: [multiply.0, multiply.1, multiply.2],
+        screen: [screen.0, screen.1, screen.2],
+    }
+}
+
+fn appearance_tuple(value: Appearance) -> AppearanceTuple {
+    (
+        value.opacity,
+        (value.multiply[0], value.multiply[1], value.multiply[2]),
+        (value.screen[0], value.screen[1], value.screen[2]),
+    )
+}
+
+pub(crate) fn scene_form_from_tuple(kind: &str, value: SceneFormTuple) -> PyResult<SceneKeyform> {
+    let (keys, positions, pose, draw_order, appearance) = value;
+    match kind {
+        "warp" if pose.is_none() && draw_order.is_none() && appearance.is_some() => {
+            Ok(SceneKeyform::Warp(WarpKeyform {
+                keys,
+                positions: positions
+                    .into_iter()
+                    .map(|(x, y)| Vec2::new(x, y))
+                    .collect(),
+                appearance: appearance_from_tuple(appearance.expect("checked")),
+            }))
+        }
+        "rotation"
+            if positions.is_empty()
+                && draw_order.is_none()
+                && pose.is_some()
+                && appearance.is_some() =>
+        {
+            Ok(SceneKeyform::Rotation(RotationKeyform {
+                keys,
+                rotation: pose_from_tuple(pose.expect("checked")),
+                appearance: appearance_from_tuple(appearance.expect("checked")),
+            }))
+        }
+        "part"
+            if positions.is_empty()
+                && pose.is_none()
+                && appearance.is_none()
+                && draw_order.is_some() =>
+        {
+            Ok(SceneKeyform::Part(PartKeyform {
+                keys,
+                draw_order: draw_order.expect("checked"),
+            }))
+        }
+        _ => Err(PyValueError::new_err(
+            "Scene keyform does not match its track kind",
+        )),
+    }
+}
+
+pub(crate) fn scene_binding_from_tuples(
+    id: String,
+    kind: &str,
+    target_id: String,
+    axes: Vec<(String, Vec<f32>)>,
+    forms: Vec<SceneFormTuple>,
+) -> PyResult<SceneBinding> {
+    let forms: Vec<_> = forms
+        .into_iter()
+        .map(|form| scene_form_from_tuple(kind, form))
+        .collect::<PyResult<_>>()?;
+    let track = match kind {
+        "warp" => SceneTrack::Warp {
+            target_id: target_id.into(),
+            keyforms: forms
+                .into_iter()
+                .map(|form| match form {
+                    SceneKeyform::Warp(form) => form,
+                    _ => unreachable!(),
+                })
+                .collect(),
+        },
+        "rotation" => SceneTrack::Rotation {
+            target_id: target_id.into(),
+            keyforms: forms
+                .into_iter()
+                .map(|form| match form {
+                    SceneKeyform::Rotation(form) => form,
+                    _ => unreachable!(),
+                })
+                .collect(),
+        },
+        "part" => SceneTrack::Part {
+            target_id: target_id.into(),
+            keyforms: forms
+                .into_iter()
+                .map(|form| match form {
+                    SceneKeyform::Part(form) => form,
+                    _ => unreachable!(),
+                })
+                .collect(),
+        },
+        _ => return Err(PyValueError::new_err("Unknown scene track kind")),
+    };
+    Ok(SceneBinding {
+        id,
+        axes: axes
+            .into_iter()
+            .map(|(parameter_id, keys)| BindingAxis { parameter_id, keys })
+            .collect(),
+        track,
+    })
+}
+
+pub(crate) fn scene_binding_tuple(binding: SceneBinding, version: Version) -> SceneBindingTuple {
+    let (kind, target_id, forms): (&str, String, Vec<SceneFormTuple>) = match binding.track {
+        SceneTrack::Warp {
+            target_id,
+            keyforms,
+        } => (
+            "warp",
+            target_id.as_str().into(),
+            keyforms
+                .into_iter()
+                .map(|form| {
+                    (
+                        form.keys,
+                        form.positions.into_iter().map(|p| (p.x, p.y)).collect(),
+                        None,
+                        None,
+                        Some(appearance_tuple(form.appearance)),
+                    )
+                })
+                .collect(),
+        ),
+        SceneTrack::Rotation {
+            target_id,
+            keyforms,
+        } => (
+            "rotation",
+            target_id.as_str().into(),
+            keyforms
+                .into_iter()
+                .map(|form| {
+                    (
+                        form.keys,
+                        Vec::new(),
+                        Some(pose_tuple(form.rotation)),
+                        None,
+                        Some(appearance_tuple(form.appearance)),
+                    )
+                })
+                .collect(),
+        ),
+        SceneTrack::Part {
+            target_id,
+            keyforms,
+        } => (
+            "part",
+            target_id.as_str().into(),
+            keyforms
+                .into_iter()
+                .map(|form| (form.keys, Vec::new(), None, Some(form.draw_order), None))
+                .collect(),
+        ),
+    };
+    (
+        binding.id,
+        binding
+            .axes
+            .into_iter()
+            .map(|axis| (axis.parameter_id, axis.keys))
+            .collect(),
+        kind.into(),
+        target_id,
+        forms,
+        version_tuple(version),
+    )
+}
 
 pub(crate) fn version_tuple(version: Version) -> (u64, u64, u64) {
     (version.session_id, version.generation, version.revision)

@@ -43,3 +43,5 @@ Transform 续测：同批次创建旋转/warp、设置 Transform 父节点和 Pa
 PNG 资源续测：显式基目录导入，拒绝尺寸不符搬迁，相同内容搬迁，替换新图片后 undo。仓库外 wheel 的 `test_cpu.py` 16 项通过，Clippy 无警告；覆盖清单为 87/115，余 28 项。
 
 几何提示续测：面积及画布范围提示不修改版本，非法阈值返回业务错误。仓库外 wheel 的 `test_cpu.py` 17 项通过；修正后的覆盖检查为 116 项，其中 88 项 Python 绑定、1 项 Rust 专用、27 项待绑定。
+
+SceneBinding 续测：Part、Rotation、Warp 轨道的完整表、外观字段、单 keyform 更新、替换、快照隔离和保存重开。仓库外 wheel 的 `test_cpu.py` 18 项通过，Clippy 无警告；覆盖清单为 93/116 项 Python 绑定、1 项 Rust 专用、22 项待绑定。

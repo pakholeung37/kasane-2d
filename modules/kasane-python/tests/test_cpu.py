@@ -22,6 +22,9 @@ PART = "00000000-0000-4000-8000-000000000006"
 CHILD_PART = "00000000-0000-4000-8000-000000000007"
 ROTATION = "00000000-0000-4000-8000-000000000008"
 WARP = "00000000-0000-4000-8000-000000000009"
+SCENE_PART = "00000000-0000-4000-8000-000000000010"
+SCENE_ROTATION = "00000000-0000-4000-8000-000000000011"
+SCENE_WARP = "00000000-0000-4000-8000-000000000012"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -440,6 +443,75 @@ class CpuWheelTests(unittest.TestCase):
             model.diagnose_geometry(-1)
         self.assertEqual(invalid.exception.code, "INVALID_DIAGNOSTIC_OPTIONS")
         self.assertEqual(model.version, version)
+
+    def test_scene_bindings_cover_all_tracks_and_keyform_updates(self):
+        model = session()
+        points = [(0, 0), (1, 0), (0, 1), (1, 1)]
+        axis = kasane.Axis(PARAMETER, [0, 1])
+        with model.edit("scene") as edit:
+            edit.create_parameter(PARAMETER, "pose", 0, 1, 0)
+            edit.create_part(PART, "part")
+            edit.create_rotation_transform(
+                ROTATION, "rotation", kasane.RotationData(0, kasane.RotationPose((0, 0)))
+            )
+            edit.create_warp_transform(
+                WARP, "warp", kasane.WarpData(1, 1, True, points)
+            )
+            edit.create_scene_binding(
+                SCENE_PART, "part", PART, [axis], [
+                    kasane.ScenePartKeyform([0], 0),
+                    kasane.ScenePartKeyform([1], 10),
+                ]
+            )
+            edit.create_scene_binding(
+                SCENE_ROTATION, "rotation", ROTATION, [axis], [
+                    kasane.SceneRotationKeyform([0], kasane.RotationPose((0, 0))),
+                    kasane.SceneRotationKeyform(
+                        [1], kasane.RotationPose((0, 0), angle=30),
+                        kasane.Appearance(opacity=0.75),
+                    ),
+                ]
+            )
+            edit.create_scene_binding(
+                SCENE_WARP, "warp", WARP, [axis], [
+                    kasane.SceneWarpKeyform([0], points),
+                    kasane.SceneWarpKeyform([1], [(x + 1, y) for x, y in points]),
+                ]
+            )
+        self.assertEqual(model.scene_binding_ids(), [SCENE_PART, SCENE_ROTATION, SCENE_WARP])
+        self.assertEqual(model.scene_binding(SCENE_PART).keyforms[1].draw_order, 10)
+        rotation = model.scene_binding(SCENE_ROTATION)
+        self.assertEqual(rotation.keyforms[1].rotation.angle, 30)
+        self.assertEqual(rotation.keyforms[1].appearance.opacity, 0.75)
+        self.assertEqual(model.binding_for_scene(ROTATION), rotation)
+        warp = model.scene_binding(SCENE_WARP)
+        self.assertEqual(warp.keyforms[1].positions[0], (1, 0))
+        warp.keyforms[1].positions[0] = (999, 999)
+        self.assertEqual(model.scene_binding(SCENE_WARP).keyforms[1].positions[0], (1, 0))
+        before = model.version
+        with model.edit("update scene form") as edit:
+            edit.set_scene_keyform(SCENE_PART, kasane.ScenePartKeyform([1], 20))
+        self.assertEqual(model.version[2], before[2] + 1)
+        self.assertEqual(model.scene_binding(SCENE_PART).keyforms[1].draw_order, 20)
+        with model.edit("replace scene") as edit:
+            edit.replace_scene_binding(
+                SCENE_ROTATION, "rotation", ROTATION, [axis], [
+                    kasane.SceneRotationKeyform([0], kasane.RotationPose((0, 0))),
+                    kasane.SceneRotationKeyform([1], kasane.RotationPose((0, 0), angle=45)),
+                ]
+            )
+        self.assertEqual(model.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 45)
+        before = model.version
+        with self.assertRaises(TypeError):
+            with model.edit("wrong scene form") as edit:
+                edit.set_scene_keyform(SCENE_PART, object())
+        self.assertEqual(model.version, before)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 45)
+            self.assertEqual(reopened.scene_binding(SCENE_WARP).keyforms[1].positions[0], (1, 0))
 
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:

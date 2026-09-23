@@ -45,7 +45,9 @@
     "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.create_scene_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_scene_binding",
+    "test": "test_scene_bindings_cover_all_tracks_and_keyform_updates"
   },
   "Edit.create_transform": {
     "status": "bound",
@@ -112,7 +114,9 @@
     "status": "pending"
   },
   "Edit.replace_scene_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_scene_binding",
+    "test": "test_scene_bindings_cover_all_tracks_and_keyform_updates"
   },
   "Edit.replace_topology": {
     "status": "pending"
@@ -139,7 +143,9 @@
     "test": "test_parts_and_organization_parent_publish"
   },
   "Edit.set_scene_keyform": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_scene_keyform",
+    "test": "test_scene_bindings_cover_all_tracks_and_keyform_updates"
   },
   "Edit.set_transform_parent": {
     "status": "bound",
@@ -205,7 +211,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.binding_for_scene": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.binding_for_scene",
+    "test": "test_scene_bindings_cover_all_tracks_and_keyform_updates"
   },
   "Session.binding_ids": {
     "status": "bound",
@@ -453,7 +461,9 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Session.scene_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.scene_binding",
+    "test": "test_scene_bindings_cover_all_tracks_and_keyform_updates"
   },
   "Session.scene_binding_ids": {
     "status": "bound",

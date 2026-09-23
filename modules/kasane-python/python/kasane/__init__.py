@@ -107,6 +107,12 @@ class MeshBindingSnapshot(NamedTuple):
     version: Version
 
 
+class Appearance(NamedTuple):
+    opacity: float = 1
+    multiply: tuple[float, float, float] = (1, 1, 1)
+    screen: tuple[float, float, float] = (0, 0, 0)
+
+
 class PartSnapshot(NamedTuple):
     id: str
     runtime_id: str
@@ -123,6 +129,35 @@ class RotationPose(NamedTuple):
     scale: float = 1
     reflect_x: bool = False
     reflect_y: bool = False
+
+
+class SceneWarpKeyform(NamedTuple):
+    keys: list[float]
+    positions: list[Point]
+    appearance: Appearance = Appearance()
+
+
+class SceneRotationKeyform(NamedTuple):
+    keys: list[float]
+    rotation: RotationPose
+    appearance: Appearance = Appearance()
+
+
+class ScenePartKeyform(NamedTuple):
+    keys: list[float]
+    draw_order: float
+
+
+SceneKeyform = SceneWarpKeyform | SceneRotationKeyform | ScenePartKeyform
+
+
+class SceneBindingSnapshot(NamedTuple):
+    id: str
+    axes: list[Axis]
+    kind: str
+    target_id: str
+    keyforms: list[SceneKeyform]
+    version: Version
 
 
 class RotationData(NamedTuple):
@@ -387,6 +422,31 @@ class Edit:
             )
         )
 
+    def create_scene_binding(
+        self, binding_id: str, kind: str, target_id: str,
+        axes: Sequence[Axis], forms: Sequence[SceneKeyform],
+    ) -> None:
+        self._call(lambda: self._native.create_scene_binding(
+            binding_id, kind, target_id,
+            [(axis.parameter_id, list(axis.keys)) for axis in axes],
+            [_scene_form_tuple(kind, form) for form in forms],
+        ))
+
+    def replace_scene_binding(
+        self, binding_id: str, kind: str, target_id: str,
+        axes: Sequence[Axis], forms: Sequence[SceneKeyform],
+    ) -> None:
+        self._call(lambda: self._native.replace_scene_binding(
+            binding_id, kind, target_id,
+            [(axis.parameter_id, list(axis.keys)) for axis in axes],
+            [_scene_form_tuple(kind, form) for form in forms],
+        ))
+
+    def set_scene_keyform(self, binding_id: str, form: SceneKeyform) -> None:
+        self._call(lambda: self._native.set_scene_keyform(
+            binding_id, _scene_kind(form), _scene_form_tuple(_scene_kind(form), form)
+        ))
+
     def commit(self) -> Version:
         try:
             return self._native.commit()
@@ -568,6 +628,12 @@ class Session:
     def binding_for_mesh(self, mesh_id: str) -> MeshBindingSnapshot | None:
         return _binding_snapshot(self._native.binding_for_mesh(mesh_id))
 
+    def scene_binding(self, binding_id: str) -> SceneBindingSnapshot | None:
+        return _scene_binding_snapshot(self._native.scene_binding(binding_id))
+
+    def binding_for_scene(self, target_id: str) -> SceneBindingSnapshot | None:
+        return _scene_binding_snapshot(self._native.binding_for_scene(target_id))
+
     def part(self, part_id: str) -> PartSnapshot | None:
         raw = self._native.part(part_id)
         return PartSnapshot(*raw) if raw is not None else None
@@ -720,8 +786,56 @@ def _rotation_tuple(rotation: RotationData):
     ))
 
 
+def _scene_kind(form: SceneKeyform) -> str:
+    if isinstance(form, SceneWarpKeyform):
+        return "warp"
+    if isinstance(form, SceneRotationKeyform):
+        return "rotation"
+    if isinstance(form, ScenePartKeyform):
+        return "part"
+    raise TypeError("Unsupported scene keyform type")
+
+
+def _scene_form_tuple(kind: str, form: SceneKeyform):
+    if _scene_kind(form) != kind:
+        raise TypeError("Scene keyform does not match track kind")
+    if isinstance(form, SceneWarpKeyform):
+        return (list(form.keys), list(form.positions), None, None, tuple(form.appearance))
+    if isinstance(form, SceneRotationKeyform):
+        pose = form.rotation
+        return (list(form.keys), [], (
+            pose.origin[0], pose.origin[1], pose.angle, pose.scale,
+            pose.reflect_x, pose.reflect_y,
+        ), None, tuple(form.appearance))
+    return (list(form.keys), [], None, form.draw_order, None)
+
+
+def _scene_binding_snapshot(raw) -> SceneBindingSnapshot | None:
+    if raw is None:
+        return None
+    binding_id, axes, kind, target_id, forms, version = raw
+    keyforms: list[SceneKeyform] = []
+    for keys, positions, pose, draw_order, appearance in forms:
+        if kind == "warp":
+            keyforms.append(SceneWarpKeyform(keys, positions, Appearance(*appearance)))
+        elif kind == "rotation":
+            rotation = RotationPose((pose[0], pose[1]), *pose[2:])
+            keyforms.append(SceneRotationKeyform(keys, rotation, Appearance(*appearance)))
+        else:
+            keyforms.append(ScenePartKeyform(keys, draw_order))
+    return SceneBindingSnapshot(
+        binding_id,
+        [Axis(parameter_id, keys) for parameter_id, keys in axes],
+        kind,
+        target_id,
+        keyforms,
+        version,
+    )
+
+
 __all__ = [
     "Axis",
+    "Appearance",
     "AssetSnapshot",
     "CanvasSnapshot",
     "DrawableSample",
@@ -742,6 +856,10 @@ __all__ = [
     "ParameterSnapshot",
     "PartSnapshot",
     "ResourceIssue",
+    "SceneBindingSnapshot",
+    "ScenePartKeyform",
+    "SceneRotationKeyform",
+    "SceneWarpKeyform",
     "RotationData",
     "RotationPose",
     "SaveResult",

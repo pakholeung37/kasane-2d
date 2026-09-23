@@ -6,7 +6,8 @@ use crate::conversion::*;
 use crate::error::{edit_failure, poisoned, sdk_failure};
 use kasane_core::{
     draw_order::DrawOrderGroup, Appearance, BindingAxis, Canvas, MeshBinding, MeshKeyform,
-    Parameter, Part, RotationTransform, Transform, TransformData, Vec2, WarpTransform,
+    Parameter, Part, RotationTransform, SceneBinding, SceneKeyform, Transform, TransformData, Vec2,
+    WarpTransform,
 };
 use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
@@ -36,6 +37,9 @@ enum Command {
     UpdateRotation(String, RotationTransform),
     UpdateWarpPoints(String, Vec<Vec2>),
     ReplaceAsset(kasane_core::ImageAsset),
+    CreateSceneBinding(SceneBinding),
+    ReplaceSceneBinding(SceneBinding),
+    SetSceneKeyform(String, SceneKeyform),
 }
 
 #[pyclass]
@@ -540,6 +544,55 @@ impl NativeEdit {
         Ok(())
     }
 
+    fn create_scene_binding(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        kind: &str,
+        target_id: String,
+        axes: Vec<(String, Vec<f32>)>,
+        forms: Vec<SceneFormTuple>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_scene_binding")?;
+        self.commands
+            .push(Command::CreateSceneBinding(scene_binding_from_tuples(
+                id, kind, target_id, axes, forms,
+            )?));
+        Ok(())
+    }
+
+    fn replace_scene_binding(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        kind: &str,
+        target_id: String,
+        axes: Vec<(String, Vec<f32>)>,
+        forms: Vec<SceneFormTuple>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_scene_binding")?;
+        self.commands
+            .push(Command::ReplaceSceneBinding(scene_binding_from_tuples(
+                id, kind, target_id, axes, forms,
+            )?));
+        Ok(())
+    }
+
+    fn set_scene_keyform(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        kind: &str,
+        form: SceneFormTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "set_scene_keyform")?;
+        self.commands.push(Command::SetSceneKeyform(
+            id,
+            scene_form_from_tuple(kind, form)?,
+        ));
+        Ok(())
+    }
+
     fn commit(&mut self, py: Python<'_>) -> PyResult<(u64, u64, u64)> {
         self.ensure_open(py, "commit")?;
         self.closed = true;
@@ -591,6 +644,13 @@ impl NativeEdit {
                             edit.update_warp_points(&id, points)?
                         }
                         Command::ReplaceAsset(asset) => edit.replace_asset(asset)?,
+                        Command::CreateSceneBinding(binding) => {
+                            edit.create_scene_binding(binding)?
+                        }
+                        Command::ReplaceSceneBinding(binding) => {
+                            edit.replace_scene_binding(binding)?
+                        }
+                        Command::SetSceneKeyform(id, form) => edit.set_scene_keyform(&id, form)?,
                     }
                 }
                 Ok(())

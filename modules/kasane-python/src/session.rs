@@ -373,6 +373,20 @@ impl NativeSession {
             .map(|transform| transform_tuple(transform, session.version())))
     }
 
+    fn scene_binding(&self, id: &str) -> PyResult<Option<SceneBindingTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .scene_binding(id)
+            .map(|binding| scene_binding_tuple(binding, session.version())))
+    }
+
+    fn binding_for_scene(&self, target_id: &str) -> PyResult<Option<SceneBindingTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .binding_for_scene(target_id)
+            .map(|binding| scene_binding_tuple(binding, session.version())))
+    }
+
     fn handle(&self, py: Python<'_>, kind: &str, id: &str) -> PyResult<NativeHandle> {
         let kind = object_kind(kind)?;
         self.inner
