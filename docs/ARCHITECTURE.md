@@ -23,3 +23,5 @@ Document (kasane-core) ──> DrawableFrame ──> ScenePlan (kasane-render)
 历史 C++ 边界与迁移记录见 [`archive/`](archive/)；不能将其描述为当前 Rust 实现的接口。
 
 第一阶段的实现范围、失效约束与后续事项见 [渲染边界方案](RENDER-BOUNDARY-PROPOSAL.md)。
+
+WGPU 后端的迁移设计、首轮实现与验收定义见 [WGPU 迁移架构](RENDER-WGPU-DESIGN.md)；尚未完成应用迁移。
