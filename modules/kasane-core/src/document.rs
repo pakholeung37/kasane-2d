@@ -2,6 +2,7 @@ mod assets;
 mod bindings;
 mod blendshapes;
 mod canvas;
+mod checkpoint;
 mod glue;
 mod meshes;
 mod offscreen;
@@ -13,6 +14,7 @@ mod transforms;
 mod validation;
 mod vertices;
 
+pub use checkpoint::DocumentCheckpoint;
 pub use validation::*;
 
 use crate::draw_order::DrawOrderGroup;
@@ -95,7 +97,7 @@ pub(super) struct DocumentLookup {
     pub(super) blend_bindings: HashMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 struct DocumentContent {
     id: String,
     canvas: Canvas,

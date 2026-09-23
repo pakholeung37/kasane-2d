@@ -1,8 +1,8 @@
 # Kasane 创作 SDK：调研结论与实施计划
 
-状态：实施提案，尚未实现。调研日期：2026-09-23。代码基线：`8b283f8eeca785b506e6dbae0552cc2358f49053`。
+状态：实施中；第 13 节的 Rust 最小纵切已实现，其余阶段待交付。调研日期：2026-09-23。代码基线：`8b283f8eeca785b506e6dbae0552cc2358f49053`。
 
-本文把已验证的仓库事实、建议采用的设计和未来验收分开记录。文中的新 crate、API、目录和 SDK 验收命令均为待交付内容，不代表当前可运行。用户已明确的约束是：不复用或修改 `apps/editor`；新建 crate；暂不选择或实现交互层；先提供覆盖原 Document Bridge 能力的 SDK，使 agent 能完成建模、编排和测试。
+本文把已验证的仓库事实、建议采用的设计和未来验收分开记录。当前实际 API 与未完成项见 [SDK-API.md](SDK-API.md) 和 [SDK-COVERAGE.md](SDK-COVERAGE.md)；本计划其余新 crate、目录和命令仍是待交付内容。用户已明确的约束是：不复用或修改 `apps/editor`；新建 crate；暂不选择或实现交互层；先提供覆盖原 Document Bridge 能力的 SDK，使 agent 能完成建模、编排和测试。
 
 ## 1. 交付目标与范围
 
@@ -431,9 +431,9 @@ artifacts/<run-id>/
 
 仅第 2.1 节两条命令在本次实际运行。已有 renderer 回归入口可在实施触及观察边界时按 [RENDER-WGPU-DESIGN](RENDER-WGPU-DESIGN.md) 运行，不需要为纯文档提交重复验收所有后端。
 
-### 11.3 待实现后提供的统一入口
+### 11.3 SDK 验收入口
 
-下列命令是交付要求，当前尚不存在：
+第一条 Rust 测试命令现已可运行；其余命令仍是交付要求，尚不存在：
 
 ```sh
 cargo test -p kasane-sdk --locked
@@ -468,5 +468,15 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 ## 13. 首个实施任务的明确边界
 
 从 S0 和 S1 的最小纵切开始：新增 crate；新建文档；导入一张 PNG 的描述；创建一个矩形 mesh；查询与批量位置更新；候选提交/回滚；结构编辑 undo/redo；CPU 求值。这个纵切只证明会话和编辑内核成立，不作为全部 bridge 能力完成。
+
+2026-09-23 首轮实施记录：新增 `kasane-sdk`、core 内容 checkpoint、project 受限发布入口、非对称 PNG fixture 与三项公开 API 契约测试。首轮 `cargo test -p kasane-sdk --locked` 三项通过；core/project 原 50 项指定基线通过；`cargo clippy -p kasane-sdk --locked --all-targets -- -D warnings` 通过。当时 S1 的句柄和字节预算尚未完成。
+
+2026-09-23 续实施记录：已增加 capacity 感知的全内容 checkpoint 估算、可配置历史预算、提交前超限拒绝、mesh/asset 显式替换、拓扑映射、参数与完整 mesh binding、稳定对象句柄，以及纯 mesh 名称编辑保留求值 revision。SDK 15 项契约测试、core 容量测试及原 50 项基线通过；Clippy 无警告。尚待 S1c 其它变形/Part/SceneBinding、S1d/S1e、S0 性能和 Python 兼容性验收。
+
+2026-09-23 再续实施记录：已接入 Part、Rotation/Warp Transform、三种 SceneBinding track 的完整读写与 keyform 更新、rotation/warp 字段更新、组织/变形父节点设置，以及会话 `PreviewState` 的帧缓存和原子预览值更新。新增 SDK 场景契约测试覆盖层级环拒绝、完整形态表、失败批次回滚、预览缓存与独立求值；S1d/S1e、S0 性能和 Python 兼容性验收仍待实施。
+
+2026-09-23 同轮补充：canvas 和显式 draw-order groups 已接入受控读写，`references_to` 和 `erase_object` 已接入。契约测试覆盖组合提交、无效组回滚、引用拒绝、跨批次删除及同 ID 重建后的句柄过期。SDK 当前 21 项测试通过；S1d 其余 BlendShape/Glue/Offscreen 对象族与 S1e 的完整诊断仍待实施。
+
+2026-09-23 同轮再补充：BlendShape key table/constraint/binding、Glue 和 Offscreen 已接入同一候选提交路径，提供读写和句柄；Part binding 与 Offscreen 映射的联合替换入口也已接入。新增效果对象契约测试覆盖完整组合、无效约束回滚、联合扩容与 undo/redo。SDK 当前 23 项测试通过；S1e 全量诊断、S0 性能与 Python 兼容性、后续 S2–S5 仍待实施。
 
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

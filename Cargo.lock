@@ -961,6 +961,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kasane-sdk"
+version = "0.1.0"
+dependencies = [
+ "kasane-core",
+ "kasane-project",
+]
+
+[[package]]
 name = "kasane-wgpu-validate"
 version = "0.1.0"
 dependencies = [

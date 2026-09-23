@@ -404,6 +404,45 @@ impl DocumentSession {
         Self::with_filesystem(Arc::new(NativeFileSystem))
     }
 
+    /// Start an in-memory authoring session. SDK edits use a separate, complete
+    /// checkpoint history; legacy delta history remains empty on this path.
+    pub fn from_authoring_document(document: Document) -> Self {
+        let mut session = Self::new();
+        session.document = document;
+        session
+    }
+
+    /// The sole SDK publication boundary. It never records a legacy delta.
+    pub fn publish_authoring_candidate(
+        &mut self,
+        candidate: Document,
+        kind: kasane_core::ChangeKind,
+    ) -> Result<bool, Status> {
+        if self.history.active() {
+            return Err(Status::error(
+                "ACTION_ACTIVE",
+                "Finish the legacy action first",
+            ));
+        }
+        let changed = self.document.publish_candidate(candidate, kind)?;
+        if changed {
+            self.history
+                .clear(self.document.revision(), Some("HISTORY_EXTERNAL_EDIT"));
+        }
+        Ok(changed)
+    }
+
+    /// Restore a complete SDK checkpoint, retaining manifest and saved baseline.
+    pub fn swap_authoring_checkpoint(
+        &mut self,
+        checkpoint: &mut kasane_core::document::DocumentCheckpoint,
+    ) -> Result<(), Status> {
+        self.document.exchange_checkpoint(checkpoint)?;
+        self.history
+            .clear(self.document.revision(), Some("HISTORY_EXTERNAL_EDIT"));
+        Ok(())
+    }
+
     pub fn with_filesystem(filesystem: Arc<dyn FileSystem>) -> Self {
         Self {
             history: kasane_core::history::History::default(),

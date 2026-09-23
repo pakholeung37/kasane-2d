@@ -665,6 +665,9 @@ macro_rules! scene_id {
             pub fn as_str(&self) -> &str {
                 &self.0
             }
+            pub(crate) fn capacity(&self) -> usize {
+                self.0.capacity()
+            }
             pub fn optional(id: impl Into<String>) -> Option<Self> {
                 let id = id.into();
                 if id.is_empty() {
