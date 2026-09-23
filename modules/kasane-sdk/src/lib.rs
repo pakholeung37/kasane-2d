@@ -2,6 +2,9 @@
 mod diagnostics;
 
 pub use diagnostics::{GeometryBounds, GeometryChecks, GeometryDiagnostic, GeometryDiagnosticKind};
+pub use kasane_project::{
+    FileSystem, ImportReport, NativeFileSystem, ProjectResult, ResourceDiagnostic,
+};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,9 +21,7 @@ use kasane_core::{
     RotationTransform, SceneBinding, SceneKeyform, Status, Transform, TransformData, TransformId,
     Vec2, VertexId,
 };
-use kasane_project::{
-    decode_png, is_valid_asset_path, DocumentSession, ProjectResult, ResourceDiagnostic,
-};
+use kasane_project::{decode_png, is_valid_asset_path, DocumentSession};
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -93,7 +94,16 @@ pub struct SaveReceipt {
     pub after: Version,
     pub manifest: PathBuf,
     pub warnings: Vec<String>,
+    pub history_warnings: Vec<String>,
     pub durable: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImportReceipt {
+    pub before: Version,
+    pub after: Version,
+    pub project: ProjectResult,
+    pub report: ImportReport,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -263,6 +273,29 @@ impl AuthoringSession {
         canvas: Canvas,
         history_limits: HistoryLimits,
     ) -> Result<Self, SdkError> {
+        Self::with_options(
+            document_id,
+            canvas,
+            history_limits,
+            Arc::new(NativeFileSystem),
+        )
+    }
+
+    /// Use a custom publication backend, primarily for deterministic IO tests.
+    pub fn with_filesystem(
+        document_id: &str,
+        canvas: Canvas,
+        filesystem: Arc<dyn FileSystem>,
+    ) -> Result<Self, SdkError> {
+        Self::with_options(document_id, canvas, HistoryLimits::default(), filesystem)
+    }
+
+    fn with_options(
+        document_id: &str,
+        canvas: Canvas,
+        history_limits: HistoryLimits,
+        filesystem: Arc<dyn FileSystem>,
+    ) -> Result<Self, SdkError> {
         let mut document = Document::new();
         let status = document.initialize(document_id, canvas);
         if !status.is_ok() {
@@ -273,7 +306,7 @@ impl AuthoringSession {
             ));
         }
         Ok(Self {
-            project: DocumentSession::from_authoring_document(document),
+            project: DocumentSession::from_authoring_document_with_filesystem(document, filesystem),
             preview: PreviewState::default(),
             session_id: NEXT_SESSION_ID.fetch_add(1, Ordering::Relaxed),
             generation: 1,
@@ -318,7 +351,7 @@ impl AuthoringSession {
                 "new_project",
             )
         })?;
-        self.project = DocumentSession::from_authoring_document(document);
+        self.project.reset_authoring_document(document);
         self.generation = generation;
         self.done.clear();
         self.redo.clear();
@@ -365,13 +398,7 @@ impl AuthoringSession {
                 vec![path.display().to_string()],
             ));
         }
-        self.generation = generation;
-        self.done.clear();
-        self.redo.clear();
-        self.preview.reset();
-        self.incarnations.clear();
-        self.events.clear();
-        self.refresh_incarnations(&HashSet::new(), &HashSet::new());
+        self.reset_after_open(generation);
         Ok(result)
     }
 
@@ -415,11 +442,15 @@ impl AuthoringSession {
             .filter_map(|id| self.asset(id).map(|asset| (id.clone(), asset)))
             .collect();
         for asset in old_assets.values() {
-            validate_asset_root(&old_root, asset)?;
+            validate_asset_root(&old_root, asset, "save_project")?;
         }
+        let mut unverified_history_ids = HashSet::new();
         for entry in self.done.iter().chain(&self.redo) {
             for asset in entry.checkpoint.assets() {
-                validate_asset_root(&entry.root, &asset)?;
+                validate_asset_root(&entry.root, &asset, "save_project")?;
+                if asset.sha256.is_empty() {
+                    unverified_history_ids.insert(asset.id);
+                }
             }
         }
         let result = self.project.save(path);
@@ -439,13 +470,165 @@ impl AuthoringSession {
         for entry in self.done.iter_mut().chain(&mut self.redo) {
             relocate_history_assets(entry, &old_root, &old_assets, &new_root, &new_assets);
         }
+        let mut history_warnings: Vec<_> = unverified_history_ids
+            .into_iter()
+            .map(|id| format!("Historical resource {id} has no prior SHA-256; its old bytes were not verified"))
+            .collect();
+        history_warnings.sort();
         Ok(SaveReceipt {
             before,
             after: self.version(),
             manifest: self.project.manifest().to_path_buf(),
             warnings: result.warnings,
+            history_warnings,
             durable: result.durable,
         })
+    }
+
+    /// Import a model3 file as a new editable document. Texture diagnostics
+    /// are returned with the report, while malformed structure is rejected.
+    pub fn import_model3(
+        &mut self,
+        path: &Path,
+        expected: Option<Version>,
+    ) -> Result<ImportReceipt, SdkError> {
+        if !path.is_absolute() {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "Model3 path must be absolute",
+                "import_model3",
+            ));
+        }
+        let before = self.version();
+        if let Some(value) = expected.filter(|value| *value != before) {
+            let mut error =
+                SdkError::new("STALE_VERSION", "Document version changed", "import_model3");
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(before));
+            return Err(error);
+        }
+        let generation = self.generation.checked_add(1).ok_or_else(|| {
+            SdkError::new(
+                "GENERATION_EXHAUSTED",
+                "Document generation exhausted",
+                "import_model3",
+            )
+        })?;
+        let (project, report) = self.project.import_model3_authoring(path);
+        if !project.status.is_ok() {
+            return Err(SdkError::from_status(
+                project.status,
+                "import_model3",
+                vec![path.display().to_string()],
+            ));
+        }
+        self.reset_after_open(generation);
+        Ok(ImportReceipt {
+            before,
+            after: self.version(),
+            project,
+            report: report.expect("successful import has a report"),
+        })
+    }
+
+    /// Import bare MOC3 using an explicit texture slot to absolute path map.
+    pub fn import_bare_moc3(
+        &mut self,
+        path: &Path,
+        texture_map: &HashMap<usize, PathBuf>,
+        expected: Option<Version>,
+    ) -> Result<ImportReceipt, SdkError> {
+        if !path.is_absolute() || texture_map.values().any(|path| !path.is_absolute()) {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "MOC3 and texture paths must be absolute",
+                "import_bare_moc3",
+            ));
+        }
+        let before = self.version();
+        if let Some(value) = expected.filter(|value| *value != before) {
+            let mut error = SdkError::new(
+                "STALE_VERSION",
+                "Document version changed",
+                "import_bare_moc3",
+            );
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(before));
+            return Err(error);
+        }
+        let generation = self.generation.checked_add(1).ok_or_else(|| {
+            SdkError::new(
+                "GENERATION_EXHAUSTED",
+                "Document generation exhausted",
+                "import_bare_moc3",
+            )
+        })?;
+        let (project, report) = self.project.import_bare_moc3_authoring(path, texture_map);
+        if !project.status.is_ok() {
+            return Err(SdkError::from_status(
+                project.status,
+                "import_bare_moc3",
+                vec![path.display().to_string()],
+            ));
+        }
+        self.reset_after_open(generation);
+        Ok(ImportReceipt {
+            before,
+            after: self.version(),
+            project,
+            report: report.expect("successful import has a report"),
+        })
+    }
+
+    /// Publish an export package without changing document content or history.
+    pub fn export_package(
+        &self,
+        destination: &Path,
+        expected: Option<Version>,
+    ) -> Result<ProjectResult, SdkError> {
+        if !destination.is_absolute() {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "Export destination must be absolute",
+                "export_package",
+            ));
+        }
+        let current = self.version();
+        if let Some(value) = expected.filter(|value| *value != current) {
+            let mut error = SdkError::new(
+                "STALE_VERSION",
+                "Document version changed",
+                "export_package",
+            );
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(current));
+            return Err(error);
+        }
+        let root = self.project.root();
+        for id in self.asset_ids() {
+            if let Some(asset) = self.asset(id) {
+                validate_asset_root(&root, &asset, "export_package")?;
+            }
+        }
+        let result = self.project.export_package(destination);
+        if !result.status.is_ok() {
+            return Err(SdkError::from_status(
+                result.status,
+                "export_package",
+                vec![destination.display().to_string()],
+            ));
+        }
+        Ok(result)
+    }
+
+    fn reset_after_open(&mut self, generation: u64) {
+        self.generation = generation;
+        self.done.clear();
+        self.redo.clear();
+        self.preview.reset();
+        self.incarnations.clear();
+        self.events.clear();
+        self.refresh_incarnations(&HashSet::new(), &HashSet::new());
     }
     pub fn version(&self) -> Version {
         Version {
@@ -1463,7 +1646,11 @@ fn merge_kind(a: ChangeKind, b: ChangeKind) -> ChangeKind {
     }
 }
 
-fn validate_asset_root(root: &Path, asset: &ImageAsset) -> Result<(), SdkError> {
+fn validate_asset_root(
+    root: &Path,
+    asset: &ImageAsset,
+    operation: &'static str,
+) -> Result<(), SdkError> {
     if Path::new(&asset.source).is_absolute() {
         return Ok(());
     }
@@ -1475,7 +1662,7 @@ fn validate_asset_root(root: &Path, asset: &ImageAsset) -> Result<(), SdkError> 
         let mut error = SdkError::new(
             "INVALID_ASSET_BASE",
             "Relative asset source requires a valid absolute project root",
-            "save_project",
+            operation,
         );
         error.object_ids.push(asset.id.clone());
         return Err(error);
@@ -1533,6 +1720,13 @@ fn relocate_history_assets(
 /// Read a PNG once and return a validated, absolute-path resource description.
 /// File publication is a separate `AuthoringSession::save_project` operation.
 pub fn prepare_png_asset(id: &str, name: &str, path: &Path) -> Result<ImageAsset, SdkError> {
+    if !path.is_absolute() {
+        return Err(SdkError::new(
+            "INVALID_PATH",
+            "PNG path must be absolute",
+            "prepare_png_asset",
+        ));
+    }
     let path = fs::canonicalize(path)
         .map_err(|e| SdkError::new("RESOURCE_IO", &e.to_string(), "prepare_png_asset"))?;
     let bytes = fs::read(&path)
@@ -1554,6 +1748,54 @@ pub fn prepare_png_asset(id: &str, name: &str, path: &Path) -> Result<ImageAsset
         height: data.height,
         sha256: data.sha256,
     })
+}
+
+/// Resolve a user-supplied relative PNG path from an explicit absolute base.
+pub fn prepare_png_asset_from_base(
+    id: &str,
+    name: &str,
+    base: &Path,
+    relative: &Path,
+) -> Result<ImageAsset, SdkError> {
+    if !base.is_absolute() || relative.is_absolute() {
+        return Err(SdkError::new(
+            "INVALID_PATH",
+            "Base must be absolute and PNG path relative",
+            "prepare_png_asset_from_base",
+        ));
+    }
+    prepare_png_asset(id, name, &base.join(relative)).map_err(|mut error| {
+        error.operation = "prepare_png_asset_from_base";
+        error
+    })
+}
+
+/// Prepare a new source path for the same image bytes and dimensions. Submit
+/// the returned descriptor with `EditSession::replace_asset` inside an edit.
+pub fn prepare_relocated_asset(existing: &ImageAsset, path: &Path) -> Result<ImageAsset, SdkError> {
+    let prepared = prepare_png_asset(&existing.id, &existing.name, path).map_err(|mut error| {
+        error.operation = "prepare_relocated_asset";
+        error
+    })?;
+    if prepared.width != existing.width || prepared.height != existing.height {
+        let mut error = SdkError::new(
+            "RESOURCE_DIMENSIONS",
+            "Relocated PNG dimensions differ from the current asset",
+            "prepare_relocated_asset",
+        );
+        error.object_ids.push(existing.id.clone());
+        return Err(error);
+    }
+    if !existing.sha256.is_empty() && prepared.sha256 != existing.sha256 {
+        let mut error = SdkError::new(
+            "RESOURCE_HASH",
+            "Relocated PNG content differs from the current asset",
+            "prepare_relocated_asset",
+        );
+        error.object_ids.push(existing.id.clone());
+        return Err(error);
+    }
+    Ok(prepared)
 }
 
 /// Positions are source canvas pixels for a root mesh. UVs follow core source

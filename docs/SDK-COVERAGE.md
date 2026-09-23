@@ -72,12 +72,12 @@
 | `save_project` | `AuthoringSession::save_project`，含 save-as 和历史资源重定位 | 已实现 / `project_io` |
 | `open_project` | `AuthoringSession::open_project` | 已实现 / `project_io` |
 | `diagnose_resources` | `AuthoringSession::diagnose_resources` | 已实现 / `project_io` |
-| `relocate_asset` | `assets.relocate` | 待 S2 |
-| `replace_asset` | `assets.replace` | 待 S2 |
-| `export_package` | `session.export` | 待 S2 |
-| `import_model3` | `session.import_model3` | 待 S2 |
-| `import_moc3` | `session.import_moc3` | 待 S2 |
-| `inspect_model` | import inspection | 待 S2 |
+| `relocate_asset` | `prepare_relocated_asset` + `EditSession::replace_asset` | 已实现 / `project_io` |
+| `replace_asset` | `prepare_png_asset` + `EditSession::replace_asset` | 已实现 / `project_io` |
+| `export_package` | `AuthoringSession::export_package` | 已实现 / `project_io` |
+| `import_model3` | `AuthoringSession::import_model3` + 导入报告 | 已实现 / `project_io` |
+| `import_moc3` | `AuthoringSession::import_bare_moc3` + 显式纹理槽位映射 | 已实现 / `project_io` |
+| `inspect_model` | import inspection | 部分：导入报告，无独立预检查入口 |
 
 core 额外提供的 canvas 和 draw-order groups 读取/替换已由 `canvas`、`draw_order_groups`、`replace_canvas` 和 `replace_draw_order_groups` 接入，见 `document_operations`。观察入口在 S4 范围。
 

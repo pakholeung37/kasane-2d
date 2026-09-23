@@ -6,6 +6,7 @@ pub mod store;
 
 pub use codec::{decode_project, encode_project};
 pub use filesystem::{FileSystem, NativeFileSystem, Publication};
+pub use kasane_moc3::ImportReport;
 pub use package::{
     publish_package, ArtifactValidation, ArtifactValidator, PackageOptions, RuntimeValidation,
 };

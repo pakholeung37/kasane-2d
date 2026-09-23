@@ -408,8 +408,25 @@ impl DocumentSession {
     /// checkpoint history; legacy delta history remains empty on this path.
     pub fn from_authoring_document(document: Document) -> Self {
         let mut session = Self::new();
-        session.document = document;
+        session.reset_authoring_document(document);
         session
+    }
+
+    pub fn from_authoring_document_with_filesystem(
+        document: Document,
+        filesystem: Arc<dyn FileSystem>,
+    ) -> Self {
+        let mut session = Self::with_filesystem(filesystem);
+        session.reset_authoring_document(document);
+        session
+    }
+
+    /// Replace an SDK document while retaining the configured publication backend.
+    pub fn reset_authoring_document(&mut self, document: Document) {
+        self.history.clear(document.revision(), None);
+        self.document = document;
+        self.manifest = PathBuf::new();
+        self.manifest_sha256.clear();
     }
 
     /// The sole SDK publication boundary. It never records a legacy delta.
@@ -598,6 +615,33 @@ impl DocumentSession {
         (result, report)
     }
 
+    /// Import an external model for SDK editing, publishing only a structurally
+    /// valid decoded document. Resource diagnostics remain non-fatal.
+    pub fn import_model3_authoring(
+        &mut self,
+        path: &Path,
+    ) -> (ProjectResult, Option<ImportReport>) {
+        if self.history.active() || self.document.transaction_active() {
+            return (
+                ProjectResult::failed("EDIT_ACTIVE", "Finish the active edit first"),
+                None,
+            );
+        }
+        let (result, snapshot, report) = self.store.import_model3(path);
+        if !result.status.is_ok() {
+            return (result, None);
+        }
+        let snapshot = snapshot.expect("successful import has a snapshot");
+        if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
+            return (ProjectResult::from_status(issue.status), None);
+        }
+        self.document = snapshot.document;
+        self.history.clear(self.document.revision(), None);
+        self.manifest = snapshot.manifest;
+        self.manifest_sha256 = snapshot.manifest_sha256;
+        (result, report)
+    }
+
     pub fn import_bare_moc3(
         &mut self,
         moc3_path: &Path,
@@ -617,6 +661,33 @@ impl DocumentSession {
             self.manifest = s.manifest;
             self.manifest_sha256 = s.manifest_sha256;
         }
+        (result, report)
+    }
+
+    /// Import bare MOC3 for SDK editing with the same atomic validation gate.
+    pub fn import_bare_moc3_authoring(
+        &mut self,
+        moc3_path: &Path,
+        texture_map: &HashMap<usize, PathBuf>,
+    ) -> (ProjectResult, Option<ImportReport>) {
+        if self.history.active() || self.document.transaction_active() {
+            return (
+                ProjectResult::failed("EDIT_ACTIVE", "Finish the active edit first"),
+                None,
+            );
+        }
+        let (result, snapshot, report) = self.store.import_bare_moc3(moc3_path, texture_map);
+        if !result.status.is_ok() {
+            return (result, None);
+        }
+        let snapshot = snapshot.expect("successful import has a snapshot");
+        if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
+            return (ProjectResult::from_status(issue.status), None);
+        }
+        self.document = snapshot.document;
+        self.history.clear(self.document.revision(), None);
+        self.manifest = snapshot.manifest;
+        self.manifest_sha256 = snapshot.manifest_sha256;
         (result, report)
     }
 

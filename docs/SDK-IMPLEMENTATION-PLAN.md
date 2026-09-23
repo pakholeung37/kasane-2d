@@ -485,4 +485,10 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 续实施记录：S2 已接入 `open_project`、`save_project`（同路径保存与另存为）、`project_path` 和 `diagnose_resources`。打开时先校验完整结构，失败保持旧会话；成功推进 generation。保存沿用 project 的发布和冲突检测，成功后按资源 ID、解析后的旧路径、尺寸及 hash 重定位 done/redo checkpoint；不匹配的历史相对资源改为原工程根目录下的绝对路径。SDK 工程测试覆盖空 hash 旧资源、A→B 同 ID 替换、已删除的历史资源、redo 分支、失败保存/打开，以及重开后的持久对象与 CPU 求值一致。model3/MOC3 导入、导出和显式资源 relocate 仍待 S2 后续。
 
+2026-09-23 同轮后续：S2 增加 model3 与 bare MOC3 的原子导入包装、`ImportReceipt`、绝对纹理槽位映射校验，以及不改变会话版本/历史的 `export_package`。资源准备辅助 `prepare_relocated_asset` 验证同内容换路径；替换内容仍使用 `prepare_png_asset` 和 edit。新增 SDK 工程测试覆盖外部 v5 fixture 的导入、编辑、保存、导出，bare MOC3 槽位路径失败，以及 relocate 与 replace 的不同 hash 语义。独立预检查入口、发布后 warning 的 SDK 注入测试和 S2 汇总验收仍需补齐。
+
+2026-09-23 同轮补充：SDK `with_filesystem` 提供可注入的发布后端，`new_project` 保留该后端。发布后目录同步失败的 SDK 契约测试确认：返回 `durable=false` 与 warning，仍更新保存基线、保留跨保存 undo/redo，随后同路径重试不触发冲突。独立外部模型预检查入口与 S2 汇总验收仍待补齐。
+
+2026-09-23 同轮路径契约修正：`prepare_png_asset` 现要求绝对路径；相对用户路径通过 `prepare_png_asset_from_base` 显式传入绝对 base，避免按进程 cwd 解析。SDK 测试覆盖错误路径与正确解析。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

@@ -1,6 +1,6 @@
 # Kasane SDK API（实施中）
 
-状态：S0 契约初稿，S1 的内存对象族和预览入口已大体接入；S2 已接入工程打开、保存和资源诊断。尚未达到 [完整实施计划](SDK-IMPLEMENTATION-PLAN.md) 的 S1–S5 验收。
+状态：S0 契约初稿，S1 的内存对象族和预览入口已大体接入；S2 已接入工程打开、保存、model3/MOC3 导入、MOC3 包导出和资源诊断。尚未达到 [完整实施计划](SDK-IMPLEMENTATION-PLAN.md) 的 S1–S5 验收。
 
 ## 当前可运行的 Rust API
 
@@ -8,14 +8,15 @@
 
 ```rust
 use kasane_core::{Canvas, PreviewValues, Vec2};
-use kasane_sdk::{AuthoringSession, prepare_png_asset, rectangle_mesh};
+use kasane_sdk::{AuthoringSession, prepare_png_asset_from_base, rectangle_mesh};
 
 let mut session = AuthoringSession::new(
     "00000000-0000-4000-8000-000000000001",
     Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
 )?;
-let asset = prepare_png_asset(
+let asset = prepare_png_asset_from_base(
     "00000000-0000-4000-8000-000000000002", "texture",
+    std::path::Path::new("/absolute/project/assets"),
     std::path::Path::new("texture.png"),
 )?;
 let mesh = rectangle_mesh(
@@ -54,14 +55,20 @@ Part、Transform、SceneBinding 也有 `create`/`replace`、ID 列表与对象�
 
 BlendShape key table、constraint、binding、Glue 和 Offscreen 均提供 `create`/`replace`、ID 列表与对象副本查询，强类型对象由 core 校验。Part binding 与 Offscreen 的 keyform 映射若需同时扩容，使用 `replace_part_binding_with_offscreen` 原子更新两者。
 
-`prepare_png_asset` 读取 PNG、计算尺寸与 SHA-256，返回绝对路径资源描述；它不修改文档。`rectangle_mesh` 创建四顶点、两三角形的根 mesh 描述，UV 为四角。材质和坐标源字段仍可用 core 的强类型 `Mesh` 表达。显式批次适合大量顶点写回，避免每步重建 candidate。
+`prepare_png_asset` 接受绝对 PNG 路径，读取尺寸与 SHA-256，返回绝对路径资源描述；相对用户路径使用 `prepare_png_asset_from_base` 传入显式绝对 base。两者都不修改文档，也不依赖进程当前目录。`rectangle_mesh` 创建四顶点、两三角形的根 mesh 描述，UV 为四角。材质和坐标源字段仍可用 core 的强类型 `Mesh` 表达。显式批次适合大量顶点写回，避免每步重建 candidate。
 
-`save_project(path, expected_version)` 通过 project 的原子发布入口保存或另存为，`path` 必须是绝对路径，可指向工程目录或 JSON manifest。返回 `SaveReceipt`，包含保存前后版本、规范 manifest 路径、发布后的 warning 与 `durable`。保存成功后保留全部 SDK undo/redo，并将匹配同一旧资源的历史 checkpoint 重定位到新工程；同 ID 但不同资源的历史版本仍指向自己的旧文件。redo 回到已保存内容时 `modified()` 为 false。保存失败保留文档、工程路径和 SDK 历史。尚未保存的相对资源路径没有明确根目录，SDK 会以 `INVALID_ASSET_BASE` 拒绝保存；可先用 `prepare_png_asset` 得到绝对路径描述。
+`save_project(path, expected_version)` 通过 project 的原子发布入口保存或另存为，`path` 必须是绝对路径，可指向工程目录或 JSON manifest。返回 `SaveReceipt`，包含保存前后版本、规范 manifest 路径、发布后的 `warnings`、历史旧资源的 `history_warnings` 与 `durable`。保存成功后保留全部 SDK undo/redo，并将匹配同一旧资源的历史 checkpoint 重定位到新工程；同 ID 但不同资源的历史版本仍指向自己的旧文件。没有旧 SHA-256 的历史资源只保证路径引用，会在 `history_warnings` 中报告，不能承诺还原过去文件字节。redo 回到已保存内容时 `modified()` 为 false。保存失败保留文档、工程路径和 SDK 历史。尚未保存的相对资源路径没有明确根目录，SDK 会以 `INVALID_ASSET_BASE` 拒绝保存；可先用 `prepare_png_asset` 得到绝对路径描述。
+
+发布后目录同步失败属于已发布但未确认耐久的成功结果：`SaveReceipt::durable` 为 false，`warnings` 非空，SDK 仍更新保存基线并保留历史。`with_filesystem` 可注入发布后端，以验证此类 IO 边界。
 
 `open_project(path, expected_version)` 只在解码和结构校验成功后替换会话。成功后 generation 增加、旧句柄过期，清空历史、预览和事件；失败保留原状态。纹理文件缺失或损坏会在成功返回的 `ProjectResult::diagnostics` 中报告，`diagnose_resources()` 可随时重查。`project_path()` 返回当前 manifest 路径。打开与保存均要求绝对路径，显式版本不匹配返回 `STALE_VERSION`。
 
+`import_model3(path, expected_version)` 和 `import_bare_moc3(path, texture_map, expected_version)` 导入外部模型并返回 `ImportReceipt`（前后版本、`ProjectResult`、`ImportReport`）。bare MOC3 的纹理槽位映射必须使用绝对路径。成功导入会像打开工程一样更新 generation、清空旧历史并使旧句柄过期；结构失败保持原会话。缺失或损坏纹理可由资源诊断报告。导入后 `project_path()` 为空，需显式保存。`export_package(destination, expected_version)` 发布 MOC3/model3/纹理包，返回 publication warning 与 durable 状态，不修改文档版本或历史；其验证等级沿用 project 层报告，structural pass 不代表官方运行时验收。
+
+同内容换文件位置可调用 `prepare_relocated_asset(existing, absolute_path)`，校验新 PNG 与现有尺寸和非空 hash 相符，再在 edit 中用 `replace_asset` 提交。更换图片内容可调用 `prepare_png_asset` 后用 `replace_asset` 提交，允许新的尺寸和 hash。两种准备操作都只读文件，失败不会修改会话。
+
 ## 尚未交付的契约
 
-model3/bare MOC3 导入、工程导出、显式资源 relocate、Python wheel、wgpu 观察与统一验收入口仍未实现。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
+Python wheel、wgpu 观察与统一验收入口仍未实现。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
 
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。
