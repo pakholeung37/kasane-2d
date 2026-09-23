@@ -531,4 +531,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S4 观察来源补充：每帧用本次 `DrawableFrame`、校验后纹理内容 hash 和输出 view 生成 `input_sha256`；运行报告记录 SDK 版本、原生模块二进制 hash、平台、session/generation/document/source/evaluation revision，以及透明背景、线性 `RGBA8Unorm` 和未额外转换的预乘 alpha 约定。GPU wheel 测试确认几何、纹理、view 改变会改变输入指纹；外部观察 recipe 的三档参数采样生成三个不同图像和输入指纹，且不改变 Session preview。逐项图像预期对照与 S4 完整门禁继续实施。
 
+2026-09-23 S4/S5 验收入口首批：新增 `tools/validate_sdk.py`，每次用指定 wheel 在仓库外临时 venv 中运行 CPU 测试、可用时的真实 GPU 测试和观察 recipe。独立运行目录记录源码 revision/dirty 标记、wheel 与 fixture hash、命令日志、能力探测和观察产物索引；校验 3 帧、3 个 crop、contact sheet 及内容 hash，`--require-gpu` 将 GPU 缺席视为失败。当前 feature wheel 在 Apple M4/Metal 上总报告 `passed`，CPU wheel 报告 `partial`/GPU `not_run`。S5 外部导入、agent 局部修正和图像真值对照仍需接入。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。
