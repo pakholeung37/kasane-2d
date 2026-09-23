@@ -25,3 +25,5 @@ Document (kasane-core) ──> DrawableFrame ──> ScenePlan (kasane-render)
 第一阶段的实现范围、失效约束与后续事项见 [渲染边界方案](RENDER-BOUNDARY-PROPOSAL.md)。
 
 WGPU 后端的迁移设计、首轮实现与验收定义见 [WGPU 迁移架构](RENDER-WGPU-DESIGN.md)；尚未完成应用迁移。
+
+面向新 editor 的独立创作 SDK 调研、接口契约和分阶段实施计划见 [SDK 实施方案](SDK-IMPLEMENTATION-PLAN.md)。该方案尚未实现，不复用或修改 `apps/editor`，先交付 Rust/Python 创作与观察能力，再接入未来交互层。
