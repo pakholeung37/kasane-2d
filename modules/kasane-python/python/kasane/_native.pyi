@@ -5,6 +5,8 @@ from typing import Mapping
 Version = tuple[int, int, int]
 Point = tuple[float, float]
 Mesh = tuple[str, str, list[int], list[Point], Version]
+MeshRecordData = tuple[str, str, str, tuple[list[int], list[Point], list[Point], list[tuple[int, int, int]]], tuple[str, str], Appearance, tuple[float | None, str, bool, bool, bool, list[str], int | None]]
+MeshRecord = tuple[MeshRecordData, str, Version]
 Parameter = tuple[str, str, float, float, float, bool, str, Version]
 Asset = tuple[str, str, str, int, int, str, Version]
 Appearance = tuple[float, tuple[float, float, float], tuple[float, float, float]]
@@ -52,6 +54,17 @@ class ObjectHandle:
 
 
 class NativeEdit:
+    def create_mesh(self, data: MeshRecordData) -> None: ...
+    def replace_mesh(self, data: MeshRecordData) -> None: ...
+    def replace_topology(
+        self,
+        source: tuple[Version, str, list[int], list[Point], list[Point], list[tuple[int, int, int]], str, str | None],
+        mesh_data: MeshRecordData,
+        binding_data: tuple[str, str, list[tuple[str, list[float]]], list[MeshForm]] | None,
+        blend_data: list[BlendBindingData],
+        glue_data: list[GlueData],
+        mapping: list[tuple[int, int | None]],
+    ) -> None: ...
     def create_scene_binding(
         self, id: str, kind: str, target_id: str,
         axes: list[tuple[str, list[float]]], forms: list[SceneForm]
@@ -207,6 +220,7 @@ class NativeSession:
     def offscreen_ids(self) -> list[str]: ...
     def parameter(self, id: str) -> Parameter | None: ...
     def mesh(self, id: str) -> Mesh | None: ...
+    def mesh_record(self, id: str) -> MeshRecord | None: ...
     def mesh_properties(self, id: str) -> MeshProperties | None: ...
     def binding(self, id: str) -> MeshBinding | None: ...
     def binding_for_mesh(self, mesh_id: str) -> MeshBinding | None: ...

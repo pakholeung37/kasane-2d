@@ -71,7 +71,7 @@ BlendShape key table、constraint、binding、Glue 和 Offscreen 均提供 `crea
 
 S3 已有可安装的 CPython 3.14 wheel 初段：`kasane.Session` 支持创建/打开会话、PNG 矩形、参数与完整单 mesh binding 的原子 edit、源位置更新、查询、CPU 求值、保存/重开、导入/导出和 undo/redo。`with session.edit(...)` 在块内异常时撤回本批次；即使块内捕获输入错误，退出时也以 `EDIT_ABORTED` 拒绝发布。`SdkFailure` 暴露 code、operation、object_ids、字段路径、版本和 referrers。`python -m kasane run <script> --report <path>` 报告 stdout/stderr、异常栈与行号、会话版本；退出不自动保存。`examples/sdk/python_cpu_recipe.py` 是可运行的 CPU 创作示例。
 
-S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照、名称查询、引用查询、结构诊断、历史状态与事件，以及独立的预览值/帧。快照的版本和内容来自同一次原生锁内读取；Python 返回的数组是副本。[Python 覆盖清单](../modules/kasane-python/python-coverage.json)及检查器目前记录 115 个 Rust SDK 公开入口中的 59 个已绑定，56 个仍待绑定；完整接口、GPU 观察与最终统一验收尚未交付。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
+S3 又接入工程重置、对象 ID 列表、asset/mesh/parameter/几何快照、名称查询、引用查询、结构诊断、历史状态与事件，以及独立的预览值/帧。快照的版本和内容来自同一次原生锁内读取；Python 返回的数组是副本。[Python 覆盖清单](../modules/kasane-python/python-coverage.json)及检查器在该阶段记录 115 个 Rust SDK 公开入口中的 59 个已绑定，56 个待绑定；后续覆盖见本节末尾。资源描述指向磁盘文件，但 CPU 求值不读取纹理。`DocumentSession` 的旧公开 mutable API 仍供旧应用使用，SDK 不向其调用方导出该引用。SDK 路径使用单独 checkpoint history，不写旧 delta history。
 
 同轮续接 `Edit.replace_canvas`、`replace_parameter`、`erase_object` 与层级关系设置，及 mesh binding 快照查询。`replace_parameter` 保留原对象的 runtime ID 等未在简化 Python 参数表单中列出的字段。覆盖清单现为 69/115 已绑定、46 项待绑定；层级关系设置目前只完成了失败回滚测试，后续还需随 Part/Transform 创建接口验证成功路径。
 
@@ -100,5 +100,7 @@ Python Glue 提供完整顶点对、权重、强度和可选参数绑定的创�
 Python 参数支持 `kind="blend_shape"`；BlendShape key table 和 constraint 均支持创建、读取及完整替换。清单更新至 110/116 项 Python 绑定、1 项 Rust 专用、5 项待绑定。
 
 Python BlendShape binding 的六种 target 均有对应 delta keyform 类型，支持完整创建、快照与替换。清单更新至 113/116 项 Python 绑定、1 项 Rust 专用、2 项待绑定。
+
+Python MeshRecord 暴露完整几何、绘制属性及关系字段，可创建自定义 mesh 或完整替换。`Edit.replace_topology` 接收源几何快照、旧顶点到新顶点的映射，以及相关普通 binding、BlendShape binding、Glue 的完整候选，同一 edit 中原子校验和发布。方法清单为 115/116 项 Python 绑定、1 项 Rust 专用、0 项待绑定。
 
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

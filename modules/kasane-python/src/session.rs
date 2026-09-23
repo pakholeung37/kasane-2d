@@ -338,6 +338,13 @@ impl NativeSession {
             .map(|mesh| mesh_tuple(mesh, session.version())))
     }
 
+    fn mesh_record(&self, id: &str) -> PyResult<Option<MeshRecordTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .mesh(id)
+            .map(|value| mesh_record_tuple(value, session.version())))
+    }
+
     fn mesh_properties(&self, id: &str) -> PyResult<Option<MeshPropertiesTuple>> {
         let session = self.inner.lock().map_err(|_| poisoned())?;
         Ok(session.mesh(id).map(|mesh| {

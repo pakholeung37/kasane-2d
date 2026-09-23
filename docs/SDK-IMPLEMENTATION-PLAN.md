@@ -523,4 +523,8 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 BlendShape binding 批次：Python 对 mesh、warp、rotation、Part、Glue、Offscreen 六种 target 暴露有类型的 delta keyform，支持创建、读取与完整替换。六类型字段往返、快照副本、保存重开、失败回滚和 undo 通过仓库外 wheel 的 26 项 CPU 测试；清单为 113/116 Python 绑定、1 项 Rust 专用、2 项待绑定。
 
+2026-09-23 S3 mesh 全量与拓扑批次：Python 提供完整 MeshRecord 创建、读取及替换，并接入带源快照、顶点映射、普通 binding、BlendShape binding 和 Glue 依赖的原子拓扑替换。自定义三角 mesh、完整替换、依赖同步、失败回滚、保存重开与 undo 通过仓库外 wheel 的 28 项 CPU 测试；116 个 Rust 公开入口中 115 个 Python 绑定、1 个 Rust 专用、0 个待绑定。S3 方法清单完成，最终 S3 验收与后续 S4/S5 另行记录。
+
+2026-09-23 S3 CPU 验收：仓库外 CPython 3.14 venv 安装 wheel，`test_cpu.py` 28 项通过；`python_cpu_recipe.py` 在仓库外独立输出目录完成创建、采样、保存和重开。Rust SDK 与 Python 基础 fixture 共用 `asymmetric-2x2.png`、100×100 画布及 40–60 矩形，检查相同的中点采样结果；两线程版本竞争、with edit 回滚、快照副本及 runner 异常行号均由 wheel 测试覆盖。覆盖检查 `--require-complete`、Rust 测试和 Clippy 均通过。S3 在当前 CPython 3.14/macOS arm64 环境的 CPU 验收完成；S4 GPU 观察与 S5 完整 agent 流程仍待实施。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

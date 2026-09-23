@@ -3,11 +3,11 @@ use kasane_core::{
     Appearance, BindingAxis, BlendMode, BlendShapeBinding, BlendShapeTargetKind, DeltaGlueKeyform,
     DeltaKeyforms, DeltaMeshKeyform, DeltaOffscreenKeyform, DeltaPartKeyform, DeltaRotationKeyform,
     DeltaWarpKeyform, DrawableFrame, Glue, GlueBinding, GlueKeyform, GlueVertexPair, MeshBinding,
-    Offscreen, OffscreenKeyform, ParameterKind, PartKeyform, PreciseVec2, RotationKeyform,
-    RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack, Transform,
-    TransformData, Vec2, WarpKeyform,
+    MeshKeyform, Offscreen, OffscreenKeyform, ParameterKind, PartKeyform, PreciseVec2,
+    RotationKeyform, RotationPose, RotationTransform, SceneBinding, SceneKeyform, SceneTrack,
+    Transform, TransformData, Vec2, WarpKeyform,
 };
-use kasane_sdk::{ObjectKind, Version};
+use kasane_sdk::{GeometrySnapshot, ObjectKind, SourceSpace, Version};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -30,6 +30,52 @@ pub(crate) type MeshBindingTuple = (
     Vec<BindingForm>,
     VersionTuple,
 );
+pub(crate) type MeshBindingDataTuple = (String, String, Vec<(String, Vec<f32>)>, Vec<BindingForm>);
+
+pub(crate) fn mesh_binding_from_tuple(data: MeshBindingDataTuple) -> MeshBinding {
+    let (id, mesh_id, axes, forms) = data;
+    MeshBinding {
+        id,
+        mesh_id,
+        axes: axes
+            .into_iter()
+            .map(|(parameter_id, keys)| BindingAxis { parameter_id, keys })
+            .collect(),
+        keyforms: forms
+            .into_iter()
+            .map(|(keys, positions, appearance, draw_order)| MeshKeyform {
+                keys,
+                positions: positions
+                    .into_iter()
+                    .map(|(x, y)| Vec2::new(x, y))
+                    .collect(),
+                appearance: appearance_from_tuple(appearance),
+                draw_order,
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn geometry_from_tuple(value: GeometryTuple) -> PyResult<GeometrySnapshot> {
+    let (version, mesh_id, vertex_ids, positions, uvs, triangles, space, parent) = value;
+    let space = match (space.as_str(), parent) {
+        ("canvas_pixels", None) => SourceSpace::CanvasPixels,
+        ("parent_local", Some(parent)) => SourceSpace::ParentLocal(parent),
+        _ => return Err(PyValueError::new_err("Invalid geometry source space")),
+    };
+    Ok(GeometrySnapshot {
+        version: tuple_version(version),
+        mesh_id,
+        vertex_ids,
+        positions: positions
+            .into_iter()
+            .map(|(x, y)| Vec2::new(x, y))
+            .collect(),
+        uvs: uvs.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
+        triangles: triangles.into_iter().map(|(a, b, c)| [a, b, c]).collect(),
+        space,
+    })
+}
 pub(crate) type DrawOrderTuple = (String, Vec<String>, i32, i32);
 pub(crate) type PartTuple = (String, String, String, String, bool, f32, VersionTuple);
 pub(crate) type RotationTuple = (f32, (f64, f64, f32, f32, bool, bool));
@@ -169,6 +215,99 @@ pub(crate) type BlendBindingTuple = (
     Vec<BlendFormTuple>,
     VersionTuple,
 );
+pub(crate) type MeshGeometryDataTuple = (
+    Vec<u32>,
+    Vec<PointTuple>,
+    Vec<PointTuple>,
+    Vec<(u32, u32, u32)>,
+);
+pub(crate) type MeshDrawingDataTuple = (
+    Option<f32>,
+    String,
+    bool,
+    bool,
+    bool,
+    Vec<String>,
+    Option<u32>,
+);
+pub(crate) type MeshRecordDataTuple = (
+    String,
+    String,
+    String,
+    MeshGeometryDataTuple,
+    (String, String),
+    AppearanceTuple,
+    MeshDrawingDataTuple,
+);
+pub(crate) type MeshRecordTuple = (MeshRecordDataTuple, String, VersionTuple);
+
+pub(crate) fn mesh_from_record(
+    data: MeshRecordDataTuple,
+    runtime_id: String,
+) -> PyResult<kasane_core::Mesh> {
+    let (id, name, texture_asset_id, geometry, (part_id, deformer_id), appearance, drawing) = data;
+    let (vertex_ids, positions, uvs, triangles) = geometry;
+    let (draw_order, blend_mode, enabled, double_sided, inverted_mask, masks, raw_blend_mode) =
+        drawing;
+    Ok(kasane_core::Mesh {
+        id,
+        name,
+        texture_asset_id,
+        vertex_ids,
+        base_positions: positions
+            .into_iter()
+            .map(|(x, y)| Vec2::new(x, y))
+            .collect(),
+        uvs: uvs.into_iter().map(|(x, y)| Vec2::new(x, y)).collect(),
+        triangles: triangles.into_iter().map(|(a, b, c)| [a, b, c]).collect(),
+        runtime_id,
+        part_id,
+        deformer_id,
+        appearance: appearance_from_tuple(appearance),
+        draw_order,
+        blend_mode: blend_mode_from_name(&blend_mode)?,
+        enabled,
+        double_sided,
+        inverted_mask,
+        masks,
+        raw_blend_mode,
+    })
+}
+
+pub(crate) fn mesh_record_tuple(mesh: kasane_core::Mesh, version: Version) -> MeshRecordTuple {
+    (
+        (
+            mesh.id,
+            mesh.name,
+            mesh.texture_asset_id,
+            (
+                mesh.vertex_ids,
+                mesh.base_positions
+                    .into_iter()
+                    .map(|p| (p.x, p.y))
+                    .collect(),
+                mesh.uvs.into_iter().map(|p| (p.x, p.y)).collect(),
+                mesh.triangles
+                    .into_iter()
+                    .map(|v| (v[0], v[1], v[2]))
+                    .collect(),
+            ),
+            (mesh.part_id, mesh.deformer_id),
+            appearance_tuple(mesh.appearance),
+            (
+                mesh.draw_order,
+                blend_mode_name(mesh.blend_mode).to_owned(),
+                mesh.enabled,
+                mesh.double_sided,
+                mesh.inverted_mask,
+                mesh.masks,
+                mesh.raw_blend_mode,
+            ),
+        ),
+        mesh.runtime_id,
+        version_tuple(version),
+    )
+}
 
 pub(crate) fn blend_binding_from_tuple(data: BlendBindingDataTuple) -> PyResult<BlendShapeBinding> {
     let (id, target_id, target_kind, key_table_id, constraint_ids, forms) = data;

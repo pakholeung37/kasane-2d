@@ -685,6 +685,120 @@ class CpuWheelTests(unittest.TestCase):
         model.undo()
         self.assertEqual(model.blend_binding(BLEND_MESH).keyforms[1].positions[0], (1, 0))
 
+    def test_custom_mesh_create_and_complete_replace(self):
+        model = session()
+        with model.edit("asset") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+        geometry = kasane.MeshGeometryData(
+            [10, 11, 12], [(40, 40), (60, 40), (40, 60)],
+            [(0, 0), (1, 0), (0, 1)], [(10, 11, 12)],
+        )
+        with model.edit("custom mesh") as edit:
+            edit.create_mesh(kasane.MeshRecordSpec(
+                MESH, "triangle", geometry, kasane.MeshDrawingData(ASSET),
+            ))
+        original = model.mesh_record(MESH)
+        self.assertEqual(original.runtime_id, MESH)
+        self.assertEqual(original.geometry.triangles, [(10, 11, 12)])
+        original.geometry.positions[0] = (999, 999)
+        self.assertEqual(model.mesh_record(MESH).geometry.positions[0], (40, 40))
+        with model.edit("replace mesh") as edit:
+            edit.replace_mesh(original._replace(
+                name="triangle updated",
+                geometry=geometry._replace(positions=[(41, 40), (60, 40), (40, 60)]),
+                drawing=original.drawing._replace(
+                    appearance=kasane.Appearance(0.5), draw_order=3,
+                ),
+            ))
+        updated = model.mesh_record(MESH)
+        self.assertEqual(updated.runtime_id, MESH)
+        self.assertEqual(updated.name, "triangle updated")
+        self.assertEqual(updated.geometry.positions[0], (41, 40))
+        self.assertAlmostEqual(updated.drawing.appearance.opacity, 0.5)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.mesh_record(MESH).geometry.triangles, [(10, 11, 12)])
+        version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("invalid triangle") as edit:
+                edit.replace_mesh(updated._replace(
+                    geometry=updated.geometry._replace(triangles=[(10, 11, 99)]),
+                ))
+        self.assertEqual(error.exception.code, "MISSING_VERTEX")
+        self.assertEqual(model.version, version)
+        model.undo()
+        self.assertEqual(model.mesh_record(MESH).name, "triangle")
+
+    def test_topology_replace_rewrites_all_dependencies_atomically(self):
+        model = session()
+        with model.edit("topology dependencies") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "source", ASSET, (40, 40), (60, 60))
+            edit.create_rectangle(MESH_B, "other", ASSET, (40, 40), (60, 60))
+            edit.create_parameter(PARAMETER, "ordinary", 0, 1, 0)
+            edit.create_parameter(BLEND_PARAMETER, "shape", 0, 1, 0, kind="blend_shape")
+            edit.create_mesh_binding(BINDING, MESH, [kasane.Axis(PARAMETER, [0, 1])], [
+                kasane.MeshKeyform([0], [(40, 40), (60, 40), (40, 60), (60, 60)]),
+                kasane.MeshKeyform([1], [(41, 40), (61, 40), (41, 60), (61, 60)]),
+            ])
+            edit.create_blend_key_table(kasane.BlendKeyTableSpec(
+                BLEND_TABLE, BLEND_PARAMETER, [0, 1], 0,
+            ))
+            edit.create_blend_binding(kasane.BlendBindingSpec(
+                BLEND_MESH, MESH, "mesh", BLEND_TABLE, [], [
+                    kasane.BlendMeshDelta([(0, 0)] * 4),
+                    kasane.BlendMeshDelta([(1, 0)] * 4),
+                ],
+            ))
+            edit.create_glue(kasane.GlueSpec(
+                GLUE, "seam", MESH, MESH_B, [kasane.GlueVertexPair(0, 0, 1, 1)],
+            ))
+        source = model.geometry(MESH)
+        record = model.mesh_record(MESH)
+        mapping = {0: 10, 1: 11, 2: 12, 3: 13}
+        new_geometry = record.geometry._replace(
+            vertex_ids=[10, 11, 12, 13],
+            triangles=[tuple(mapping[vertex] for vertex in triangle)
+                       for triangle in record.geometry.triangles],
+        )
+        replacement = record._replace(geometry=new_geometry)
+        binding = model.binding(BINDING)
+        blend = model.blend_binding(BLEND_MESH)
+        glue = model.glue(GLUE)._replace(
+            pairs=[kasane.GlueVertexPair(10, 0, 1, 1)],
+        )
+        version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("incomplete map") as edit:
+                edit.replace_topology(source, replacement, {0: 10},
+                    binding, [blend], [glue])
+        self.assertEqual(error.exception.code, "INVALID_VERTEX_MAPPING")
+        self.assertEqual(model.version, version)
+        with model.edit("topology replacement") as edit:
+            edit.replace_topology(source, replacement, mapping,
+                binding, [blend], [glue])
+        self.assertEqual(model.geometry(MESH).vertex_ids, [10, 11, 12, 13])
+        self.assertEqual(model.glue(GLUE).pairs[0].vertex_a, 10)
+        self.assertEqual(model.binding(BINDING).id, BINDING)
+        self.assertEqual(model.blend_binding(BLEND_MESH).id, BLEND_MESH)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.geometry(MESH).vertex_ids, [10, 11, 12, 13])
+        current = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("stale source") as edit:
+                edit.replace_topology(source, replacement, mapping,
+                    binding, [blend], [glue])
+        self.assertEqual(error.exception.code, "STALE_TOPOLOGY")
+        self.assertEqual(model.version, current)
+        model.undo()
+        self.assertEqual(model.geometry(MESH).vertex_ids, [0, 1, 2, 3])
+        self.assertEqual(model.glue(GLUE).pairs[0].vertex_a, 0)
+
     def test_png_base_relocation_and_replacement(self):
         model = session()
         with model.edit("asset") as edit:

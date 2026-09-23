@@ -1,4 +1,5 @@
 //! Typed edit commands and one-shot SDK publication.
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -11,7 +12,7 @@ use kasane_core::{
 };
 use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
-    AuthoringSession, EditReceipt, MeshProperties, Version,
+    AuthoringSession, EditReceipt, MeshProperties, TopologyReplacement, Version,
 };
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -19,6 +20,9 @@ use pyo3::prelude::*;
 enum Command {
     AddPng(kasane_core::ImageAsset),
     CreateRectangle(Box<kasane_core::Mesh>),
+    CreateMesh(Box<kasane_core::Mesh>),
+    ReplaceMesh(Box<kasane_core::Mesh>),
+    ReplaceTopology(Box<kasane_sdk::GeometrySnapshot>, Box<TopologyReplacement>),
     RenameMesh(String, String),
     UpdatePositions(String, Vec<u32>, Vec<Vec2>),
     CreateParameter(Parameter),
@@ -300,6 +304,73 @@ impl NativeEdit {
             .push(Command::CreateOffscreen(offscreen_from_tuple(
                 data, runtime_id,
             )));
+        Ok(())
+    }
+
+    fn create_mesh(&mut self, py: Python<'_>, data: MeshRecordDataTuple) -> PyResult<()> {
+        self.ensure_open(py, "create_mesh")?;
+        let runtime_id = data.0.clone();
+        self.commands
+            .push(Command::CreateMesh(Box::new(mesh_from_record(
+                data, runtime_id,
+            )?)));
+        Ok(())
+    }
+
+    fn replace_mesh(&mut self, py: Python<'_>, data: MeshRecordDataTuple) -> PyResult<()> {
+        self.ensure_open(py, "replace_mesh")?;
+        let original = self.session.lock().map_err(|_| poisoned())?.mesh(&data.0);
+        let runtime_id = original
+            .map(|value| value.runtime_id)
+            .unwrap_or_else(|| data.0.clone());
+        self.commands
+            .push(Command::ReplaceMesh(Box::new(mesh_from_record(
+                data, runtime_id,
+            )?)));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn replace_topology(
+        &mut self,
+        py: Python<'_>,
+        source: GeometryTuple,
+        mesh_data: MeshRecordDataTuple,
+        binding_data: Option<MeshBindingDataTuple>,
+        blend_data: Vec<BlendBindingDataTuple>,
+        glue_data: Vec<GlueDataTuple>,
+        mapping: Vec<(u32, Option<u32>)>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_topology")?;
+        let source = geometry_from_tuple(source)?;
+        let session = self.session.lock().map_err(|_| poisoned())?;
+        let runtime_id = session
+            .mesh(&mesh_data.0)
+            .map(|value| value.runtime_id)
+            .unwrap_or_else(|| mesh_data.0.clone());
+        let mut glues = Vec::with_capacity(glue_data.len());
+        for data in glue_data {
+            let runtime_id = session
+                .glue(&data.0)
+                .map(|value| value.runtime_id)
+                .unwrap_or_else(|| data.0.clone());
+            glues.push(glue_from_tuple(data, runtime_id));
+        }
+        drop(session);
+        let replacement = TopologyReplacement {
+            mesh: mesh_from_record(mesh_data, runtime_id)?,
+            binding: binding_data.map(mesh_binding_from_tuple),
+            blend_bindings: blend_data
+                .into_iter()
+                .map(blend_binding_from_tuple)
+                .collect::<PyResult<_>>()?,
+            glues,
+            vertex_mapping: mapping.into_iter().collect::<HashMap<_, _>>(),
+        };
+        self.commands.push(Command::ReplaceTopology(
+            Box::new(source),
+            Box::new(replacement),
+        ));
         Ok(())
     }
 
@@ -930,6 +1001,11 @@ impl NativeEdit {
                     match command {
                         Command::AddPng(asset) => edit.create_asset(asset)?,
                         Command::CreateRectangle(mesh) => edit.create_mesh(*mesh)?,
+                        Command::CreateMesh(mesh) => edit.create_mesh(*mesh)?,
+                        Command::ReplaceMesh(mesh) => edit.replace_mesh(*mesh)?,
+                        Command::ReplaceTopology(source, replacement) => {
+                            edit.replace_topology(&source, *replacement)?
+                        }
                         Command::RenameMesh(id, name) => edit.rename_mesh(&id, name)?,
                         Command::UpdatePositions(id, ids, positions) => {
                             edit.update_positions(&id, &ids, &positions)?

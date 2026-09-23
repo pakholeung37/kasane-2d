@@ -1,6 +1,6 @@
 # SDK 阶段验收记录
 
-本文件记录已经实际运行的 SDK 验收；完整 agent 创作 SDK 仍须完成 [实施计划](SDK-IMPLEMENTATION-PLAN.md) 中的 S3–S5。
+本文件记录已经实际运行的 SDK 验收；S3 CPU 验收已完成，完整 agent 创作 SDK 仍须完成 [实施计划](SDK-IMPLEMENTATION-PLAN.md) 中的 S4–S5。
 
 ## S2：工程与资源闭环（2026-09-23）
 
@@ -59,3 +59,7 @@ Glue 续测：创建、快照副本、带参数绑定的完整替换、保存重
 BlendShape 元数据续测：blend_shape 参数、key table 与 constraint 创建、替换、快照副本和保存重开；约束长度错误整批回滚，undo 恢复旧表。仓库外 wheel 的 `test_cpu.py` 25 项通过；覆盖清单为 110/116 项 Python 绑定、1 项 Rust 专用、5 项待绑定。
 
 BlendShape binding 续测：六种 target 的 delta keyform 创建、读取；mesh binding 替换、快照副本、保存重开、错误长度回滚及 undo。仓库外 wheel 的 `test_cpu.py` 26 项通过；覆盖清单为 113/116 项 Python 绑定、1 项 Rust 专用、2 项待绑定。
+
+Mesh 全量与拓扑续测：自定义三角 mesh 创建、全字段快照及替换；同时更新顶点 ID、普通 binding、BlendShape binding、Glue，验证不完整映射与陈旧快照回滚、保存重开和 undo。仓库外 wheel 的 `test_cpu.py` 28 项通过；覆盖清单为 115/116 项 Python 绑定、1 项 Rust 专用、0 项待绑定。
+
+S3 CPU 门禁：外部 CPython 3.14 venv 的 28 项 wheel 测试、仓库外独立运行的 `python_cpu_recipe.py`、Rust SDK/Project 测试、Clippy 和 `check_coverage.py --require-complete` 均通过。Rust 与 Python 基础 fixture 使用同一 PNG、画布和矩形输入，验证相同的参数中点采样。当前验收环境为 macOS arm64；GPU 图像与 S5 agent 流程尚未运行。

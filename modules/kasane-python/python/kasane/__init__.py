@@ -49,6 +49,45 @@ class MeshPropertiesSnapshot(NamedTuple):
     version: Version
 
 
+class MeshGeometryData(NamedTuple):
+    vertex_ids: Sequence[int]
+    positions: Sequence[Point]
+    uvs: Sequence[Point]
+    triangles: Sequence[tuple[int, int, int]]
+
+
+class MeshDrawingData(NamedTuple):
+    texture_asset_id: str
+    appearance: Appearance = Appearance()
+    draw_order: float | None = None
+    blend_mode: str = "normal"
+    enabled: bool = True
+    double_sided: bool = True
+    inverted_mask: bool = False
+    masks: Sequence[str] = ()
+    raw_blend_mode: int | None = None
+
+
+class MeshRecordSpec(NamedTuple):
+    id: str
+    name: str
+    geometry: MeshGeometryData
+    drawing: MeshDrawingData
+    part_id: str = ""
+    deformer_id: str = ""
+
+
+class MeshRecordSnapshot(NamedTuple):
+    id: str
+    runtime_id: str
+    name: str
+    geometry: MeshGeometryData
+    drawing: MeshDrawingData
+    part_id: str
+    deformer_id: str
+    version: Version
+
+
 class AssetSnapshot(NamedTuple):
     id: str
     name: str
@@ -558,6 +597,36 @@ class Edit:
     def replace_glue(self, glue: GlueSnapshot) -> None:
         self._call(lambda: self._native.replace_glue(_glue_data(glue)))
 
+    def create_mesh(self, mesh: MeshRecordSpec) -> None:
+        self._call(lambda: self._native.create_mesh(_mesh_record_data(mesh)))
+
+    def replace_mesh(self, mesh: MeshRecordSnapshot) -> None:
+        self._call(lambda: self._native.replace_mesh(_mesh_record_data(mesh)))
+
+    def replace_topology(
+        self,
+        source: GeometrySnapshot,
+        mesh: MeshRecordSnapshot,
+        vertex_mapping: Mapping[int, int | None],
+        binding: MeshBindingSnapshot | None = None,
+        blend_bindings: Sequence[BlendBindingSnapshot] = (),
+        glues: Sequence[GlueSnapshot] = (),
+    ) -> None:
+        binding_data = None if binding is None else (
+            binding.id, binding.mesh_id,
+            [(axis.parameter_id, list(axis.keys)) for axis in binding.axes],
+            [_mesh_form_tuple(form) for form in binding.keyforms],
+        )
+        self._call(lambda: self._native.replace_topology(
+            (source.version, source.mesh_id, list(source.vertex_ids),
+             list(source.positions), list(source.uvs), list(source.triangles),
+             source.space, source.parent_id),
+            _mesh_record_data(mesh), binding_data,
+            [_blend_binding_data(item) for item in blend_bindings],
+            [_glue_data(item) for item in glues],
+            list(vertex_mapping.items()),
+        ))
+
     def create_blend_key_table(self, table: BlendKeyTableSpec) -> None:
         self._call(lambda: self._native.create_blend_key_table(
             table.id, table.parameter_id, list(table.keys), table.base_key_idx,
@@ -900,6 +969,18 @@ class Session:
             return None
         return MeshSnapshot(*raw)
 
+    def mesh_record(self, mesh_id: str) -> MeshRecordSnapshot | None:
+        raw = self._native.mesh_record(mesh_id)
+        if raw is None:
+            return None
+        data, runtime_id, version = raw
+        id, name, texture_asset_id, geometry, relations, appearance, drawing = data
+        return MeshRecordSnapshot(
+            id, runtime_id, name, MeshGeometryData(*geometry),
+            MeshDrawingData(texture_asset_id, Appearance(*appearance), *drawing),
+            relations[0], relations[1], version,
+        )
+
     def mesh_properties(self, mesh_id: str) -> MeshPropertiesSnapshot | None:
         raw = self._native.mesh_properties(mesh_id)
         if raw is None:
@@ -1135,6 +1216,19 @@ def _offscreen_data(value: OffscreenSpec | OffscreenSnapshot):
     )
 
 
+def _mesh_record_data(value: MeshRecordSpec | MeshRecordSnapshot):
+    geometry = value.geometry
+    drawing = value.drawing
+    return (
+        value.id, value.name, drawing.texture_asset_id,
+        (list(geometry.vertex_ids), list(geometry.positions), list(geometry.uvs),
+         list(geometry.triangles)),
+        (value.part_id, value.deformer_id), tuple(drawing.appearance),
+        (drawing.draw_order, drawing.blend_mode, drawing.enabled, drawing.double_sided,
+         drawing.inverted_mask, list(drawing.masks), drawing.raw_blend_mode),
+    )
+
+
 def _glue_data(value: GlueSpec | GlueSnapshot):
     binding = None if value.binding is None else (
         [(axis.parameter_id, list(axis.keys)) for axis in value.binding.axes],
@@ -1260,6 +1354,10 @@ __all__ = [
     "HistoryState",
     "ImportResult",
     "MeshSnapshot",
+    "MeshGeometryData",
+    "MeshDrawingData",
+    "MeshRecordSpec",
+    "MeshRecordSnapshot",
     "MeshProperties",
     "MeshPropertiesSnapshot",
     "MeshBindingSnapshot",
