@@ -503,4 +503,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 Transform 批次：接入旋转与 warp Transform 创建、读取和数据更新，并以真实层级验证 Transform 父节点/Part 归属及 mesh 变形父节点。仓库外 wheel 的 15 项 CPU 测试通过，公开入口覆盖为 84/115，剩余 31 项。
 
+2026-09-23 S3 PNG 资源批次：接入显式基目录导入、内容替换与相同内容搬迁。仓库外 wheel 的 16 项 CPU 测试通过，公开入口覆盖为 87/115，剩余 28 项。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

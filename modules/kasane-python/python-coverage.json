@@ -63,7 +63,9 @@
     "test": "test_two_threads_receive_one_stale_version"
   },
   "Edit.replace_asset": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_png_asset / Edit.relocate_png_asset",
+    "test": "test_png_base_relocation_and_replacement"
   },
   "Edit.replace_binding": {
     "status": "pending"
@@ -502,10 +504,14 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "free.prepare_png_asset_from_base": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.add_png_asset_from_base",
+    "test": "test_png_base_relocation_and_replacement"
   },
   "free.prepare_relocated_asset": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.relocate_png_asset",
+    "test": "test_png_base_relocation_and_replacement"
   },
   "free.rectangle_mesh": {
     "status": "bound",

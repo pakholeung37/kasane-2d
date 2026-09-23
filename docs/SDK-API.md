@@ -81,4 +81,6 @@ Part 已支持创建、读取和完整字段替换；组织父节点与 mesh 的
 
 Transform 已支持旋转与 warp 两种类型的创建、读取及各自数据更新；旋转姿态和 warp 控制点使用有类型的 Python 记录。Transform 父节点、Part 归属与 mesh 变形父节点已通过同批次成功路径。覆盖清单更新至 84/115，剩余 31 项；完整 Transform 替换仍待绑定。
 
+PNG 资源路径又支持显式绝对基目录加相对文件名、替换 PNG、相同内容搬迁。搬迁继续使用 Rust SDK 的尺寸与内容 hash 检查，替换允许新内容。覆盖清单更新至 87/115，剩余 28 项。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

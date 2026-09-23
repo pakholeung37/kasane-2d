@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -395,6 +396,30 @@ class CpuWheelTests(unittest.TestCase):
         self.assertAlmostEqual(model.transform(WARP).warp.points[0][0], 0.1, places=5)
         model.undo()
         self.assertEqual(model.transform(ROTATION).rotation.base_angle, 0)
+
+    def test_png_base_relocation_and_replacement(self):
+        model = session()
+        with model.edit("asset") as edit:
+            edit.add_png_asset_from_base(ASSET, "texture", TEXTURE.parent, Path(TEXTURE.name))
+        original = model.asset(ASSET)
+        with TemporaryDirectory() as directory:
+            relocated = Path(directory).resolve() / "same.png"
+            shutil.copyfile(TEXTURE, relocated)
+            with self.assertRaises(kasane.SdkFailure) as mismatch:
+                with model.edit("bad relocation") as edit:
+                    edit.relocate_png_asset(ASSET, EXTERNAL / "texture_00.png")
+            self.assertEqual(mismatch.exception.code, "RESOURCE_DIMENSIONS")
+            self.assertEqual(model.asset(ASSET), original)
+            with model.edit("relocate") as edit:
+                edit.relocate_png_asset(ASSET, relocated)
+            self.assertEqual(model.asset(ASSET).sha256, original.sha256)
+            self.assertEqual(model.asset(ASSET).source, str(relocated))
+            with model.edit("replace") as edit:
+                edit.replace_png_asset(ASSET, "new texture", EXTERNAL / "texture_00.png")
+            self.assertEqual(model.asset(ASSET).width, 4)
+            self.assertEqual(model.asset(ASSET).name, "new texture")
+            model.undo()
+            self.assertEqual(model.asset(ASSET).sha256, original.sha256)
 
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:

@@ -225,6 +225,19 @@ class Edit:
     def add_png_asset(self, asset_id: str, name: str, absolute_path: Path) -> None:
         self._call(lambda: self._native.add_png_asset(asset_id, name, str(absolute_path)))
 
+    def add_png_asset_from_base(
+        self, asset_id: str, name: str, absolute_base: Path, relative_path: Path
+    ) -> None:
+        self._call(lambda: self._native.add_png_asset_from_base(
+            asset_id, name, str(absolute_base), str(relative_path)
+        ))
+
+    def replace_png_asset(self, asset_id: str, name: str, absolute_path: Path) -> None:
+        self._call(lambda: self._native.replace_png_asset(asset_id, name, str(absolute_path)))
+
+    def relocate_png_asset(self, asset_id: str, absolute_path: Path) -> None:
+        self._call(lambda: self._native.relocate_png_asset(asset_id, str(absolute_path)))
+
     def replace_canvas(
         self, width: float, height: float, origin: Point, pixels_per_unit: float
     ) -> None:

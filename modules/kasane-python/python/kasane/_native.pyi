@@ -34,6 +34,11 @@ class ObjectHandle:
 
 
 class NativeEdit:
+    def add_png_asset_from_base(
+        self, id: str, name: str, base: str, relative: str
+    ) -> None: ...
+    def replace_png_asset(self, id: str, name: str, path: str) -> None: ...
+    def relocate_png_asset(self, id: str, path: str) -> None: ...
     def create_rotation_transform(
         self, id: str, name: str, part_id: str | None,
         parent_id: str | None, rotation: Rotation
