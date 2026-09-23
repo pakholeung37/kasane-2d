@@ -94,9 +94,17 @@ class Axis(NamedTuple):
     keys: list[float]
 
 
+class Appearance(NamedTuple):
+    opacity: float = 1
+    multiply: tuple[float, float, float] = (1, 1, 1)
+    screen: tuple[float, float, float] = (0, 0, 0)
+
+
 class MeshKeyform(NamedTuple):
     keys: list[float]
     positions: list[Point]
+    appearance: Appearance = Appearance()
+    draw_order: float | None = None
 
 
 class MeshBindingSnapshot(NamedTuple):
@@ -105,12 +113,6 @@ class MeshBindingSnapshot(NamedTuple):
     axes: list[Axis]
     keyforms: list[MeshKeyform]
     version: Version
-
-
-class Appearance(NamedTuple):
-    opacity: float = 1
-    multiply: tuple[float, float, float] = (1, 1, 1)
-    screen: tuple[float, float, float] = (0, 0, 0)
 
 
 class PartSnapshot(NamedTuple):
@@ -418,9 +420,24 @@ class Edit:
                 binding_id,
                 mesh_id,
                 [(axis.parameter_id, list(axis.keys)) for axis in axes],
-                [(list(form.keys), list(form.positions)) for form in forms],
+                [_mesh_form_tuple(form) for form in forms],
             )
         )
+
+    def replace_mesh_binding(
+        self, binding_id: str, mesh_id: str,
+        axes: Sequence[Axis], forms: Sequence[MeshKeyform],
+    ) -> None:
+        self._call(lambda: self._native.replace_mesh_binding(
+            binding_id, mesh_id,
+            [(axis.parameter_id, list(axis.keys)) for axis in axes],
+            [_mesh_form_tuple(form) for form in forms],
+        ))
+
+    def set_mesh_keyform(self, binding_id: str, form: MeshKeyform) -> None:
+        self._call(lambda: self._native.set_mesh_keyform(
+            binding_id, _mesh_form_tuple(form)
+        ))
 
     def create_scene_binding(
         self, binding_id: str, kind: str, target_id: str,
@@ -773,8 +790,15 @@ def _binding_snapshot(raw) -> MeshBindingSnapshot | None:
         binding_id,
         mesh_id,
         [Axis(parameter_id, keys) for parameter_id, keys in axes],
-        [MeshKeyform(keys, positions) for keys, positions in forms],
+        [MeshKeyform(keys, positions, Appearance(*appearance), draw_order)
+         for keys, positions, appearance, draw_order in forms],
         version,
+    )
+
+
+def _mesh_form_tuple(form: MeshKeyform):
+    return (
+        list(form.keys), list(form.positions), tuple(form.appearance), form.draw_order
     )
 
 

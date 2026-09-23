@@ -513,6 +513,42 @@ class CpuWheelTests(unittest.TestCase):
             self.assertEqual(reopened.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 45)
             self.assertEqual(reopened.scene_binding(SCENE_WARP).keyforms[1].positions[0], (1, 0))
 
+    def test_mesh_binding_preserves_appearance_and_replaces_forms(self):
+        model = session()
+        with model.edit("base") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        base = model.mesh(MESH).positions
+        shifted = [(x + 10, y) for x, y in base]
+        axis = kasane.Axis(PARAMETER, [0, 1])
+        with model.edit("binding") as edit:
+            edit.create_parameter(PARAMETER, "open", 0, 1, 0)
+            edit.create_mesh_binding(BINDING, MESH, [axis], [
+                kasane.MeshKeyform([0], base),
+                kasane.MeshKeyform([1], shifted, kasane.Appearance(0.5), 3),
+            ])
+        binding = model.binding(BINDING)
+        self.assertEqual(binding.keyforms[1].appearance.opacity, 0.5)
+        self.assertEqual(binding.keyforms[1].draw_order, 3)
+        with model.edit("change form") as edit:
+            edit.set_mesh_keyform(BINDING, kasane.MeshKeyform(
+                [1], shifted, kasane.Appearance(0.75), 5
+            ))
+        self.assertEqual(model.binding(BINDING).keyforms[1].appearance.opacity, 0.75)
+        self.assertEqual(model.binding(BINDING).keyforms[1].draw_order, 5)
+        with model.edit("replace binding") as edit:
+            edit.replace_mesh_binding(BINDING, MESH, [axis], [
+                kasane.MeshKeyform([0], base),
+                kasane.MeshKeyform([1], shifted, kasane.Appearance(1), 7),
+            ])
+        self.assertEqual(model.binding(BINDING).keyforms[1].draw_order, 7)
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.binding(BINDING).keyforms[1].draw_order, 7)
+            self.assertEqual(reopened.evaluate({PARAMETER: 0.5}).drawables[0].positions[0], (-0.5, 1))
+
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:
             root = Path(directory).resolve()

@@ -12,7 +12,7 @@
   "Edit.create_binding": {
     "status": "bound",
     "python": "Edit.create_mesh_binding",
-    "test": "test_parameter_binding_samples_and_reopens"
+    "test": "test_mesh_binding_preserves_appearance_and_replaces_forms"
   },
   "Edit.create_blend_binding": {
     "status": "pending"
@@ -70,7 +70,9 @@
     "test": "test_png_base_relocation_and_replacement"
   },
   "Edit.replace_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_mesh_binding",
+    "test": "test_mesh_binding_preserves_appearance_and_replaces_forms"
   },
   "Edit.replace_blend_binding": {
     "status": "pending"
@@ -130,7 +132,9 @@
     "test": "test_transform_hierarchy_and_updates"
   },
   "Edit.set_mesh_keyform": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.set_mesh_keyform",
+    "test": "test_mesh_binding_preserves_appearance_and_replaces_forms"
   },
   "Edit.set_mesh_part": {
     "status": "bound",
@@ -203,7 +207,7 @@
   "Session.binding": {
     "status": "bound",
     "python": "Session.binding",
-    "test": "test_parameter_binding_samples_and_reopens"
+    "test": "test_mesh_binding_preserves_appearance_and_replaces_forms"
   },
   "Session.binding_for_mesh": {
     "status": "bound",

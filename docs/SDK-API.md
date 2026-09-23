@@ -87,4 +87,6 @@ PNG 资源路径又支持显式绝对基目录加相对文件名、替换 PNG、
 
 SceneBinding 的 Part、Rotation、Warp 三种轨道现均可在 Python 中创建、读取、替换，并更新现有 keyform；快照包含 appearance 和 rotation pose。当前清单为 93/116 项 Python 绑定、1 项 Rust 专用、22 项待绑定。
 
+MeshBinding keyform 现在完整暴露 appearance 与 draw order；创建、快照、替换和单 keyform 更新均保留这些字段。清单更新至 95/116 项 Python 绑定、1 项 Rust 专用、20 项待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

@@ -19,7 +19,7 @@ pub(crate) type EvaluationTuple = (
 );
 pub(crate) type DiagnosticTuple = (String, String, String);
 pub(crate) type ImportTuple = (VersionTuple, u8, Vec<DiagnosticTuple>, Vec<String>);
-pub(crate) type BindingForm = (Vec<f32>, Vec<PointTuple>);
+pub(crate) type BindingForm = (Vec<f32>, Vec<PointTuple>, AppearanceTuple, Option<f32>);
 pub(crate) type MeshBindingTuple = (
     String,
     String,
@@ -101,7 +101,7 @@ fn pose_tuple(pose: RotationPose) -> PoseTuple {
     )
 }
 
-fn appearance_from_tuple(value: AppearanceTuple) -> Appearance {
+pub(crate) fn appearance_from_tuple(value: AppearanceTuple) -> Appearance {
     let (opacity, multiply, screen) = value;
     Appearance {
         opacity,
@@ -321,6 +321,8 @@ pub(crate) fn binding_tuple(binding: MeshBinding, version: Version) -> MeshBindi
                 (
                     form.keys,
                     form.positions.into_iter().map(|p| (p.x, p.y)).collect(),
+                    appearance_tuple(form.appearance),
+                    form.draw_order,
                 )
             })
             .collect(),

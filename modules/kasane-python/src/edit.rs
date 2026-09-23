@@ -5,9 +5,8 @@ use std::sync::{Arc, Mutex};
 use crate::conversion::*;
 use crate::error::{edit_failure, poisoned, sdk_failure};
 use kasane_core::{
-    draw_order::DrawOrderGroup, Appearance, BindingAxis, Canvas, MeshBinding, MeshKeyform,
-    Parameter, Part, RotationTransform, SceneBinding, SceneKeyform, Transform, TransformData, Vec2,
-    WarpTransform,
+    draw_order::DrawOrderGroup, BindingAxis, Canvas, MeshBinding, MeshKeyform, Parameter, Part,
+    RotationTransform, SceneBinding, SceneKeyform, Transform, TransformData, Vec2, WarpTransform,
 };
 use kasane_sdk::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
@@ -22,6 +21,8 @@ enum Command {
     UpdatePositions(String, Vec<u32>, Vec<Vec2>),
     CreateParameter(Parameter),
     CreateMeshBinding(MeshBinding),
+    ReplaceMeshBinding(MeshBinding),
+    SetMeshKeyform(String, MeshKeyform),
     ReplaceCanvas(Canvas),
     EraseObject(String),
     ReplaceParameter(Parameter),
@@ -530,17 +531,67 @@ impl NativeEdit {
                 .collect(),
             keyforms: forms
                 .into_iter()
-                .map(|(keys, positions)| MeshKeyform {
+                .map(|(keys, positions, appearance, draw_order)| MeshKeyform {
                     keys,
                     positions: positions
                         .into_iter()
                         .map(|(x, y)| Vec2::new(x, y))
                         .collect(),
-                    appearance: Appearance::default(),
-                    draw_order: None,
+                    appearance: appearance_from_tuple(appearance),
+                    draw_order,
                 })
                 .collect(),
         }));
+        Ok(())
+    }
+
+    fn replace_mesh_binding(
+        &mut self,
+        py: Python<'_>,
+        id: String,
+        mesh_id: String,
+        axes: Vec<(String, Vec<f32>)>,
+        forms: Vec<BindingForm>,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_mesh_binding")?;
+        self.commands.push(Command::ReplaceMeshBinding(MeshBinding {
+            id,
+            mesh_id,
+            axes: axes
+                .into_iter()
+                .map(|(parameter_id, keys)| BindingAxis { parameter_id, keys })
+                .collect(),
+            keyforms: forms
+                .into_iter()
+                .map(|(keys, positions, appearance, draw_order)| MeshKeyform {
+                    keys,
+                    positions: positions
+                        .into_iter()
+                        .map(|(x, y)| Vec2::new(x, y))
+                        .collect(),
+                    appearance: appearance_from_tuple(appearance),
+                    draw_order,
+                })
+                .collect(),
+        }));
+        Ok(())
+    }
+
+    fn set_mesh_keyform(&mut self, py: Python<'_>, id: String, form: BindingForm) -> PyResult<()> {
+        self.ensure_open(py, "set_mesh_keyform")?;
+        let (keys, positions, appearance, draw_order) = form;
+        self.commands.push(Command::SetMeshKeyform(
+            id,
+            MeshKeyform {
+                keys,
+                positions: positions
+                    .into_iter()
+                    .map(|(x, y)| Vec2::new(x, y))
+                    .collect(),
+                appearance: appearance_from_tuple(appearance),
+                draw_order,
+            },
+        ));
         Ok(())
     }
 
@@ -613,6 +664,8 @@ impl NativeEdit {
                         }
                         Command::CreateParameter(parameter) => edit.create_parameter(parameter)?,
                         Command::CreateMeshBinding(binding) => edit.create_binding(binding)?,
+                        Command::ReplaceMeshBinding(binding) => edit.replace_binding(binding)?,
+                        Command::SetMeshKeyform(id, form) => edit.set_mesh_keyform(&id, form)?,
                         Command::ReplaceCanvas(canvas) => edit.replace_canvas(canvas)?,
                         Command::EraseObject(id) => edit.erase_object(&id)?,
                         Command::ReplaceParameter(parameter) => {

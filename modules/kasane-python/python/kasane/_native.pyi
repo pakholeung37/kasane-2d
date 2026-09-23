@@ -7,14 +7,15 @@ Point = tuple[float, float]
 Mesh = tuple[str, str, list[int], list[Point], Version]
 Parameter = tuple[str, str, float, float, float, bool, Version]
 Asset = tuple[str, str, str, int, int, str, Version]
-MeshBinding = tuple[str, str, list[tuple[str, list[float]]], list[tuple[list[float], list[Point]]], Version]
+Appearance = tuple[float, tuple[float, float, float], tuple[float, float, float]]
+MeshForm = tuple[list[float], list[Point], Appearance, float | None]
+MeshBinding = tuple[str, str, list[tuple[str, list[float]]], list[MeshForm], Version]
 DrawOrderGroup = tuple[str, list[str], int, int]
 Part = tuple[str, str, str, str, bool, float, Version]
 Rotation = tuple[float, tuple[float, float, float, float, bool, bool]]
 Warp = tuple[int, int, bool, list[Point]]
 Transform = tuple[str, str, str, str | None, str | None, str, Rotation | None, Warp | None, bool, Version]
 Pose = tuple[float, float, float, float, bool, bool]
-Appearance = tuple[float, tuple[float, float, float], tuple[float, float, float]]
 SceneForm = tuple[list[float], list[Point], Pose | None, float | None, Appearance | None]
 SceneBinding = tuple[str, list[tuple[str, list[float]]], str, str, list[SceneForm], Version]
 Evaluation = tuple[list[tuple[str, float, float, bool]], list[tuple[str, list[Point]]]]
@@ -105,8 +106,13 @@ class NativeEdit:
         id: str,
         mesh_id: str,
         axes: list[tuple[str, list[float]]],
-        forms: list[tuple[list[float], list[Point]]],
+        forms: list[MeshForm],
     ) -> None: ...
+    def replace_mesh_binding(
+        self, id: str, mesh_id: str,
+        axes: list[tuple[str, list[float]]], forms: list[MeshForm]
+    ) -> None: ...
+    def set_mesh_keyform(self, id: str, form: MeshForm) -> None: ...
     def commit(self) -> Version: ...
     def cancel(self) -> None: ...
     def abort(self) -> None: ...
