@@ -146,7 +146,9 @@
     "status": "pending"
   },
   "Session.asset": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.asset",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.asset_ids": {
     "status": "bound",
@@ -168,28 +170,38 @@
     "status": "pending"
   },
   "Session.binding_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.binding_ids",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.blend_binding": {
     "status": "pending"
   },
   "Session.blend_binding_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.blend_binding_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.blend_constraint": {
     "status": "pending"
   },
   "Session.blend_constraint_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.blend_constraint_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.blend_key_table": {
     "status": "pending"
   },
   "Session.blend_key_table_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.blend_key_table_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.canvas": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.canvas",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.diagnose_resources": {
     "status": "bound",
@@ -197,10 +209,14 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Session.document_id": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.document_id",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.drain_events": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.drain_events",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.draw_order_groups": {
     "status": "pending"
@@ -211,7 +227,9 @@
     "test": "test_rollback_and_structured_error"
   },
   "Session.estimated_content_bytes": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.estimated_content_bytes",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.evaluate": {
     "status": "bound",
@@ -219,7 +237,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.evaluation_revision": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.evaluation_revision",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.export_package": {
     "status": "bound",
@@ -227,25 +247,35 @@
     "test": "test_import_edit_save_and_export"
   },
   "Session.find_meshes_by_name": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.find_meshes_by_name",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.geometry": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.geometry",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.glue": {
     "status": "pending"
   },
   "Session.glue_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.glue_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.handle": {
     "status": "pending"
   },
   "Session.history_lengths": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.history_lengths",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.history_state": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.history_state",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.import_bare_moc3": {
     "status": "bound",
@@ -281,13 +311,17 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Session.new_project": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.new_project",
+    "test": "test_new_project_rejects_stale_version_and_resets_session"
   },
   "Session.offscreen": {
     "status": "pending"
   },
   "Session.offscreen_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.offscreen_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.open_project": {
     "status": "bound",
@@ -308,19 +342,29 @@
     "status": "pending"
   },
   "Session.part_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.part_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.preview_evaluation_count": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.preview_evaluation_count",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.preview_frame": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.preview_frame",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.preview_revision": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.preview_revision",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.preview_values": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.preview_values",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.project_path": {
     "status": "bound",
@@ -333,13 +377,19 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Session.references_to": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.references_to",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.require_unique_mesh": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.require_unique_mesh",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.reset_preview_values": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.reset_preview_values",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.resolve_handle": {
     "status": "pending"
@@ -353,19 +403,27 @@
     "status": "pending"
   },
   "Session.scene_binding_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.scene_binding_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.set_preview_parameter": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.set_preview_parameter",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.set_preview_values": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.set_preview_values",
+    "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.transform": {
     "status": "pending"
   },
   "Session.transform_ids": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.transform_ids",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.undo": {
     "status": "bound",
@@ -373,7 +431,9 @@
     "test": "test_create_save_reopen_and_snapshot_copy"
   },
   "Session.validate_structure": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.validate_structure",
+    "test": "test_queries_geometry_history_and_events"
   },
   "Session.version": {
     "status": "bound",

@@ -3,9 +3,12 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use kasane_core::{Appearance, BindingAxis, Canvas, MeshBinding, MeshKeyform, Parameter, Vec2};
+use kasane_core::{
+    Appearance, BindingAxis, Canvas, DrawableFrame, MeshBinding, MeshKeyform, Parameter, Vec2,
+};
 use kasane_sdk::{
-    prepare_png_asset, rectangle_mesh, AuthoringSession, EditReceipt, SdkError, Version,
+    prepare_png_asset, rectangle_mesh, AuthoringSession, EditReceipt, SdkError, SourceSpace,
+    Version,
 };
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError};
@@ -16,8 +19,9 @@ create_exception!(_native, SdkFailure, PyException);
 
 type VersionTuple = (u64, u64, u64);
 type PointTuple = (f32, f32);
-type ParameterTuple = (String, String, f32, f32, f32, bool);
-type MeshTuple = (String, String, Vec<u32>, Vec<PointTuple>);
+type ParameterTuple = (String, String, f32, f32, f32, bool, VersionTuple);
+type MeshTuple = (String, String, Vec<u32>, Vec<PointTuple>, VersionTuple);
+type AssetTuple = (String, String, String, u32, u32, String, VersionTuple);
 type EvaluationTuple = (
     Vec<(String, f32, f32, bool)>,
     Vec<(String, Vec<PointTuple>)>,
@@ -25,6 +29,24 @@ type EvaluationTuple = (
 type DiagnosticTuple = (String, String, String);
 type ImportTuple = (VersionTuple, u8, Vec<DiagnosticTuple>, Vec<String>);
 type BindingForm = (Vec<f32>, Vec<PointTuple>);
+type GeometryTuple = (
+    VersionTuple,
+    String,
+    Vec<u32>,
+    Vec<PointTuple>,
+    Vec<PointTuple>,
+    Vec<(u32, u32, u32)>,
+    String,
+    Option<String>,
+);
+type EventTuple = (
+    String,
+    VersionTuple,
+    VersionTuple,
+    String,
+    Vec<String>,
+    bool,
+);
 
 fn sdk_failure(py: Python<'_>, error: SdkError) -> PyErr {
     let failure = SdkFailure::new_err(error.message.to_string());
@@ -70,6 +92,46 @@ fn tuple_version(value: (u64, u64, u64)) -> Version {
         generation: value.1,
         revision: value.2,
     }
+}
+
+fn mesh_tuple(mesh: kasane_core::Mesh, version: Version) -> MeshTuple {
+    (
+        mesh.id,
+        mesh.name,
+        mesh.vertex_ids,
+        mesh.base_positions
+            .into_iter()
+            .map(|p| (p.x, p.y))
+            .collect(),
+        version_tuple(version),
+    )
+}
+
+fn frame_tuple(frame: &DrawableFrame) -> EvaluationTuple {
+    (
+        frame
+            .parameters
+            .iter()
+            .map(|parameter| {
+                (
+                    parameter.id.clone(),
+                    parameter.requested,
+                    parameter.value,
+                    parameter.clamped,
+                )
+            })
+            .collect(),
+        frame
+            .drawables
+            .iter()
+            .map(|drawable| {
+                (
+                    drawable.id.clone(),
+                    drawable.positions.iter().map(|p| (p.x, p.y)).collect(),
+                )
+            })
+            .collect(),
+    )
 }
 
 fn poisoned() -> PyErr {
@@ -127,6 +189,69 @@ impl NativeSession {
         ))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    #[pyo3(signature = (document_id, width, height, origin_x, origin_y, pixels_per_unit, expected_version=None))]
+    fn new_project(
+        &self,
+        py: Python<'_>,
+        document_id: String,
+        width: f32,
+        height: f32,
+        origin_x: f32,
+        origin_y: f32,
+        pixels_per_unit: f32,
+        expected_version: Option<VersionTuple>,
+    ) -> PyResult<VersionTuple> {
+        let session = self.inner.clone();
+        let canvas = Canvas::new(
+            width,
+            height,
+            Vec2::new(origin_x, origin_y),
+            pixels_per_unit,
+        );
+        let result = py.detach(move || {
+            let mut session = session.lock().map_err(|_| ())?;
+            Ok::<_, ()>(session.new_project(
+                &document_id,
+                canvas,
+                expected_version.map(tuple_version),
+            ))
+        });
+        match result {
+            Ok(Ok(version)) => Ok(version_tuple(version)),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
+    }
+
+    fn document_id(&self) -> PyResult<String> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .document_id()
+            .to_owned())
+    }
+
+    fn canvas(&self) -> PyResult<(f32, f32, f32, f32, f32)> {
+        let canvas = self.inner.lock().map_err(|_| poisoned())?.canvas();
+        Ok((
+            canvas.width,
+            canvas.height,
+            canvas.origin.x,
+            canvas.origin.y,
+            canvas.pixels_per_unit,
+        ))
+    }
+
+    fn evaluation_revision(&self) -> PyResult<u64> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .evaluation_revision())
+    }
+
     fn modified(&self) -> PyResult<bool> {
         Ok(self.inner.lock().map_err(|_| poisoned())?.modified())
     }
@@ -167,41 +292,225 @@ impl NativeSession {
             .to_vec())
     }
 
-    fn parameter(&self, id: &str) -> PyResult<Option<ParameterTuple>> {
+    fn binding_ids(&self) -> PyResult<Vec<String>> {
         Ok(self
             .inner
             .lock()
             .map_err(|_| poisoned())?
-            .parameter(id)
-            .map(|parameter| {
+            .binding_ids()
+            .to_vec())
+    }
+
+    fn part_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .part_ids()
+            .to_vec())
+    }
+
+    fn transform_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .transform_ids()
+            .to_vec())
+    }
+
+    fn scene_binding_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .scene_binding_ids()
+            .to_vec())
+    }
+
+    fn blend_key_table_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .blend_key_table_ids()
+            .to_vec())
+    }
+
+    fn blend_constraint_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .blend_constraint_ids()
+            .to_vec())
+    }
+
+    fn blend_binding_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .blend_binding_ids()
+            .to_vec())
+    }
+
+    fn glue_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .glue_ids()
+            .to_vec())
+    }
+
+    fn offscreen_ids(&self) -> PyResult<Vec<String>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .offscreen_ids()
+            .to_vec())
+    }
+
+    fn asset(&self, id: &str) -> PyResult<Option<AssetTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session.asset(id).map(|asset| {
+            (
+                asset.id,
+                asset.name,
+                asset.source,
+                asset.width,
+                asset.height,
+                asset.sha256,
+                version_tuple(session.version()),
+            )
+        }))
+    }
+
+    fn references_to(&self, id: &str) -> PyResult<Vec<String>> {
+        Ok(self.inner.lock().map_err(|_| poisoned())?.references_to(id))
+    }
+
+    fn parameter(&self, id: &str) -> PyResult<Option<ParameterTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session.parameter(id).map(|parameter| {
+            (
+                parameter.id,
+                parameter.name,
+                parameter.minimum,
+                parameter.maximum,
+                parameter.default_value,
+                parameter.repeat,
+                version_tuple(session.version()),
+            )
+        }))
+    }
+
+    fn mesh(&self, id: &str) -> PyResult<Option<MeshTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .mesh(id)
+            .map(|mesh| mesh_tuple(mesh, session.version())))
+    }
+
+    fn find_meshes_by_name(&self, name: &str) -> PyResult<Vec<MeshTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .find_meshes_by_name(name)
+            .into_iter()
+            .map(|mesh| mesh_tuple(mesh, session.version()))
+            .collect())
+    }
+
+    fn require_unique_mesh(&self, py: Python<'_>, name: &str) -> PyResult<MeshTuple> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        session
+            .require_unique_mesh(name)
+            .map(|mesh| mesh_tuple(mesh, session.version()))
+            .map_err(|error| sdk_failure(py, error))
+    }
+
+    fn geometry(&self, id: &str) -> PyResult<Option<GeometryTuple>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .geometry(id)
+            .map(|geometry| {
+                let (space, parent) = match geometry.space {
+                    SourceSpace::CanvasPixels => ("canvas_pixels".into(), None),
+                    SourceSpace::ParentLocal(parent) => ("parent_local".into(), Some(parent)),
+                };
                 (
-                    parameter.id,
-                    parameter.name,
-                    parameter.minimum,
-                    parameter.maximum,
-                    parameter.default_value,
-                    parameter.repeat,
+                    version_tuple(geometry.version),
+                    geometry.mesh_id,
+                    geometry.vertex_ids,
+                    geometry.positions.into_iter().map(|p| (p.x, p.y)).collect(),
+                    geometry.uvs.into_iter().map(|p| (p.x, p.y)).collect(),
+                    geometry
+                        .triangles
+                        .into_iter()
+                        .map(|t| (t[0], t[1], t[2]))
+                        .collect(),
+                    space,
+                    parent,
                 )
             }))
     }
 
-    fn mesh(&self, id: &str) -> PyResult<Option<MeshTuple>> {
+    fn validate_structure(&self) -> PyResult<Vec<DiagnosticTuple>> {
         Ok(self
             .inner
             .lock()
             .map_err(|_| poisoned())?
-            .mesh(id)
-            .map(|mesh| {
+            .validate_structure()
+            .into_iter()
+            .map(|issue| (issue.object_id, issue.status.code, issue.status.message))
+            .collect())
+    }
+
+    fn history_state(&self) -> PyResult<(usize, usize, usize, usize, usize)> {
+        let state = self.inner.lock().map_err(|_| poisoned())?.history_state();
+        Ok((
+            state.undo_steps,
+            state.redo_steps,
+            state.estimated_bytes,
+            state.max_steps,
+            state.max_bytes,
+        ))
+    }
+
+    fn history_lengths(&self) -> PyResult<(usize, usize)> {
+        Ok(self.inner.lock().map_err(|_| poisoned())?.history_lengths())
+    }
+
+    fn estimated_content_bytes(&self) -> PyResult<usize> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .estimated_content_bytes())
+    }
+
+    fn drain_events(&self) -> PyResult<Vec<EventTuple>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .drain_events()
+            .into_iter()
+            .map(|receipt| {
                 (
-                    mesh.id,
-                    mesh.name,
-                    mesh.vertex_ids,
-                    mesh.base_positions
-                        .into_iter()
-                        .map(|p| (p.x, p.y))
-                        .collect(),
+                    receipt.label,
+                    version_tuple(receipt.before),
+                    version_tuple(receipt.after),
+                    format!("{:?}", receipt.kind),
+                    receipt.object_ids,
+                    receipt.changed,
                 )
-            }))
+            })
+            .collect())
     }
 
     fn diagnose_resources(&self) -> PyResult<Vec<(String, String, String)>> {
@@ -222,30 +531,84 @@ impl NativeSession {
             Ok::<_, ()>(session.evaluate(&values))
         });
         match result {
-            Ok(Ok(frame)) => Ok((
-                frame
-                    .parameters
-                    .into_iter()
-                    .map(|parameter| {
-                        (
-                            parameter.id,
-                            parameter.requested,
-                            parameter.value,
-                            parameter.clamped,
-                        )
-                    })
-                    .collect(),
-                frame
-                    .drawables
-                    .into_iter()
-                    .map(|drawable| {
-                        (
-                            drawable.id,
-                            drawable.positions.into_iter().map(|p| (p.x, p.y)).collect(),
-                        )
-                    })
-                    .collect(),
-            )),
+            Ok(Ok(frame)) => Ok(frame_tuple(&frame)),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
+    }
+
+    fn preview_values(&self) -> PyResult<HashMap<String, f32>> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .preview_values()
+            .clone())
+    }
+
+    fn preview_revision(&self) -> PyResult<u64> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .preview_revision())
+    }
+
+    fn preview_evaluation_count(&self) -> PyResult<u64> {
+        Ok(self
+            .inner
+            .lock()
+            .map_err(|_| poisoned())?
+            .preview_evaluation_count())
+    }
+
+    fn preview_frame(&self, py: Python<'_>) -> PyResult<EvaluationTuple> {
+        let session = self.inner.clone();
+        let result = py.detach(move || {
+            let mut session = session.lock().map_err(|_| ())?;
+            Ok::<_, ()>(session.preview_frame().map(|frame| frame_tuple(&frame)))
+        });
+        match result {
+            Ok(Ok(frame)) => Ok(frame),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
+    }
+
+    fn set_preview_values(&self, py: Python<'_>, values: HashMap<String, f32>) -> PyResult<bool> {
+        let session = self.inner.clone();
+        let result = py.detach(move || {
+            let mut session = session.lock().map_err(|_| ())?;
+            Ok::<_, ()>(session.set_preview_values(values))
+        });
+        match result {
+            Ok(Ok(changed)) => Ok(changed),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
+    }
+
+    fn set_preview_parameter(&self, py: Python<'_>, id: String, value: f32) -> PyResult<bool> {
+        let session = self.inner.clone();
+        let result = py.detach(move || {
+            let mut session = session.lock().map_err(|_| ())?;
+            Ok::<_, ()>(session.set_preview_parameter(&id, value))
+        });
+        match result {
+            Ok(Ok(changed)) => Ok(changed),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
+    }
+
+    fn reset_preview_values(&self, py: Python<'_>) -> PyResult<bool> {
+        let session = self.inner.clone();
+        let result = py.detach(move || {
+            let mut session = session.lock().map_err(|_| ())?;
+            Ok::<_, ()>(session.reset_preview_values())
+        });
+        match result {
+            Ok(Ok(changed)) => Ok(changed),
             Ok(Err(error)) => Err(sdk_failure(py, error)),
             Err(()) => Err(poisoned()),
         }

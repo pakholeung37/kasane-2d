@@ -20,6 +20,52 @@ class MeshSnapshot(NamedTuple):
     version: Version
 
 
+class AssetSnapshot(NamedTuple):
+    id: str
+    name: str
+    source: str
+    width: int
+    height: int
+    sha256: str
+    version: Version
+
+
+class CanvasSnapshot(NamedTuple):
+    width: float
+    height: float
+    origin_x: float
+    origin_y: float
+    pixels_per_unit: float
+
+
+class GeometrySnapshot(NamedTuple):
+    version: Version
+    mesh_id: str
+    vertex_ids: list[int]
+    positions: list[Point]
+    uvs: list[Point]
+    triangles: list[tuple[int, int, int]]
+    space: str
+    parent_id: str | None
+
+
+class HistoryState(NamedTuple):
+    undo_steps: int
+    redo_steps: int
+    estimated_bytes: int
+    max_steps: int
+    max_bytes: int
+
+
+class EditEvent(NamedTuple):
+    label: str
+    before: Version
+    after: Version
+    kind: str
+    object_ids: list[str]
+    changed: bool
+
+
 class ParameterSnapshot(NamedTuple):
     id: str
     name: str
@@ -42,6 +88,12 @@ class MeshKeyform(NamedTuple):
 
 class ResourceIssue(NamedTuple):
     asset_id: str
+    code: str
+    message: str
+
+
+class StructureIssue(NamedTuple):
+    object_id: str
     code: str
     message: str
 
@@ -200,6 +252,25 @@ class Session:
     def edit(self, label: str, expected_version: Version | None = None) -> Edit:
         return Edit(self._native.start_edit(label, expected_version))
 
+    def new_project(
+        self,
+        document_id: str,
+        width: float,
+        height: float,
+        origin: Point,
+        pixels_per_unit: float,
+        expected_version: Version | None = None,
+    ) -> Version:
+        return self._native.new_project(
+            document_id,
+            width,
+            height,
+            origin[0],
+            origin[1],
+            pixels_per_unit,
+            expected_version,
+        )
+
     def save(self, absolute_path: Path, expected_version: Version | None = None) -> SaveResult:
         manifest, durable, warnings, history_warnings = self._native.save(
             str(absolute_path), expected_version
@@ -247,20 +318,79 @@ class Session:
     def asset_ids(self) -> list[str]:
         return self._native.asset_ids()
 
+    def asset(self, asset_id: str) -> AssetSnapshot | None:
+        raw = self._native.asset(asset_id)
+        return AssetSnapshot(*raw) if raw is not None else None
+
+    def references_to(self, object_id: str) -> list[str]:
+        return self._native.references_to(object_id)
+
     def parameter_ids(self) -> list[str]:
         return self._native.parameter_ids()
+
+    def binding_ids(self) -> list[str]:
+        return self._native.binding_ids()
+
+    def part_ids(self) -> list[str]:
+        return self._native.part_ids()
+
+    def transform_ids(self) -> list[str]:
+        return self._native.transform_ids()
+
+    def scene_binding_ids(self) -> list[str]:
+        return self._native.scene_binding_ids()
+
+    def blend_key_table_ids(self) -> list[str]:
+        return self._native.blend_key_table_ids()
+
+    def blend_constraint_ids(self) -> list[str]:
+        return self._native.blend_constraint_ids()
+
+    def blend_binding_ids(self) -> list[str]:
+        return self._native.blend_binding_ids()
+
+    def glue_ids(self) -> list[str]:
+        return self._native.glue_ids()
+
+    def offscreen_ids(self) -> list[str]:
+        return self._native.offscreen_ids()
 
     def parameter(self, parameter_id: str) -> ParameterSnapshot | None:
         raw = self._native.parameter(parameter_id)
         if raw is None:
             return None
-        return ParameterSnapshot(*raw, self.version)
+        return ParameterSnapshot(*raw)
 
     def mesh(self, mesh_id: str) -> MeshSnapshot | None:
         raw = self._native.mesh(mesh_id)
         if raw is None:
             return None
-        return MeshSnapshot(*raw, self.version)
+        return MeshSnapshot(*raw)
+
+    def find_meshes_by_name(self, name: str) -> list[MeshSnapshot]:
+        return [MeshSnapshot(*mesh) for mesh in self._native.find_meshes_by_name(name)]
+
+    def require_unique_mesh(self, name: str) -> MeshSnapshot:
+        return MeshSnapshot(*self._native.require_unique_mesh(name))
+
+    def geometry(self, mesh_id: str) -> GeometrySnapshot | None:
+        raw = self._native.geometry(mesh_id)
+        return GeometrySnapshot(*raw) if raw is not None else None
+
+    def validate_structure(self) -> list[StructureIssue]:
+        return [StructureIssue(*issue) for issue in self._native.validate_structure()]
+
+    def history_state(self) -> HistoryState:
+        return HistoryState(*self._native.history_state())
+
+    def history_lengths(self) -> tuple[int, int]:
+        return self._native.history_lengths()
+
+    def estimated_content_bytes(self) -> int:
+        return self._native.estimated_content_bytes()
+
+    def drain_events(self) -> list[EditEvent]:
+        return [EditEvent(*event) for event in self._native.drain_events()]
 
     def evaluate(self, values: Mapping[str, float]) -> Evaluation:
         parameters, drawables = self._native.evaluate(dict(values))
@@ -273,8 +403,48 @@ class Session:
         return [ResourceIssue(*item) for item in self._native.diagnose_resources()]
 
     @property
+    def preview_values(self) -> dict[str, float]:
+        return self._native.preview_values()
+
+    @property
+    def preview_revision(self) -> int:
+        return self._native.preview_revision()
+
+    @property
+    def preview_evaluation_count(self) -> int:
+        return self._native.preview_evaluation_count()
+
+    def preview_frame(self) -> Evaluation:
+        parameters, drawables = self._native.preview_frame()
+        return Evaluation(
+            [ParameterSample(*sample) for sample in parameters],
+            [DrawableSample(*sample) for sample in drawables],
+        )
+
+    def set_preview_values(self, values: Mapping[str, float]) -> bool:
+        return self._native.set_preview_values(dict(values))
+
+    def set_preview_parameter(self, parameter_id: str, value: float) -> bool:
+        return self._native.set_preview_parameter(parameter_id, value)
+
+    def reset_preview_values(self) -> bool:
+        return self._native.reset_preview_values()
+
+    @property
     def version(self) -> Version:
         return self._native.version()
+
+    @property
+    def document_id(self) -> str:
+        return self._native.document_id()
+
+    @property
+    def canvas(self) -> CanvasSnapshot:
+        return CanvasSnapshot(*self._native.canvas())
+
+    @property
+    def evaluation_revision(self) -> int:
+        return self._native.evaluation_revision()
 
     @property
     def modified(self) -> bool:
@@ -293,10 +463,15 @@ def open_project(absolute_path: Path) -> Session:
 
 __all__ = [
     "Axis",
+    "AssetSnapshot",
+    "CanvasSnapshot",
     "DrawableSample",
     "Edit",
+    "EditEvent",
     "Evaluation",
     "ExportResult",
+    "GeometrySnapshot",
+    "HistoryState",
     "ImportResult",
     "MeshSnapshot",
     "MeshKeyform",
@@ -306,6 +481,7 @@ __all__ = [
     "SaveResult",
     "SdkFailure",
     "Session",
+    "StructureIssue",
     "capabilities",
     "open_project",
 ]

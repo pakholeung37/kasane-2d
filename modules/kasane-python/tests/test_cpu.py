@@ -150,16 +150,94 @@ class CpuWheelTests(unittest.TestCase):
                 [kasane.MeshKeyform([0], base), kasane.MeshKeyform([1], shifted)],
             )
         self.assertEqual(model.parameter_ids(), [PARAMETER])
+        self.assertEqual(model.binding_ids(), [BINDING])
         self.assertEqual(model.parameter(PARAMETER).name, "open")
         middle = model.evaluate({PARAMETER: 0.5})
         self.assertEqual(middle.parameters[0].value, 0.5)
         self.assertEqual(middle.drawables[0].positions[0], (-0.5, 1))
         self.assertEqual(model.evaluate({PARAMETER: 2}).parameters[0].value, 1)
+        preview_before = model.preview_revision
+        self.assertTrue(model.set_preview_values({PARAMETER: 0.5}))
+        self.assertEqual(model.preview_values, {PARAMETER: 0.5})
+        self.assertGreater(model.preview_revision, preview_before)
+        self.assertEqual(model.preview_frame().drawables[0].positions[0], (-0.5, 1))
+        self.assertGreaterEqual(model.preview_evaluation_count, 1)
+        self.assertEqual(model.evaluate({PARAMETER: 0}).drawables[0].positions[0], (-1, 1))
+        revision = model.preview_revision
+        with self.assertRaises(kasane.SdkFailure):
+            model.set_preview_parameter("00000000-0000-4000-8000-000000000099", 1)
+        self.assertEqual(model.preview_revision, revision)
+        self.assertTrue(model.set_preview_parameter(PARAMETER, 1))
+        self.assertEqual(model.preview_frame().drawables[0].positions[0], (0, 1))
+        self.assertTrue(model.reset_preview_values())
+        self.assertEqual(model.preview_values, {})
         with TemporaryDirectory() as directory:
             destination = Path(directory).resolve() / "project"
             model.save(destination)
             reopened = kasane.open_project(destination)
             self.assertEqual(reopened.evaluate({PARAMETER: 0.5}), middle)
+
+    def test_queries_geometry_history_and_events(self):
+        model = session()
+        self.assertEqual(model.document_id, DOCUMENT)
+        self.assertEqual(model.canvas.width, 100)
+        self.assertEqual(model.canvas.origin_x, 50)
+        with model.edit("create") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        self.assertEqual(model.validate_structure(), [])
+        self.assertEqual(model.asset(ASSET).width, 2)
+        self.assertEqual(model.asset(ASSET).height, 2)
+        self.assertEqual(model.references_to(ASSET), [MESH])
+        self.assertEqual(model.binding_ids(), [])
+        self.assertEqual(model.part_ids(), [])
+        self.assertEqual(model.transform_ids(), [])
+        self.assertEqual(model.scene_binding_ids(), [])
+        self.assertEqual(model.blend_key_table_ids(), [])
+        self.assertEqual(model.blend_constraint_ids(), [])
+        self.assertEqual(model.blend_binding_ids(), [])
+        self.assertEqual(model.glue_ids(), [])
+        self.assertEqual(model.offscreen_ids(), [])
+        self.assertEqual(model.find_meshes_by_name("face")[0].id, MESH)
+        self.assertEqual(model.require_unique_mesh("face").id, MESH)
+        with self.assertRaises(kasane.SdkFailure) as failure:
+            model.require_unique_mesh("missing")
+        self.assertEqual(failure.exception.code, "NOT_FOUND")
+        geometry = model.geometry(MESH)
+        self.assertEqual(geometry.space, "canvas_pixels")
+        self.assertEqual(geometry.parent_id, None)
+        self.assertEqual(geometry.version, model.version)
+        self.assertEqual(len(geometry.uvs), 4)
+        self.assertEqual(len(geometry.triangles), 2)
+        geometry.positions[0] = (999, 999)
+        self.assertEqual(model.geometry(MESH).positions[0], (40, 40))
+        self.assertEqual(model.history_lengths(), (1, 0))
+        self.assertEqual(model.history_state().undo_steps, 1)
+        self.assertGreater(model.estimated_content_bytes(), 0)
+        self.assertGreaterEqual(model.evaluation_revision, 1)
+        events = model.drain_events()
+        self.assertEqual(events[0].label, "create")
+        self.assertEqual(model.drain_events(), [])
+
+    def test_new_project_rejects_stale_version_and_resets_session(self):
+        model = session()
+        with model.edit("create") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        before = model.version
+        stale = (before[0], before[1], before[2] + 1)
+        with self.assertRaises(kasane.SdkFailure) as failure:
+            model.new_project(DOCUMENT, 200, 200, (100, 100), 20, stale)
+        self.assertEqual(failure.exception.code, "STALE_VERSION")
+        self.assertEqual(model.version, before)
+        after = model.new_project(DOCUMENT, 200, 200, (100, 100), 20, before)
+        self.assertEqual(after[1], before[1] + 1)
+        self.assertEqual(model.canvas.width, 200)
+        self.assertEqual(model.asset_ids(), [])
+        self.assertEqual(model.mesh_ids(), [])
+        self.assertEqual(model.history_lengths(), (0, 0))
+        self.assertEqual(model.preview_values, {})
+        self.assertIsNone(model.project_path)
 
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:

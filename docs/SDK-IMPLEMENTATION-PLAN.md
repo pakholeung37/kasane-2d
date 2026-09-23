@@ -493,4 +493,6 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 
 2026-09-23 S3 首批实施：新增 `kasane-python` mixed-layout wheel，固定 PyO3 0.29.2 与 maturin 1.15.0；原生 Session 使用短时锁，`with edit` 收集命令后一次调用 Rust SDK 发布。已接入 PNG/矩形建模、参数和完整 mesh binding、位置更新、CPU 求值、工程导入/保存/导出、结构化业务异常，以及一次性 runner 的 stdout/stderr、异常行号与会话版本报告。仓库外 CPython 3.14 venv 的 7 项测试与 CPU recipe 通过；公开入口覆盖检查记录 29/115 已绑定，剩余 86 项及 GPU 观察仍待实施。
 
+2026-09-23 S3 同轮后续：补工程重置、asset/mesh/parameter/几何快照、全部对象 ID 列表、名称与引用查询、结构诊断、历史状态和事件、独立预览值与帧。Python 快照的版本与数据在同一次原生锁内读取；预览失败不覆盖旧值。仓库外 wheel 的 9 项 Python CPU 测试通过；公开入口覆盖升至 59/115，剩余 56 项待绑定。
+
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

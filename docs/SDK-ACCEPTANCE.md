@@ -29,3 +29,5 @@
 | `python -m kasane run examples/sdk/python_cpu_recipe.py --report <path>` | 通过：报告 `passed`，创作与保存后 `modified=false` |
 
 这些结果验证了本机 CPython 3.14 的首批 API。尚未验证其它 Python 版本、free-threaded wheel、完整 Rust API 覆盖或 GPU 观察。
+
+同日续测：追加查询、预览和 `new_project` 绑定后重新构建并在同一仓库外 venv 安装 wheel，`test_cpu.py` 9 项通过；`cargo clippy -p kasane-python --all-targets -- -D warnings` 通过。覆盖检查当前为 59/115 已绑定、56 项待绑定。新增测试验证快照数据与版本同时读取、预览修改不影响独立求值、预览失败保留状态、名称查询与缺失错误、对象 ID 列表、历史事件和工程重置。
