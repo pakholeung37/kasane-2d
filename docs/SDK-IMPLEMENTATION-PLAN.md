@@ -433,16 +433,16 @@ artifacts/<run-id>/
 
 ### 11.3 SDK 验收入口
 
-第一条 Rust 测试命令现已可运行；其余命令仍是交付要求，尚不存在：
+当前 Rust 和 wheel 门禁命令：
 
 ```sh
 cargo test -p kasane-sdk --locked
 cargo test -p kasane-sdk-observe --locked
-python3 tools/validate_sdk.py --profile cpu --output target/sdk-acceptance/cpu
-python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
+python3.14 tools/validate_sdk.py --wheel /absolute/path/to/cpu-wheel.whl
+python3.14 tools/validate_sdk.py --wheel /absolute/path/to/observe-wheel.whl --require-gpu
 ```
 
-`validate_sdk.py` 负责构建/安装指定 wheel、调用 Python 测试、运行 recipes 并汇总证据。CPU profile 清楚列出范围；full profile 包含 GPU、外部模型和导出运行对照。外部资源由本地配置文件提供并记录 hash，不在命令中硬编码个人目录。
+`validate_sdk.py` 将指定 wheel 安装到仓库外临时 venv，运行 Python 测试、两素材创作与导出 recipe、可用时的 GPU 观察 recipe，并汇总证据。CPU wheel 的 GPU 项明确为 `not_run`；`--require-gpu` 要求真实 GPU。外部模型编辑和第二脚本局部修正尚未接入完整 S5 门禁。
 
 报告逐项使用 `passed/failed/not_run`，由检查结果生成。必需项失败或未执行返回非零；导入过程的 diagnostics 和发布成功的 warnings 独立保留。可复用 [acceptance_evidence.py](../tools/acceptance_evidence.py) 的检查汇总思想和兼容的实现部分，不手工填入整体 passed。
 
@@ -532,5 +532,7 @@ python3 tools/validate_sdk.py --profile full --output target/sdk-acceptance/full
 2026-09-23 S4 观察来源补充：每帧用本次 `DrawableFrame`、校验后纹理内容 hash 和输出 view 生成 `input_sha256`；运行报告记录 SDK 版本、原生模块二进制 hash、平台、session/generation/document/source/evaluation revision，以及透明背景、线性 `RGBA8Unorm` 和未额外转换的预乘 alpha 约定。GPU wheel 测试确认几何、纹理、view 改变会改变输入指纹；外部观察 recipe 的三档参数采样生成三个不同图像和输入指纹，且不改变 Session preview。逐项图像预期对照与 S4 完整门禁继续实施。
 
 2026-09-23 S4/S5 验收入口首批：新增 `tools/validate_sdk.py`，每次用指定 wheel 在仓库外临时 venv 中运行 CPU 测试、可用时的真实 GPU 测试和观察 recipe。独立运行目录记录源码 revision/dirty 标记、wheel 与 fixture hash、命令日志、能力探测和观察产物索引；校验 3 帧、3 个 crop、contact sheet 及内容 hash，`--require-gpu` 将 GPU 缺席视为失败。当前 feature wheel 在 Apple M4/Metal 上总报告 `passed`，CPU wheel 报告 `partial`/GPU `not_run`。S5 外部导入、agent 局部修正和图像真值对照仍需接入。
+
+2026-09-23 S5 第一条流程：`python_two_asset_recipe.py` 在仓库外 wheel 中读取不同尺寸与位置的两张 PNG（2×2、4×4），创建两个 mesh、part、Rotation→Warp 与双 mesh 参数 keyform，计算 0/0.5/1 三档实际采样并按 0.05 原像素阈值检查中点插值；保存、重开后三档位置一致，MOC3 导出成功。`validate_sdk.py` 记录工程、导出 MOC3 的 hash、输入 hash 与命令日志；CPU 与 GPU feature wheel 均通过，最大中点误差约 0.000076 原像素。S5 外部工程局部编辑与第二脚本自检修正仍待实现。
 
 随后按第 7 节补齐对象族，并推进 S2 的跨保存历史。Python 薄绑定和观察宿主分别在对应契约稳定后接入。每次阶段报告明确已实现接口、实际运行的验收、未完成项以及下一阶段入口。

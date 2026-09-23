@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Run the shipped SDK wheel outside the source tree and retain CPU/GPU evidence.
 
-This is the S3/S4 gate. S5 import and agent-edit flows are tracked separately.
+This covers S3/S4 plus S5's new-model flow. S5 import and agent-edit flows remain.
 """
 
 from __future__ import annotations
@@ -23,7 +23,9 @@ ROOT = Path(__file__).resolve().parents[1]
 CPU_TEST = ROOT / "modules/kasane-python/tests/test_cpu.py"
 GPU_TEST = ROOT / "modules/kasane-python/tests/test_observe.py"
 RECIPE = ROOT / "examples/sdk/python_observe_recipe.py"
+TWO_ASSET_RECIPE = ROOT / "examples/sdk/python_two_asset_recipe.py"
 TEXTURE = ROOT / "examples/sdk/asymmetric-2x2.png"
+SECOND_TEXTURE = ROOT / "tests/fixtures/external_v50/texture_00.png"
 
 
 def sha256(path: Path) -> str:
@@ -105,6 +107,29 @@ def validate_observation(path: Path) -> dict:
     }
 
 
+def validate_two_asset(path: Path, run: Path) -> dict:
+    recipe = json.loads(path.read_text(encoding="utf-8"))
+    if recipe["status"] != "passed" or len(recipe["assets"]) != 2:
+        raise RuntimeError("Two-asset creation recipe did not pass")
+    if {(asset["width"], asset["height"]) for asset in recipe["assets"]} != {(2, 2), (4, 4)}:
+        raise RuntimeError("Two-asset recipe did not retain both source sizes")
+    if recipe["maximum_midpoint_pixel_error"] > 0.05:
+        raise RuntimeError("Two-asset midpoint exceeds pixel tolerance")
+    if len(recipe["samples"]) != 3 or len(recipe["transform_ids"]) != 2:
+        raise RuntimeError("Two-asset recipe lacks required samples or transforms")
+    manifest = Path(recipe["project_manifest"])
+    exported = Path(recipe["export_moc3"])
+    if not manifest.is_relative_to(run) or not exported.is_relative_to(run):
+        raise RuntimeError("Two-asset recipe wrote outside the evidence directory")
+    if not manifest.is_file() or not exported.is_file() or sha256(exported) != recipe["export_sha256"]:
+        raise RuntimeError("Two-asset project or exported MOC3 is missing")
+    return {
+        "status": "passed", "report": str(path.relative_to(run)),
+        "maximum_midpoint_pixel_error": recipe["maximum_midpoint_pixel_error"],
+        "export_sha256": recipe["export_sha256"],
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", required=True, type=Path)
@@ -130,7 +155,7 @@ def main() -> int:
         "wheel": {"path": str(wheel), "sha256": sha256(wheel)},
         "inputs": {
             str(path.relative_to(ROOT)): sha256(path)
-            for path in (CPU_TEST, GPU_TEST, RECIPE, TEXTURE)
+            for path in (CPU_TEST, GPU_TEST, RECIPE, TWO_ASSET_RECIPE, TEXTURE, SECOND_TEXTURE)
         },
         "checks": {},
     }
@@ -151,6 +176,13 @@ def main() -> int:
                 "status": "passed",
                 "tests": test_count((logs / "cpu-tests.log").read_text(), "cpu-tests"),
             }
+            creation_output = command(
+                "two-asset-recipe",
+                [str(installed), str(TWO_ASSET_RECIPE), str(run / "two-asset")],
+                cwd=outside, env=environment, logs=logs,
+            )
+            creation_report = Path(creation_output.splitlines()[-1]).resolve(strict=True)
+            report["checks"]["creation_export"] = validate_two_asset(creation_report, run)
             capabilities = json.loads(command(
                 "capabilities", [str(installed), "-c",
                                  "import json, kasane; print(json.dumps(kasane.capabilities()))"],

@@ -12,7 +12,7 @@
 | [`tools/validate_gpu.py`](validate_gpu.py) | **P0 真实 GPU 视觉回归**：在真实显示渲染管线下，逐像素比对 Rust 预览节点与官方 Core 的画面一致性 | Godot 4.3+, `numpy`, `pillow` |
 | [`tools/compare_gpu_images.py`](compare_gpu_images.py) | GPU 画面像素差分计算模块（全画幅均值与 5x5 特征区域灵敏分析） | `numpy`, `pillow` |
 | [`tools/validate_godot.py`](validate_godot.py) | **P0 Godot 生命周期与工作流闭环**：验证句柄失效保护、信号重入安全与新建→编辑→保存→导出全流程 | Godot 4.3+, Rust GDExtension |
-| [`tools/validate_sdk.py`](validate_sdk.py) | SDK S3/S4 wheel 门禁：仓库外临时 venv、CPU/GPU 测试、观察 recipe 和带 hash 的证据报告 | CPython 3.14、已构建的 wheel；GPU wheel 需真实 GPU |
+| [`tools/validate_sdk.py`](validate_sdk.py) | SDK S3/S4 wheel 门禁和 S5 两素材新建流程：仓库外临时 venv、CPU/GPU 测试、recipes 和带 hash 的证据报告 | CPython 3.14、已构建的 wheel；GPU wheel 需真实 GPU |
 | [`tools/test_acceptance_validators.py`](test_acceptance_validators.py) | 验收验证器本身的负控制单元测试（防止门禁自身出现假阳性/假阴性） | Python 3 `unittest` |
 | [`tools/stage_godot_addon.py`](stage_godot_addon.py) | 将 `gd_cubism` 运行时插件注入到示例/测试 Godot 项目中 | Python 3 |
 | [`tools/run_cubism_core_demo.sh`](run_cubism_core_demo.sh) | 驱动运行交互式 Godot 演示项目 | Godot, SCons, CMake |
