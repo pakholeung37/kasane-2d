@@ -41,3 +41,5 @@ Part 续测：同批次创建父子 Part、设置组织父节点与 mesh Part、
 Transform 续测：同批次创建旋转/warp、设置 Transform 父节点和 Part 归属、设置 mesh 变形父节点；更新旋转姿态与 warp 点后 undo。仓库外 wheel 的 `test_cpu.py` 15 项通过，Clippy 无警告；覆盖清单为 84/115，余 31 项。
 
 PNG 资源续测：显式基目录导入，拒绝尺寸不符搬迁，相同内容搬迁，替换新图片后 undo。仓库外 wheel 的 `test_cpu.py` 16 项通过，Clippy 无警告；覆盖清单为 87/115，余 28 项。
+
+几何提示续测：面积及画布范围提示不修改版本，非法阈值返回业务错误。仓库外 wheel 的 `test_cpu.py` 17 项通过；修正后的覆盖检查为 116 项，其中 88 项 Python 绑定、1 项 Rust 专用、27 项待绑定。

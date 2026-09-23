@@ -421,6 +421,26 @@ class CpuWheelTests(unittest.TestCase):
             model.undo()
             self.assertEqual(model.asset(ASSET).sha256, original.sha256)
 
+    def test_geometry_diagnostics_are_advisory(self):
+        model = session()
+        with model.edit("rectangle") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        version = model.version
+        issues = model.diagnose_geometry(201, ((0, 0), (50, 50)))
+        self.assertEqual(
+            sum(issue.kind == "small_triangle" for issue in issues), 2
+        )
+        self.assertTrue(
+            any(issue.kind == "outside_canvas_bounds" for issue in issues)
+        )
+        self.assertEqual({issue.mesh_id for issue in issues}, {MESH})
+        self.assertEqual(model.version, version)
+        with self.assertRaises(kasane.SdkFailure) as invalid:
+            model.diagnose_geometry(-1)
+        self.assertEqual(invalid.exception.code, "INVALID_DIAGNOSTIC_OPTIONS")
+        self.assertEqual(model.version, version)
+
     def test_runner_reports_exception_line_and_committed_edit(self):
         with TemporaryDirectory() as directory:
             root = Path(directory).resolve()

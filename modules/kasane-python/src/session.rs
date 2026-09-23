@@ -8,7 +8,10 @@ use crate::edit::NativeEdit;
 use crate::error::{poisoned, sdk_failure};
 use crate::handle::NativeHandle;
 use kasane_core::{Canvas, Vec2};
-use kasane_sdk::{AuthoringSession, HistoryLimits, SdkError, SourceSpace};
+use kasane_sdk::{
+    AuthoringSession, GeometryBounds, GeometryChecks, GeometryDiagnosticKind, HistoryLimits,
+    SdkError, SourceSpace,
+};
 use pyo3::prelude::*;
 
 #[pyclass]
@@ -508,6 +511,42 @@ impl NativeSession {
             .into_iter()
             .map(|item| (item.asset_id, item.code, item.message))
             .collect())
+    }
+
+    #[pyo3(signature = (min_triangle_area=0.0, canvas_bounds=None))]
+    fn diagnose_geometry(
+        &self,
+        py: Python<'_>,
+        min_triangle_area: f64,
+        canvas_bounds: Option<(PointTuple, PointTuple)>,
+    ) -> PyResult<Vec<(String, String, Option<usize>)>> {
+        let session = self.inner.clone();
+        let checks = GeometryChecks {
+            min_triangle_area,
+            canvas_bounds: canvas_bounds.map(|(min, max)| GeometryBounds {
+                min: Vec2::new(min.0, min.1),
+                max: Vec2::new(max.0, max.1),
+            }),
+        };
+        let result = py.detach(move || {
+            let session = session.lock().map_err(|_| ())?;
+            Ok::<_, ()>(session.diagnose_geometry(checks))
+        });
+        match result {
+            Ok(Ok(issues)) => Ok(issues
+                .into_iter()
+                .map(|issue| {
+                    let kind = match issue.kind {
+                        GeometryDiagnosticKind::SmallTriangle => "small_triangle",
+                        GeometryDiagnosticKind::InconsistentWinding => "inconsistent_winding",
+                        GeometryDiagnosticKind::OutsideCanvasBounds => "outside_canvas_bounds",
+                    };
+                    (kind.into(), issue.mesh_id, issue.triangle_index)
+                })
+                .collect()),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
     }
 
     fn evaluate(&self, py: Python<'_>, values: HashMap<String, f32>) -> PyResult<EvaluationTuple> {

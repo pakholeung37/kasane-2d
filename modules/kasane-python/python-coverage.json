@@ -241,6 +241,11 @@
     "python": "Session.canvas",
     "test": "test_queries_geometry_history_and_events"
   },
+  "Session.diagnose_geometry": {
+    "status": "bound",
+    "python": "Session.diagnose_geometry",
+    "test": "test_geometry_diagnostics_are_advisory"
+  },
   "Session.diagnose_resources": {
     "status": "bound",
     "python": "Session.diagnose_resources",
@@ -491,7 +496,10 @@
     "test": "test_update_positions_publishes_one_edit"
   },
   "Session.with_filesystem": {
-    "status": "pending"
+    "status": "rust_only",
+    "reason": "Accepts an Arc<dyn FileSystem> backend for deterministic Rust publication tests; Python uses the native filesystem.",
+    "rust_test_path": "modules/kasane-sdk/tests/project_io.rs",
+    "rust_test": "publication_warning_keeps_saved_baseline_and_undo_history"
   },
   "Session.with_history_limits": {
     "status": "bound",

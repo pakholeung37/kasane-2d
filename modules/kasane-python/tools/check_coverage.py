@@ -16,10 +16,10 @@ TESTS = Path(__file__).resolve().parents[1] / "tests/test_cpu.py"
 def public_api() -> set[str]:
     sources = {
         name: (SDK / f"{name}.rs").read_text(encoding="utf-8")
-        for name in ("session", "project_io", "edit", "types", "assets")
+        for name in ("session", "project_io", "diagnostics", "edit", "types", "assets")
     }
     sections = {
-        "Session": sources["session"] + sources["project_io"],
+        "Session": sources["session"] + sources["project_io"] + sources["diagnostics"],
         "Edit": sources["edit"],
         "ObjectHandle": sources["types"],
         "free": sources["assets"],
@@ -51,6 +51,7 @@ def main() -> int:
     test_source = TESTS.read_text(encoding="utf-8")
     bad = []
     bound = 0
+    rust_only = 0
     for api, entry in sorted(entries.items()):
         if entry.get("status") == "bound":
             bound += 1
@@ -58,13 +59,20 @@ def main() -> int:
                 bad.append(f"{api}: missing python method or test")
             elif f"def {entry['test']}(" not in test_source:
                 bad.append(f"{api}: unknown test {entry['test']}")
+        elif entry.get("status") == "rust_only":
+            rust_only += 1
+            path = ROOT / entry.get("rust_test_path", "")
+            if not entry.get("reason") or not entry.get("rust_test") or not path.is_file():
+                bad.append(f"{api}: missing reason or Rust test")
+            elif f"fn {entry['rust_test']}(" not in path.read_text(encoding="utf-8"):
+                bad.append(f"{api}: unknown Rust test {entry['rust_test']}")
         elif entry.get("status") != "pending":
             bad.append(f"{api}: invalid status")
     if bad:
         print("\n".join(bad))
         return 1
-    pending = len(entries) - bound
-    print(f"Rust SDK API: {len(entries)}; Python bound: {bound}; pending: {pending}")
+    pending = len(entries) - bound - rust_only
+    print(f"Rust SDK API: {len(entries)}; Python bound: {bound}; Rust only: {rust_only}; pending: {pending}")
     return int(args.require_complete and pending > 0)
 
 

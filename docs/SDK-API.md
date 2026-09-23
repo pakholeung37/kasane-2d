@@ -83,4 +83,6 @@ Transform 已支持旋转与 warp 两种类型的创建、读取及各自数据�
 
 PNG 资源路径又支持显式绝对基目录加相对文件名、替换 PNG、相同内容搬迁。搬迁继续使用 Rust SDK 的尺寸与内容 hash 检查，替换允许新内容。覆盖清单更新至 87/115，剩余 28 项。
 
+几何提示 `Session.diagnose_geometry` 已接入，返回三角形面积、绕序与根 mesh 画布范围的提示，不修改文档。覆盖检查现包含独立的 Rust 诊断模块，清单为 116 项：88 项 Python 绑定、1 项 Rust 专用测试注入、27 项待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

@@ -56,6 +56,12 @@ class GeometrySnapshot(NamedTuple):
     parent_id: str | None
 
 
+class GeometryIssue(NamedTuple):
+    kind: str
+    mesh_id: str
+    triangle_index: int | None
+
+
 class HistoryState(NamedTuple):
     undo_steps: int
     redo_steps: int
@@ -619,6 +625,16 @@ class Session:
     def diagnose_resources(self) -> list[ResourceIssue]:
         return [ResourceIssue(*item) for item in self._native.diagnose_resources()]
 
+    def diagnose_geometry(
+        self,
+        min_triangle_area: float = 0,
+        canvas_bounds: tuple[Point, Point] | None = None,
+    ) -> list[GeometryIssue]:
+        return [
+            GeometryIssue(*item)
+            for item in self._native.diagnose_geometry(min_triangle_area, canvas_bounds)
+        ]
+
     @property
     def preview_values(self) -> dict[str, float]:
         return self._native.preview_values()
@@ -715,6 +731,7 @@ __all__ = [
     "Evaluation",
     "ExportResult",
     "GeometrySnapshot",
+    "GeometryIssue",
     "HistoryState",
     "ImportResult",
     "MeshSnapshot",
