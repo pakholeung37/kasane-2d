@@ -48,15 +48,21 @@ configured limit before more renderer extraction is accepted.
 
 ## Render boundary
 
-`kasane_render::prepare_frame` now returns a `PreparedFrame` containing both
-logical attachment requirements and a backend-neutral pass stream. The stream
-contains `Main`, `Offscreen`, `Mask`, `Composite`, `Draw`, and
-`EndOffscreen` operations in execution order. `KasaneDocumentPreview` is now a
-thin Godot-facing lifecycle/API wrapper; `kasane-render-godot` owns Godot
-nodes, viewports, materials, masks, destination copies, shaders, and pass
-execution. The backend resolves the prepared operations to Godot resources;
-the preview no longer traverses `kasane_core::RenderCommand` or owns renderer
-state. `kasane-render-wgpu` keeps device and queue ownership with its host and
+`kasane_render::ScenePlan` is the persistent logical boundary used by Godot.
+It owns explicit target-local draw/composite lists and raw mask-source
+references, without retaining a published frame or positions. The Godot
+adapter lowers it to physical mask/viewports and attachment layouts. Camera
+updates use a separate `update_view` path, skipping frame validation, geometry
+synchronization and color-node reordering. Texture binding changes preserve
+mesh geometry, and mask resolution changes reuse existing viewports within a
+sampling policy.
+
+`prepare_frame` / `PreparedFrame` remain a compatibility facade generated from
+that same logical scene. Their pass stream preserves legacy scene-assembly
+order; it is not a GPU execution schedule. The shared layer does not require a
+backend to reproduce Godot's consumer-specific mask instances.
+
+`kasane-render-wgpu` keeps device and queue ownership with its host and
 accepts host-owned texture views plus reusable backend-owned surface, mask, and
 destination pools. `render_scene` currently executes normal, additive, and
 multiplicative draws, alpha masks, nested offscreen surfaces, and
@@ -85,3 +91,28 @@ directory, then compare the two reports with the same comparison tool. The
 workload imports `Ren.model3.json`, uploads its texture, renders at 2048², and
 updates a parameter on every sampled frame so offscreen creation and resize
 regressions remain visible in `render_stats`.
+
+## Recorded comparisons and view-only contracts
+
+- [Extraction baseline](results/20260923-backend-extraction/summary.md): c21c111 vs de62a6b.
+- [Persistent scene plan](results/20260923-scene-plan/summary.md): de62a6b vs the first scene/view refactor.
+
+`refresh_cpu_ms` includes the full Dictionary returned by `set_preview_values`;
+keep this endpoint unchanged for historical comparisons. It is not isolated
+renderer CPU time. `frame_ms` also includes host scheduling waits.
+
+Run the targeted camera/mask/texture and lifecycle contracts with the freshly
+built Release library:
+
+```sh
+python3 tools/validate_render_boundary.py
+```
+
+`scene_submissions`, `view_updates`, `geometry_syncs` and `mask_creations` in
+render stats distinguish camera layout work from model-frame synchronization.
+The parameter benchmarks above do not quantify camera-only CPU latency.
+
+
+The [incremental model-sync comparison](results/20260923-incremental-sync/summary.md)
+compares against the first ScenePlan implementation. `order_syncs` and
+`material_syncs` expose skipped native node and drawable material updates.

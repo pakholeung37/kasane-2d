@@ -36,6 +36,9 @@ fn consumers_share_one_evaluation_and_snapshots_remain_immutable() {
     assert_eq!(state.evaluation_count(), 2);
     assert_eq!(old.parameters[0].value, 0.);
     assert_eq!(new.parameters[0].value, 0.5);
+    // Document revision alone cannot identify a published animation frame.
+    assert_eq!(old.source_revision, new.source_revision);
+    assert!(!Arc::ptr_eq(&old, &new));
     assert!(!state.replace(&doc, 1, [(id(2), 0.5)].into()).unwrap());
     assert_eq!(state.evaluation_count(), 2);
     // Distinct requests remain observable even when their clamped geometry matches.

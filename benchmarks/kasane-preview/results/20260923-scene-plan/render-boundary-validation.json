@@ -1,0 +1,54 @@
+{
+  "status": "passed",
+  "library_sha256": "fe07e9c70c1c7421b30075703e24c7c06d209f8fc5fa5011431539e93bc20acb",
+  "suites": {
+    "preview_cache_regression": {
+      "checks": 23,
+      "failures": [],
+      "status": "passed",
+      "data_dir": "/Users/pakholeung/web/kesane-2d/target/render-boundary-refactor/data-preview_cache_regression-c682xwbi"
+    },
+    "m3c_surface_lifecycle": {
+      "checks": 106,
+      "failures": [],
+      "initial_resources": {
+        "active_offscreens": 3,
+        "creations": 5,
+        "destination_copies": 0,
+        "geometry_syncs": 5,
+        "gpu_texture_bytes": 3010887,
+        "gpu_video_bytes": 13682271,
+        "mask_color_bytes": 0,
+        "mask_creations": 0,
+        "mask_viewports": 0,
+        "materials": 5,
+        "mesh_views": 5,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 196624,
+        "offscreen_creations": 4,
+        "offscreen_groups": 4,
+        "offscreen_reserved_bytes": 393248,
+        "offscreen_resizes": 0,
+        "scene_submissions": 1,
+        "shaders": 2,
+        "uploads": 0,
+        "view_updates": 0
+      },
+      "status": "passed",
+      "data_dir": "/Users/pakholeung/web/kesane-2d/target/render-boundary-refactor/data-m3c_surface_lifecycle-19zuw2gk"
+    },
+    "render_boundary_contract": {
+      "checks": 34,
+      "failures": [],
+      "note": "Creation delta is a diagnostic, not a required behavior for the new renderer.",
+      "status": "passed",
+      "texture_replacement_mesh_creations": 0,
+      "data_dir": "/Users/pakholeung/web/kesane-2d/target/render-boundary-refactor/data-render_boundary_contract-_9gcaeya"
+    },
+    "m3c_viewport_chain_probe": {
+      "status": "passed",
+      "negative_control": "passed",
+      "data_dir": "/Users/pakholeung/web/kesane-2d/target/render-boundary-refactor/data-m3c_viewport_chain_probe-ua1xvndl"
+    }
+  }
+}

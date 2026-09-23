@@ -1,0 +1,55 @@
+{
+  "before_commit": "de62a6b",
+  "after_base_commit": "44713730289de2844efdf535e41fe69f3f915e16",
+  "after_working_tree": true,
+  "libraries": {
+    "before": {
+      "path": "/Users/pakholeung/web/kesane-2d/target/render-comparison-20260923-100029/gpu-fixture/current/libkasane_godot.dylib",
+      "sha256": "69f7d9ca06b788b8a2006d68e4f73d0f1235673e1589389da4ba39da72b72d51"
+    },
+    "after": {
+      "path": "/Users/pakholeung/web/kesane-2d/target/release/libkasane_godot.dylib",
+      "sha256": "fe07e9c70c1c7421b30075703e24c7c06d209f8fc5fa5011431539e93bc20acb"
+    }
+  },
+  "source_sha256": {
+    "modules/kasane-render/benches/render_benchmark.rs": "203b4aa77961c6ef6df84e41fe431aa99058d9b5e38d9bcc4d0b991224c30f38",
+    "modules/kasane-render/src/lib.rs": "45066501f5e682ec336159248b66571b915a097dd1eeed35e75fd8e0eec95461",
+    "modules/kasane-render/src/plan.rs": "a51132fda9a6216381cef77e3fb0ce9a7599ce777b4dee8c3ee1a25381356cc4",
+    "modules/kasane-render/src/scene.rs": "106610d503978de252bc5fe2a49d62ac65f321ef94bc1fd413a57636cb41a9ac",
+    "modules/kasane-render/src/validation.rs": "a9546bf03cc33760c5ea21c823476799d5ecc381dd7eeac7ab4235d8ec6e20e4",
+    "modules/kasane-render/tests/scene_contract.rs": "f685e5f731111bfd05ce1a7f9578813d82a634059ae90b3131b988107abd145a",
+    "modules/kasane-render-godot/src/backend/commands.rs": "2d640767a5d0708ad28b3ae095029c3b63d6864fd4606407c377ed2944e6134a",
+    "modules/kasane-render-godot/src/backend/masks.rs": "da6100fe394be66cb6ef4975d24fcaa9101a01a074e2e34610eb20b16dc52554",
+    "modules/kasane-render-godot/src/backend/resources.rs": "3a2a11de7e54923e39dbce5bc76330e759132a578a0e92f7693f7b4022e7ff2f",
+    "modules/kasane-render-godot/src/backend/surfaces.rs": "032634eaaedd52c050ff7b6af35c0967e940befe7fc97a323deb54b9576b134a",
+    "modules/kasane-render-godot/src/backend.rs": "702fc469e6755b1bc0df595933fde67737cf869d1c92ac2cbb5d294c99b7cf54",
+    "modules/kasane-render-godot/src/conversions.rs": "11a0d4efe8ae64195cc7d85053e3860a3ef0ba317bcb0b28282e2e147c067e63",
+    "modules/kasane-render-godot/src/lib.rs": "3ac48000705a1f2bfbbdb1fb0fef9952db08972b5fe28e8b62081cdb439bddb2",
+    "modules/kasane-render-godot/src/mesh_view.rs": "d4983753f7528933e9ff221526a6f76d3dd33276fce6e29019635fcc949c2613",
+    "modules/kasane-godot/src/conversions.rs": "bbcb28589e4c0d014ced86a6e03a6a8553a76b54143102df7781f41a4ce3b037",
+    "modules/kasane-godot/src/deformer_data.rs": "9e217ed863c41fa698925c1bd8227d21d96878f4b13ef315bff910e8737c144a",
+    "modules/kasane-godot/src/document_bridge/blendshapes.rs": "b221a6edaebae85c588e5702355a98e752905d851a1e334b2fac629994f9dea6",
+    "modules/kasane-godot/src/document_bridge/deformers.rs": "a1a465f1247d4ffb11d40828cc06c98e81291323afa138cff08c007dc29e8cf0",
+    "modules/kasane-godot/src/document_bridge/glue.rs": "ac1f6d6b5de2b0a2025e16a37ad32cba6f1fc7ae8dd0db9dbf7f6253076e768c",
+    "modules/kasane-godot/src/document_bridge/history.rs": "cfaa78d85bc8723bc5a93956355c57745acc73c31f34d09a7a1344494aa9d048",
+    "modules/kasane-godot/src/document_bridge/inspection.rs": "bd2aba5cedff128c02de56258c3e3b4277300dcb9299de8cbf4324051c4c0af9",
+    "modules/kasane-godot/src/document_bridge/lifecycle.rs": "303ae5fe686ad637af097d28c487b21f567ff7dd34efe98658736e110b676026",
+    "modules/kasane-godot/src/document_bridge/meshes.rs": "64b78a2e4adb934b2c5b01ff281888919b7f1b20a099360ae99acdcf5fa112d4",
+    "modules/kasane-godot/src/document_bridge/offscreen.rs": "ce1a91d14d9226945b80c7bca00659ae443fff38dc517a74e65d4fceb71b1876",
+    "modules/kasane-godot/src/document_bridge/parameters.rs": "a1888f08263f1a8198f5ec00b6e8773c3948aa7e9094949e50877e934e839798",
+    "modules/kasane-godot/src/document_bridge/parts.rs": "b04e439d82229d2de5b4fa93d24878d191fa64bc96a32f16314c37cd9817ad97",
+    "modules/kasane-godot/src/document_bridge.rs": "0e807bfe73dde995760296244c282009e0f1ab8ace339bcaaf32c74f298f328d",
+    "modules/kasane-godot/src/document_preview.rs": "50b41b935642532cc1e008daee459fa942ad5ffd64bbf515fa686775e402e11e",
+    "modules/kasane-godot/src/lib.rs": "ccb6fe856095fa14764bc78fb6a562a29edbd91f8fb23b97cfa2838fb3a4eeb4",
+    "modules/kasane-godot/src/mesh_data.rs": "b5980040b5740c423b5291c80de85802f684dee8c5027bf0ec7509c6e475e7f8",
+    "modules/kasane-godot/src/project_io.rs": "43ef8dc3fc2cd130c79379f58ceb97f1ffa2775ad75fae5cacc7fd657b86b443",
+    "modules/kasane-godot/src/selection_overlay.rs": "3e8d412c0417ccc3cf6019c03be1f85218a356267711abf89a30866ddb73d037",
+    "modules/kasane-godot/src/texture_store.rs": "0724255e26ae14ccdf5a506dc00e26784a438402f532613e60822d723e83b097"
+  },
+  "benchmark_sha256": {
+    "tools/benchmark_kasane.py": "b2985c19972f8e2d1f43405a7c4771d81a898766637f8ff44cd267d5420ce428",
+    "benchmarks/kasane-preview/benchmark.gd": "b56e86083d73408df24b1386b06bf223c51b5fb63cd3a7a4fae944380c187ab9",
+    "benchmarks/kasane-preview/offscreen_benchmark.gd": "e565d6886fca16216a1a86c6341784de9c5015f9058a162fd01ac563f9de9e84"
+  }
+}

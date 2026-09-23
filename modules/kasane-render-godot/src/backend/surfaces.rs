@@ -5,19 +5,13 @@ impl GodotRenderBackend {
         &mut self,
         owner: &mut Gd<Node2D>,
         frame: &DrawableFrame,
-        active_offscreens: &std::collections::HashSet<&str>,
+        scene: &kasane_render::ScenePlan,
         surface_size: Vector2i,
-        surface_transform: Transform2D,
     ) {
         let stale_offscreens: Vec<String> = self
             .offscreens
             .keys()
-            .filter(|id| {
-                !frame
-                    .offscreens
-                    .iter()
-                    .any(|offscreen| &offscreen.id == *id)
-            })
+            .filter(|id| scene.target_id(id).is_none())
             .cloned()
             .collect();
         for id in stale_offscreens {
@@ -36,9 +30,8 @@ impl GodotRenderBackend {
             }
         }
         if !frame.offscreens.is_empty() {
-            let texture_to_model = surface_transform.affine_inverse();
             for offscreen in &frame.offscreens {
-                let active = active_offscreens.contains(offscreen.id.as_str());
+                let active = scene.targets()[scene.target_id(&offscreen.id).unwrap().0].active;
                 let allocation_size = if active {
                     surface_size
                 } else {
@@ -102,32 +95,6 @@ impl GodotRenderBackend {
                 if view.material.get_shader() != Some(shader.clone()) {
                     view.material.set_shader(&shader);
                 }
-                if view.viewport.get_size() != allocation_size {
-                    view.viewport.set_size(allocation_size);
-                    self.offscreen_resizes += 1;
-                }
-                view.viewport.set_update_mode(if active {
-                    UpdateMode::ALWAYS
-                } else {
-                    UpdateMode::DISABLED
-                });
-                // Shader mat3 uniforms require Basis, not Transform2D (mat2).
-                // Passing Transform2D silently loses the affine mapping; masks
-                // then work at identity scale but disappear in fitted previews.
-                let mask_mapping = Basis::from_cols(
-                    Vector3::new(texture_to_model.a.x, texture_to_model.a.y, 0.0),
-                    Vector3::new(texture_to_model.b.x, texture_to_model.b.y, 0.0),
-                    Vector3::new(texture_to_model.origin.x, texture_to_model.origin.y, 1.0),
-                );
-                view.material
-                    .set_shader_parameter("texture_to_model", &mask_mapping.to_variant());
-                view.root.set_transform(surface_transform);
-                view.composite.set_transform(texture_to_model);
-                view.composite.set_region_rect(Rect2::new(
-                    Vector2::ZERO,
-                    Vector2::new(surface_size.x as f32, surface_size.y as f32),
-                ));
-                view.composite.set_visible(active);
                 view.material.set_shader_parameter(
                     "color_blend_mode",
                     &i64::from(offscreen.blend_mode & 0xff).to_variant(),
@@ -163,6 +130,44 @@ impl GodotRenderBackend {
                 view.material
                     .set_shader_parameter("inverted", &(offscreen.flags & 8 != 0).to_variant());
             }
+        }
+    }
+    pub(super) fn update_surface_layout(
+        &mut self,
+        scene: &kasane_render::ScenePlan,
+        layout: &super::resources::ViewLayout,
+    ) {
+        let inverse = layout.surface_transform.affine_inverse();
+        let mapping = Basis::from_cols(
+            Vector3::new(inverse.a.x, inverse.a.y, 0.0),
+            Vector3::new(inverse.b.x, inverse.b.y, 0.0),
+            Vector3::new(inverse.origin.x, inverse.origin.y, 1.0),
+        );
+        for target in scene.targets().iter().skip(1) {
+            let view = self.offscreens.get_mut(&target.id).unwrap();
+            let size = if target.active {
+                layout.surface_size
+            } else {
+                Vector2i::new(2, 2)
+            };
+            if view.viewport.get_size() != size {
+                view.viewport.set_size(size);
+                self.offscreen_resizes += 1;
+            }
+            view.viewport.set_update_mode(if target.active {
+                UpdateMode::ALWAYS
+            } else {
+                UpdateMode::DISABLED
+            });
+            view.material
+                .set_shader_parameter("texture_to_model", &mapping.to_variant());
+            view.root.set_transform(layout.surface_transform);
+            view.composite.set_transform(inverse);
+            view.composite.set_region_rect(Rect2::new(
+                Vector2::ZERO,
+                Vector2::new(layout.surface_size.x as f32, layout.surface_size.y as f32),
+            ));
+            view.composite.set_visible(target.active);
         }
     }
 }

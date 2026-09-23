@@ -1,0 +1,18 @@
+baseline=before current=after
+metric,baseline,current,delta_percent,status
+refresh_cpu_ms.mean,0.461252,0.448315,-2.80,PASS
+refresh_cpu_ms.p50,0.448000,0.444000,-0.89,PASS
+refresh_cpu_ms.p95,0.717000,0.696000,-2.93,PASS
+refresh_cpu_ms.p99,0.832000,0.808000,-2.88,PASS
+frame_ms.mean,8.334460,8.343307,0.11,PASS
+frame_ms.p50,7.985000,8.246000,3.27,PASS
+frame_ms.p95,14.620000,14.714000,0.64,PASS
+frame_ms.p99,15.123000,15.170000,0.31,PASS
+render_stats.gpu_texture_bytes,5401035,5401035,0.00,PASS
+render_stats.gpu_video_bytes,22464375,22464375,0.00,PASS
+render_stats.mask_viewports,6,6,0.00,PASS
+render_stats.offscreen_groups,0,0,0.00,PASS
+render_stats.offscreen_creations,0,0,0.00,PASS
+render_stats.offscreen_resizes,0,0,0.00,PASS
+render_stats.uploads,5391,5391,0.00,PASS
+PASS: no metric regressed by more than 5.00%

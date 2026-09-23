@@ -1,11 +1,62 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
-use kasane_core::evaluation::{DrawableFrame, RenderCommand};
+use kasane_core::evaluation::{Drawable, DrawableFrame, RenderCommand};
 use kasane_core::geometry::validate_render_mesh;
-use kasane_core::types::Status;
+use kasane_core::types::{Status, Vec2};
 
 /// Shared preflight for editable Document frames and external runtime frames.
 pub fn validate_frame(frame: &DrawableFrame) -> Status {
+    validate_frame_with(frame, |_, drawable| {
+        validate_render_mesh(&drawable.positions, &drawable.uvs, &drawable.indices)
+    })
+}
+
+#[derive(Debug)]
+struct Topology {
+    uvs: Arc<[Vec2]>,
+    indices: Arc<[u32]>,
+    vertices: usize,
+}
+
+/// Retains immutable topology only. Owning the Arcs prevents address reuse and
+/// forces Arc::make_mut callers to detach before modifying validated data.
+#[derive(Debug, Default)]
+pub(crate) struct FrameValidator {
+    topology: Vec<Option<Topology>>,
+}
+
+impl FrameValidator {
+    pub(crate) fn validate(&mut self, frame: &DrawableFrame) -> Status {
+        self.topology.resize_with(frame.drawables.len(), || None);
+        validate_frame_with(frame, |slot, drawable| {
+            let cached = &mut self.topology[slot];
+            if cached.as_ref().is_some_and(|previous| {
+                previous.vertices == drawable.positions.len()
+                    && Arc::ptr_eq(&previous.uvs, &drawable.uvs)
+                    && Arc::ptr_eq(&previous.indices, &drawable.indices)
+            }) {
+                // Converted coordinates are still checked below on every frame.
+                return Status::ok();
+            }
+            let status =
+                validate_render_mesh(&drawable.positions, &drawable.uvs, &drawable.indices);
+            if status.is_ok() {
+                *cached = Some(Topology {
+                    uvs: Arc::clone(&drawable.uvs),
+                    indices: Arc::clone(&drawable.indices),
+                    vertices: drawable.positions.len(),
+                });
+            }
+            status
+        })
+    }
+}
+
+fn validate_frame_with(
+    frame: &DrawableFrame,
+    mut geometry: impl FnMut(usize, &Drawable) -> Status,
+) -> Status {
     let canvas = frame.canvas;
     if !canvas.width.is_finite()
         || !canvas.height.is_finite()
@@ -22,11 +73,11 @@ pub fn validate_frame(frame: &DrawableFrame) -> Status {
         );
     }
     let mut ids = HashSet::new();
-    for drawable in &frame.drawables {
+    for (slot, drawable) in frame.drawables.iter().enumerate() {
         if drawable.id.is_empty() || !ids.insert(drawable.id.as_str()) {
             return Status::error("INVALID_ID", "Drawable IDs must be non-empty and unique.");
         }
-        let status = validate_render_mesh(&drawable.positions, &drawable.uvs, &drawable.indices);
+        let status = geometry(slot, drawable);
         if !status.is_ok() {
             return status;
         }
@@ -185,6 +236,44 @@ mod tests {
             }],
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn cached_topology_still_checks_dynamic_data_and_vertex_count() {
+        let mut validator = FrameValidator::default();
+        let mut value = frame();
+        assert!(validator.validate(&value).is_ok());
+        value.drawables[0].positions[0].x = f32::NAN;
+        assert_eq!(validator.validate(&value).code, "NON_FINITE");
+        value.drawables[0].positions[0].x = f32::MAX;
+        assert_eq!(validator.validate(&value).code, "NON_FINITE");
+        value.drawables[0].positions[0].x = 0.0;
+        value.drawables[0].positions.pop();
+        assert_eq!(validator.validate(&value).code, "INVALID_LENGTH");
+        value.drawables[0].positions.push(Vec2::new(0.0, 1.0));
+        assert!(validator.validate(&value).is_ok());
+        value.canvas.pixels_per_unit = 0.0;
+        assert_eq!(validator.validate(&value).code, "INVALID_CANVAS");
+    }
+
+    #[test]
+    fn cache_pins_topology_and_revalidates_copy_on_write_and_replacement() {
+        let mut validator = FrameValidator::default();
+        let mut value = frame();
+        assert!(validator.validate(&value).is_ok());
+        assert_eq!(Arc::strong_count(&value.drawables[0].indices), 2);
+        Arc::make_mut(&mut value.drawables[0].indices)[2] = 9;
+        assert_eq!(validator.validate(&value).code, "INVALID_INDEX");
+        value.drawables[0].indices = Arc::from([0, 1, 2]);
+        assert!(validator.validate(&value).is_ok());
+        Arc::make_mut(&mut value.drawables[0].uvs)[0].x = f32::NAN;
+        assert_eq!(validator.validate(&value).code, "NON_FINITE");
+        value.drawables[0].uvs = Arc::from([Vec2::new(0.0, 0.0); 3]);
+        assert!(validator.validate(&value).is_ok());
+        let indices = Arc::clone(&value.drawables[0].indices);
+        value.drawables.clear();
+        assert!(validator.validate(&value).is_ok());
+        assert_eq!(Arc::strong_count(&indices), 1);
     }
 
     #[test]

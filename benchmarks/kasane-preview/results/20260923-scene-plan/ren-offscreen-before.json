@@ -1,0 +1,199 @@
+{
+  "schema_version": 1,
+  "benchmark": "kasane-preview",
+  "workload": "ren-offscreen",
+  "label": "before",
+  "library": "/Users/pakholeung/web/kesane-2d/target/render-comparison-20260923-100029/gpu-fixture/current/libkasane_godot.dylib",
+  "godot": "/Applications/Godot_mono.app/Contents/MacOS/Godot",
+  "warmup_frames": 30,
+  "sample_frames": 120,
+  "repeats": 3,
+  "model3": "/Users/pakholeung/web/kesane-2d/third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.model3.json",
+  "runs": [
+    {
+      "adapter": "Apple M4",
+      "benchmark": "kasane-preview",
+      "elapsed_ms": 1448.143,
+      "failures": [],
+      "frame_ms": {
+        "mean": 12.055875,
+        "p50": 12.593,
+        "p95": 15.809,
+        "p99": 17.942
+      },
+      "godot": {
+        "build": "official",
+        "hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+        "hex": 263938,
+        "major": 4,
+        "minor": 7,
+        "patch": 2,
+        "status": "stable",
+        "string": "4.7.2-stable (official)",
+        "timestamp": 0
+      },
+      "model3": "/Users/pakholeung/web/kesane-2d/third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.model3.json",
+      "offscreen_count": 24,
+      "refresh_cpu_ms": {
+        "mean": 2.81405833333333,
+        "p50": 2.909,
+        "p95": 3.402,
+        "p99": 3.523
+      },
+      "render_command_count": 246,
+      "render_stats": {
+        "active_offscreens": 17,
+        "creations": 198,
+        "destination_copies": 29,
+        "gpu_texture_bytes": 515281231,
+        "gpu_video_bytes": 583690537,
+        "mask_color_bytes": 346912,
+        "mask_viewports": 8,
+        "materials": 198,
+        "mesh_views": 198,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 163862296,
+        "offscreen_creations": 24,
+        "offscreen_groups": 24,
+        "offscreen_reserved_bytes": 327724592,
+        "offscreen_resizes": 0,
+        "shaders": 8,
+        "uploads": 13566
+      },
+      "renderer": "gl_compatibility",
+      "sample_frames": 120,
+      "schema_version": 1,
+      "status": "passed",
+      "warmup_frames": 30,
+      "workload": "ren-offscreen"
+    },
+    {
+      "adapter": "Apple M4",
+      "benchmark": "kasane-preview",
+      "elapsed_ms": 1430.455,
+      "failures": [],
+      "frame_ms": {
+        "mean": 11.9079666666667,
+        "p50": 11.827,
+        "p95": 15.159,
+        "p99": 16.529
+      },
+      "godot": {
+        "build": "official",
+        "hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+        "hex": 263938,
+        "major": 4,
+        "minor": 7,
+        "patch": 2,
+        "status": "stable",
+        "string": "4.7.2-stable (official)",
+        "timestamp": 0
+      },
+      "model3": "/Users/pakholeung/web/kesane-2d/third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.model3.json",
+      "offscreen_count": 24,
+      "refresh_cpu_ms": {
+        "mean": 2.87401666666667,
+        "p50": 2.983,
+        "p95": 3.375,
+        "p99": 3.674
+      },
+      "render_command_count": 246,
+      "render_stats": {
+        "active_offscreens": 17,
+        "creations": 198,
+        "destination_copies": 29,
+        "gpu_texture_bytes": 515281231,
+        "gpu_video_bytes": 575169769,
+        "mask_color_bytes": 346912,
+        "mask_viewports": 8,
+        "materials": 198,
+        "mesh_views": 198,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 163862296,
+        "offscreen_creations": 24,
+        "offscreen_groups": 24,
+        "offscreen_reserved_bytes": 327724592,
+        "offscreen_resizes": 0,
+        "shaders": 8,
+        "uploads": 13566
+      },
+      "renderer": "gl_compatibility",
+      "sample_frames": 120,
+      "schema_version": 1,
+      "status": "passed",
+      "warmup_frames": 30,
+      "workload": "ren-offscreen"
+    },
+    {
+      "adapter": "Apple M4",
+      "benchmark": "kasane-preview",
+      "elapsed_ms": 1405.442,
+      "failures": [],
+      "frame_ms": {
+        "mean": 11.7020083333333,
+        "p50": 12.495,
+        "p95": 14.418,
+        "p99": 16.531
+      },
+      "godot": {
+        "build": "official",
+        "hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+        "hex": 263938,
+        "major": 4,
+        "minor": 7,
+        "patch": 2,
+        "status": "stable",
+        "string": "4.7.2-stable (official)",
+        "timestamp": 0
+      },
+      "model3": "/Users/pakholeung/web/kesane-2d/third_party/CubismSdkForNative-5-r.5/Samples/Resources/Ren/Ren.model3.json",
+      "offscreen_count": 24,
+      "refresh_cpu_ms": {
+        "mean": 2.78671666666667,
+        "p50": 2.809,
+        "p95": 3.205,
+        "p99": 4.069
+      },
+      "render_command_count": 246,
+      "render_stats": {
+        "active_offscreens": 17,
+        "creations": 198,
+        "destination_copies": 29,
+        "gpu_texture_bytes": 515281231,
+        "gpu_video_bytes": 581560345,
+        "mask_color_bytes": 346912,
+        "mask_viewports": 8,
+        "materials": 198,
+        "mesh_views": 198,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 163862296,
+        "offscreen_creations": 24,
+        "offscreen_groups": 24,
+        "offscreen_reserved_bytes": 327724592,
+        "offscreen_resizes": 0,
+        "shaders": 8,
+        "uploads": 13566
+      },
+      "renderer": "gl_compatibility",
+      "sample_frames": 120,
+      "schema_version": 1,
+      "status": "passed",
+      "warmup_frames": 30,
+      "workload": "ren-offscreen"
+    }
+  ],
+  "median": {
+    "refresh_cpu_ms": {
+      "mean": 2.81405833333333,
+      "p50": 2.909,
+      "p95": 3.375,
+      "p99": 3.674
+    },
+    "frame_ms": {
+      "mean": 11.9079666666667,
+      "p50": 12.495,
+      "p95": 15.159,
+      "p99": 16.531
+    }
+  }
+}

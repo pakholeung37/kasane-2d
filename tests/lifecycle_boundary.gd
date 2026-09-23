@@ -170,7 +170,7 @@ func run():
     check(textures.set_texture(ASSET_ID, ImageTexture.create_from_image(replacement)).ok, "Replace preview texture")
     check(preview_3.get_last_result().ok, "Texture replacement refreshes preview")
     check(preview_3.get_mesh_view(MESH_ID).get_instance_id() == before_view_id, "Texture replacement reuses preview node")
-    check(preview_3.get_render_stats().creations == before_texture.creations + 1, "Texture replacement rebuilds one mesh surface")
+    check(preview_3.get_render_stats().creations == before_texture.creations, "Texture replacement preserves mesh geometry")
     var before_updates = preview_3.get_render_stats()
     var before_memory = OS.get_static_memory_usage()
     for i in 120:

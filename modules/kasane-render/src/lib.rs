@@ -5,6 +5,7 @@
 //! are free to choose different physical resource implementations.
 
 mod plan;
+mod scene;
 mod validation;
 
 use std::collections::{HashMap, HashSet};
@@ -12,9 +13,13 @@ use std::collections::{HashMap, HashSet};
 use kasane_core::types::Vec2;
 
 pub use plan::{build_plan, prepare_frame};
+pub use scene::{
+    surface_layout, Bounds2, MaskId, MaskPlan, MeshId, MeshPlan, ScenePlan, TargetId, TargetItem,
+    TargetPlan,
+};
 pub use validation::validate_frame;
 
-/// Shared attachment budget used by all render backends.
+/// Default attachment budget for the compatibility planner and Godot adapter.
 pub const OFFSCREEN_BUDGET_BYTES: i64 = 512 * 1024 * 1024;
 
 /// A 2D affine transform in target-space coordinates.
@@ -94,7 +99,8 @@ impl TextureCatalog for HashMap<String, TextureInfo> {
     }
 }
 
-/// Cache identity for a logical mask attachment.
+/// Legacy pass-stream attachment key. New backends use logical `MaskId` and
+/// choose their own physical consumer instances and resolution policy.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct MaskKey {
     sources: Vec<String>,
@@ -123,7 +129,7 @@ pub struct DrawItem<'a> {
     pub texture_id: &'a str,
 }
 
-/// Backend-neutral render operations in execution order.
+/// Compatibility operations in legacy scene-assembly order, not GPU execution order.
 ///
 /// `Offscreen` begins a target and `EndOffscreen` closes it. `Composite` is
 /// emitted immediately after `Offscreen`, before the target's child draws, so
@@ -153,9 +159,9 @@ pub enum RenderPass<'a> {
 
 /// The backend-neutral result of validating and preparing one frame.
 ///
-/// Active surface IDs borrow from the submitted frame to keep the hot path
-/// allocation-free. A backend that needs to retain a plan beyond that frame
-/// can explicitly copy the IDs at its ownership boundary.
+/// IDs borrow from the submitted frame to avoid string duplication. Preparing
+/// this compatibility view still allocates containers; use `ScenePlan` for a
+/// persistent description without retaining a published frame.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PreparedFrame<'a> {
     pub active_offscreens: HashSet<&'a str>,

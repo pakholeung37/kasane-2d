@@ -13,7 +13,8 @@ use std::collections::HashMap;
 
 use kasane_core::evaluation::DrawableFrame;
 use kasane_core::types::{BlendMode, Status, Vec2};
-use kasane_render::{MaskKey, OFFSCREEN_BUDGET_BYTES};
+use kasane_render::{ScenePlan, OFFSCREEN_BUDGET_BYTES};
+use resources::{GodotTextureCatalog, MaskInstanceKey, ViewLayout};
 
 use crate::conversions::{error_dict, status_to_dict, Dictionary};
 use crate::mesh_view::KasaneMeshView;
@@ -21,11 +22,9 @@ use crate::mesh_view::KasaneMeshView;
 struct MeshKey {
     uvs: std::sync::Arc<[Vec2]>,
     indices: std::sync::Arc<[u32]>,
-    texture: Gd<Texture2D>,
 }
 
 struct MaskView {
-    last_submission: u64,
     bounds: Vector4,
     viewport: Gd<SubViewport>,
     root: Gd<Node2D>,
@@ -40,21 +39,43 @@ struct OffscreenView {
     material: Gd<ShaderMaterial>,
 }
 
+#[derive(PartialEq)]
+struct AppearanceKey {
+    blend: u32,
+    raw_blend: Option<u32>,
+    multiply: [f32; 4],
+    screen: [f32; 4],
+    opacity: f32,
+    masked: bool,
+    inverted: bool,
+    texture: Gd<Texture2D>,
+}
+
 /// Concrete Godot renderer for the backend-neutral frame plan.
 ///
 /// `KasaneDocumentPreview` owns the Godot-facing API and lifecycle. This
 /// object owns every Godot rendering resource and is the only place that
-/// translates `PreparedFrame` into scene-tree and RenderingServer operations.
+/// lowers a persistent `ScenePlan` into scene-tree and RenderingServer operations.
 #[derive(Default)]
 pub struct GodotRenderBackend {
     views: HashMap<String, Gd<KasaneMeshView>>,
     model_root: Option<Gd<Node2D>>,
     mesh_keys: HashMap<String, MeshKey>,
     materials: HashMap<String, Gd<ShaderMaterial>>,
+    appearances: HashMap<String, AppearanceKey>,
+    order: Vec<(InstanceId, InstanceId, bool)>,
+    next_order: Vec<(InstanceId, InstanceId, bool)>,
+    order_syncs: u64,
+    material_syncs: u64,
     shaders: HashMap<u32, Gd<Shader>>,
     mask_shader: Option<Gd<Shader>>,
-    masks: HashMap<MaskKey, MaskView>,
-    mask_targets: HashMap<String, MaskKey>,
+    masks: HashMap<MaskInstanceKey, MaskView>,
+    scene: ScenePlan,
+    view_ready: bool,
+    scene_submissions: u64,
+    view_updates: u64,
+    mask_creations: u64,
+    geometry_syncs: u64,
     offscreens: HashMap<String, OffscreenView>,
     destination_copies: HashMap<String, Gd<BackBufferCopy>>,
     offscreen_creations: i64,
@@ -64,7 +85,6 @@ pub struct GodotRenderBackend {
     surface_target_extent: Vector2,
     surface_transform: Transform2D,
     surface_viewport: Option<Rid>,
-    submission_id: u64,
 }
 
 /// Inputs crossing the Godot preview/backend boundary for one submission.
@@ -121,10 +141,18 @@ impl GodotRenderBackend {
     }
 
     pub fn mask_scale(&self) -> f64 {
-        self.mask_scale
+        if self.mask_scale > 0.0 {
+            self.mask_scale
+        } else {
+            1.0
+        }
     }
 
-    pub fn needs_geometry_refresh(
+    pub fn can_update_view(&self) -> bool {
+        self.view_ready
+    }
+
+    pub fn needs_view_refresh(
         &self,
         scale: f64,
         target: Vector2,
@@ -132,14 +160,14 @@ impl GodotRenderBackend {
         viewport: Option<Rid>,
     ) -> bool {
         (scale - self.mask_scale).abs() > 0.00001
-            || (self.has_offscreens()
-                && (target != self.surface_target_extent
-                    || transform != self.surface_transform
-                    || viewport != self.surface_viewport))
+            || ((self.has_offscreens() || self.scene.targets().len() > 1)
+                && (target != self.surface_target_extent || transform != self.surface_transform))
+            || ((self.has_offscreens() || self.has_masks()) && viewport != self.surface_viewport)
     }
 
     pub fn clear_views(&mut self) {
-        self.mask_targets.clear();
+        self.view_ready = false;
+        self.scene = ScenePlan::default();
         for (_, mut copy) in self.destination_copies.drain() {
             copy.queue_free();
         }
@@ -155,6 +183,9 @@ impl GodotRenderBackend {
         }
         self.mesh_keys.clear();
         self.materials.clear();
+        self.appearances.clear();
+        self.order.clear();
+        self.next_order.clear();
     }
 
     pub fn get_mesh_view(&self, mesh_id: &str) -> Option<Gd<KasaneMeshView>> {
@@ -170,6 +201,12 @@ impl GodotRenderBackend {
 
     pub fn render_stats(&self) -> Dictionary {
         let mut stats = Dictionary::new();
+        stats.set("order_syncs", self.order_syncs as i64);
+        stats.set("material_syncs", self.material_syncs as i64);
+        stats.set("scene_submissions", self.scene_submissions as i64);
+        stats.set("view_updates", self.view_updates as i64);
+        stats.set("geometry_syncs", self.geometry_syncs as i64);
+        stats.set("mask_creations", self.mask_creations as i64);
         stats.set("mesh_views", self.views.len() as i64);
         stats.set("mask_viewports", self.masks.len() as i64);
         stats.set("offscreen_groups", self.offscreens.len() as i64);
@@ -243,6 +280,18 @@ impl GodotRenderBackend {
     }
 
     pub fn render_frame(&mut self, request: RenderRequest<'_>) -> BackendRenderResult {
+        self.view_ready = false;
+        let mut scene = std::mem::take(&mut self.scene);
+        let result = self.sync_frame(request, &mut scene);
+        self.scene = scene;
+        result
+    }
+
+    fn sync_frame(
+        &mut self,
+        request: RenderRequest<'_>,
+        scene: &mut ScenePlan,
+    ) -> BackendRenderResult {
         let RenderRequest {
             owner,
             frame,
@@ -250,38 +299,37 @@ impl GodotRenderBackend {
             transform,
             viewport_extent,
             scale,
-            submission_id,
+            submission_id: _,
         } = request;
-        let plan = match resources::plan(frame, textures, transform, viewport_extent, scale) {
-            Ok(plan) => plan,
+        // Remember attempted views too: after a rejected budget/transform, a
+        // later camera change must be able to recover the document submission.
+        self.remember_view(owner, transform, viewport_extent, scale);
+        if let Err(status) = scene.update(frame, &GodotTextureCatalog(textures)) {
+            return BackendRenderResult::rejected(status_to_dict(&status));
+        }
+        let layout = match ViewLayout::prepare(scene, transform, viewport_extent, scale) {
+            Ok(layout) => layout,
             Err(status) => return BackendRenderResult::rejected(status_to_dict(&status)),
         };
-        let active_offscreens = &plan.active_offscreens;
-        let surface_size = Vector2i::new(plan.surface_size.width, plan.surface_size.height);
-        let surface_transform = resources::to_godot_transform(plan.surface_transform);
-        self.mask_scale = scale;
-        self.surface_transform = transform;
-        self.surface_target_extent = viewport_extent;
-        self.surface_viewport = owner.get_viewport().map(|v| v.get_viewport_rid());
-        self.submission_id = submission_id;
+        self.remember_view(owner, transform, viewport_extent, scale);
         self.ensure_model_root(owner);
 
         self.destination_copies.retain(|id, copy| {
-            if plan.destination_reads.contains(id.as_str()) {
+            if scene
+                .mesh_id(id)
+                .is_some_and(|i| scene.meshes()[i.0].reads_destination)
+                || scene
+                    .target_id(id)
+                    .is_some_and(|i| scene.targets()[i.0].reads_destination)
+            {
                 true
             } else {
                 copy.queue_free();
                 false
             }
         });
-        self.mask_targets.clear();
-        self.update_surfaces(
-            owner,
-            frame,
-            active_offscreens,
-            surface_size,
-            surface_transform,
-        );
+        self.update_surfaces(owner, frame, scene, layout.surface_size);
+        self.update_surface_layout(scene, &layout);
         for d in &frame.drawables {
             let Some(tex) = textures.get(&d.texture_asset_id).cloned() else {
                 self.clear_views();
@@ -301,7 +349,6 @@ impl GodotRenderBackend {
             let reuse = self.mesh_keys.get(&d.id).is_some_and(|key| {
                 std::sync::Arc::ptr_eq(&key.indices, &d.indices)
                     && std::sync::Arc::ptr_eq(&key.uvs, &d.uvs)
-                    && key.texture == tex
             });
             let mut view = self
                 .views
@@ -345,10 +392,11 @@ impl GodotRenderBackend {
                     MeshKey {
                         uvs: d.uvs.clone(),
                         indices: d.indices.clone(),
-                        texture: tex,
                     },
                 );
             }
+            view.set_texture(&tex);
+            self.geometry_syncs += 1;
             view.set_visible(d.visible && d.opacity > 0.0 && !d.indices.is_empty());
             view.set_texture_filter(TextureFilter::LINEAR_WITH_MIPMAPS);
             if !self.views.contains_key(&d.id) {
@@ -360,7 +408,7 @@ impl GodotRenderBackend {
         let removed: Vec<String> = self
             .views
             .keys()
-            .filter(|id| !frame.drawables.iter().any(|d| &d.id == *id))
+            .filter(|id| scene.mesh_id(id).is_none())
             .cloned()
             .collect();
         for id in removed {
@@ -369,31 +417,11 @@ impl GodotRenderBackend {
             }
             self.mesh_keys.remove(&id);
             self.materials.remove(&id);
+            self.appearances.remove(&id);
         }
 
-        for offscreen in &frame.offscreens {
-            let mask_data = self.update_mask_texture(
-                owner,
-                &offscreen.id,
-                if active_offscreens.contains(offscreen.id.as_str()) {
-                    &offscreen.masks
-                } else {
-                    &[]
-                },
-                &plan.mask_consumers,
-                self.mask_scale.max(1.0),
-            );
-            let material = &mut self.offscreens.get_mut(&offscreen.id).unwrap().material;
-            if let Some((texture, bounds)) = mask_data {
-                material.set_shader_parameter("mask_texture", &texture);
-                material.set_shader_parameter("mask_bounds", &bounds.to_variant());
-            }
-        }
-
-        let mut ordered: Vec<&kasane_core::evaluation::Drawable> = frame.drawables.iter().collect();
-        ordered.sort_by_key(|a| a.render_order);
-
-        for drawable in ordered {
+        self.update_masks(owner, scene, &layout, true);
+        for drawable in &frame.drawables {
             let d = drawable;
             let mut view = self.views.get(&d.id).unwrap().clone();
             let blend_key = match d.raw_blend_mode {
@@ -404,6 +432,19 @@ impl GodotRenderBackend {
                     BlendMode::Multiplicative => 2,
                 },
             };
+            let appearance = AppearanceKey {
+                blend: blend_key,
+                raw_blend: d.raw_blend_mode,
+                multiply: d.multiply_color,
+                screen: d.screen_color,
+                opacity: d.opacity,
+                masked: !d.masks.is_empty(),
+                inverted: d.inverted_mask,
+                texture: textures[&d.texture_asset_id].clone(),
+            };
+            if self.appearances.get(&d.id) == Some(&appearance) {
+                continue;
+            }
             let shader = self
                 .shaders
                 .entry(blend_key)
@@ -467,35 +508,66 @@ impl GodotRenderBackend {
             material.set_shader_parameter("masked", &(!d.masks.is_empty()).to_variant());
             material.set_shader_parameter("inverted", &d.inverted_mask.to_variant());
 
-            if let Some((texture, bounds)) = self.update_mask_texture(
-                owner,
-                &d.id,
-                &d.masks,
-                &plan.mask_consumers,
-                self.mask_scale,
-            ) {
-                material.set_shader_parameter("mask_texture", &texture);
-                material.set_shader_parameter("mask_bounds", &bounds.to_variant());
-            }
-
             view.set_material(&material);
             self.materials.insert(d.id.clone(), material);
+            self.appearances.insert(d.id.clone(), appearance);
+            self.material_syncs += 1;
         }
 
-        self.masks.retain(|_, mask| {
-            if mask.last_submission == self.submission_id {
-                true
-            } else {
-                mask.viewport.queue_free();
-                false
-            }
-        });
-        self.execute_prepared_frame(owner, &plan);
+        self.bind_masks(scene, &layout);
+        self.update_dependencies(owner, scene, &layout);
+        self.sync_target_order(owner, scene);
+        self.view_ready = true;
+        self.scene_submissions += 1;
 
         BackendRenderResult::submitted(
             status_to_dict(&kasane_core::types::Status::ok()),
             self.has_masks(),
         )
+    }
+
+    /// Re-layout synchronized resources without retaining/revalidating a model
+    /// frame, resolving textures, converting vertices or reordering color draws.
+    pub fn update_view(
+        &mut self,
+        owner: &mut Gd<Node2D>,
+        transform: Transform2D,
+        viewport_extent: Vector2,
+        scale: f64,
+    ) -> BackendRenderResult {
+        if !self.view_ready {
+            return BackendRenderResult::rejected(error_dict(
+                "MISSING_FRAME",
+                "Submit a valid frame before updating its view.",
+            ));
+        }
+        self.remember_view(owner, transform, viewport_extent, scale);
+        let layout = match ViewLayout::prepare(&self.scene, transform, viewport_extent, scale) {
+            Ok(layout) => layout,
+            Err(status) => return BackendRenderResult::rejected(status_to_dict(&status)),
+        };
+        let scene = std::mem::take(&mut self.scene);
+        self.update_surface_layout(&scene, &layout);
+        self.update_masks(owner, &scene, &layout, false);
+        self.bind_masks(&scene, &layout);
+        self.update_dependencies(owner, &scene, &layout);
+        self.remember_view(owner, transform, viewport_extent, scale);
+        self.scene = scene;
+        self.view_updates += 1;
+        BackendRenderResult::submitted(status_to_dict(&Status::ok()), self.has_masks())
+    }
+
+    fn remember_view(
+        &mut self,
+        owner: &Gd<Node2D>,
+        transform: Transform2D,
+        extent: Vector2,
+        scale: f64,
+    ) {
+        self.mask_scale = scale;
+        self.surface_transform = transform;
+        self.surface_target_extent = extent;
+        self.surface_viewport = owner.get_viewport().map(|v| v.get_viewport_rid());
     }
 
     fn ensure_model_root(&mut self, owner: &mut Gd<Node2D>) {

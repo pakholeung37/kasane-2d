@@ -11,7 +11,7 @@ use crate::conversions::{error_dict, status_to_dict, Array, Dictionary};
 use crate::document_bridge::KasaneDocumentBridge;
 use crate::texture_store::KasaneTextureStore;
 
-use kasane_render_godot::{GodotRenderBackend, KasaneMeshView, RenderRequest};
+use kasane_render_godot::{BackendRenderResult, GodotRenderBackend, KasaneMeshView, RenderRequest};
 
 /// Godot-facing preview component.
 ///
@@ -32,9 +32,8 @@ pub struct KasaneDocumentPreview {
     completed_submission: u64,
     drawing_submission: Option<(u64, Rid)>,
     pending_draws: i32,
-    runtime_frame: Option<DrawableFrame>,
+    last_source_revision: u64,
     resources: PreviewResources,
-    runtime_textures: HashMap<String, Gd<Texture2D>>,
 }
 
 #[godot_api]
@@ -80,13 +79,19 @@ impl INode2D for KasaneDocumentPreview {
         let viewport_rid = viewport.as_ref().map(|v| v.get_viewport_rid());
         if self
             .backend
-            .needs_geometry_refresh(scale, target, transform, viewport_rid)
+            .needs_view_refresh(scale, target, transform, viewport_rid)
         {
-            if self.document.is_some() {
+            if self.backend.can_update_view() {
+                self.drawing_submission = None;
+                let mut owner = self.to_gd().upcast::<Node2D>();
+                let outcome = self
+                    .backend
+                    .update_view(&mut owner, transform, target, scale);
+                self.record_outcome(outcome, self.last_source_revision);
+            } else if self.document.is_some() {
+                // A previously rejected frame has no synchronized resources.
+                // Retry the document when a new view can fit its budget.
                 self.refresh_geometry();
-            } else if let Some(frame) = self.runtime_frame.clone() {
-                let textures = self.runtime_textures.clone();
-                self.render_frame(&frame, &textures);
             }
         }
     }
@@ -111,8 +116,6 @@ impl KasaneDocumentPreview {
         }
         self.clear_views();
         self.resources.reset();
-        self.runtime_frame = None;
-        self.runtime_textures.clear();
         self.document = doc.clone();
         if let Some(mut new_doc) = doc {
             let changed_callable = self.to_gd().callable("_document_changed");
@@ -330,12 +333,7 @@ impl KasaneDocumentPreview {
     ) -> Dictionary {
         let result = self.render_frame(frame, textures);
         if result.get("ok").and_then(|v| v.try_to::<bool>().ok()) == Some(true) {
-            self.runtime_frame = Some(frame.clone());
-            self.runtime_textures = textures.clone();
             self.base_mut().set_process(true);
-        } else {
-            self.runtime_frame = None;
-            self.runtime_textures.clear();
         }
         result
     }
@@ -370,6 +368,10 @@ impl KasaneDocumentPreview {
             scale,
             submission_id,
         });
+        self.record_outcome(outcome, frame.source_revision)
+    }
+
+    fn record_outcome(&mut self, outcome: BackendRenderResult, revision: u64) -> Dictionary {
         let mut result = outcome.status;
         let ok = result
             .get("ok")
@@ -378,7 +380,8 @@ impl KasaneDocumentPreview {
         if ok {
             self.submission_id = self.submission_id.wrapping_add(1);
             result.set("submission_id", self.submission_id as i64);
-            result.set("revision", frame.source_revision as i64);
+            result.set("revision", revision as i64);
+            self.last_source_revision = revision;
             self.submitted_frame = Engine::singleton().get_frames_drawn();
             self.pending_draws = if outcome.has_masks { 2 } else { 1 };
         } else {

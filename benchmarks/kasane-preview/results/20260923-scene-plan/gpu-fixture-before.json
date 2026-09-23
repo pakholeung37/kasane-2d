@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "benchmark": "kasane-preview",
+  "workload": "gpu-fixture",
+  "label": "before",
+  "library": "/Users/pakholeung/web/kesane-2d/target/render-comparison-20260923-100029/gpu-fixture/current/libkasane_godot.dylib",
+  "godot": "/Applications/Godot_mono.app/Contents/MacOS/Godot",
+  "warmup_frames": 60,
+  "sample_frames": 600,
+  "repeats": 3,
+  "model3": null,
+  "runs": [
+    {
+      "adapter": "Apple M4",
+      "benchmark": "kasane-preview",
+      "elapsed_ms": 5004.452,
+      "failures": [],
+      "frame_ms": {
+        "mean": 8.33445999999999,
+        "p50": 6.607,
+        "p95": 14.428,
+        "p99": 15.317
+      },
+      "godot": {
+        "build": "official",
+        "hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+        "hex": 263938,
+        "major": 4,
+        "minor": 7,
+        "patch": 2,
+        "status": "stable",
+        "string": "4.7.2-stable (official)",
+        "timestamp": 0
+      },
+      "refresh_cpu_ms": {
+        "mean": 0.446513333333333,
+        "p50": 0.437,
+        "p95": 0.702,
+        "p99": 0.782
+      },
+      "render_stats": {
+        "active_offscreens": 0,
+        "creations": 19,
+        "destination_copies": 0,
+        "gpu_texture_bytes": 5401035,
+        "gpu_video_bytes": 22464375,
+        "mask_color_bytes": 228096,
+        "mask_viewports": 6,
+        "materials": 19,
+        "mesh_views": 19,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 0,
+        "offscreen_creations": 0,
+        "offscreen_groups": 0,
+        "offscreen_reserved_bytes": 0,
+        "offscreen_resizes": 0,
+        "shaders": 4,
+        "uploads": 5391
+      },
+      "renderer": "gl_compatibility",
+      "sample_frames": 600,
+      "schema_version": 1,
+      "status": "passed",
+      "warmup_frames": 60,
+      "workload": "gpu-fixture"
+    },
+    {
+      "adapter": "Apple M4",
+      "benchmark": "kasane-preview",
+      "elapsed_ms": 5021.125,
+      "failures": [],
+      "frame_ms": {
+        "mean": 8.363795,
+        "p50": 7.985,
+        "p95": 14.62,
+        "p99": 15.123
+      },
+      "godot": {
+        "build": "official",
+        "hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+        "hex": 263938,
+        "major": 4,
+        "minor": 7,
+        "patch": 2,
+        "status": "stable",
+        "string": "4.7.2-stable (official)",
+        "timestamp": 0
+      },
+      "refresh_cpu_ms": {
+        "mean": 0.461251666666667,
+        "p50": 0.448,
+        "p95": 0.735,
+        "p99": 0.854
+      },
+      "render_stats": {
+        "active_offscreens": 0,
+        "creations": 19,
+        "destination_copies": 0,
+        "gpu_texture_bytes": 5401035,
+        "gpu_video_bytes": 22464375,
+        "mask_color_bytes": 228096,
+        "mask_viewports": 6,
+        "materials": 19,
+        "mesh_views": 19,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 0,
+        "offscreen_creations": 0,
+        "offscreen_groups": 0,
+        "offscreen_reserved_bytes": 0,
+        "offscreen_resizes": 0,
+        "shaders": 4,
+        "uploads": 5391
+      },
+      "renderer": "gl_compatibility",
+      "sample_frames": 600,
+      "schema_version": 1,
+      "status": "passed",
+      "warmup_frames": 60,
+      "workload": "gpu-fixture"
+    },
+    {
+      "adapter": "Apple M4",
+      "benchmark": "kasane-preview",
+      "elapsed_ms": 5000.967,
+      "failures": [],
+      "frame_ms": {
+        "mean": 8.330455,
+        "p50": 8.336,
+        "p95": 14.697,
+        "p99": 15.061
+      },
+      "godot": {
+        "build": "official",
+        "hash": "ed1daf0bf001b61586d9930840f2f1394092c079",
+        "hex": 263938,
+        "major": 4,
+        "minor": 7,
+        "patch": 2,
+        "status": "stable",
+        "string": "4.7.2-stable (official)",
+        "timestamp": 0
+      },
+      "refresh_cpu_ms": {
+        "mean": 0.464638333333333,
+        "p50": 0.463,
+        "p95": 0.717,
+        "p99": 0.832
+      },
+      "render_stats": {
+        "active_offscreens": 0,
+        "creations": 19,
+        "destination_copies": 0,
+        "gpu_texture_bytes": 5401035,
+        "gpu_video_bytes": 22464375,
+        "mask_color_bytes": 228096,
+        "mask_viewports": 6,
+        "materials": 19,
+        "mesh_views": 19,
+        "offscreen_budget_bytes": 536870912,
+        "offscreen_color_bytes": 0,
+        "offscreen_creations": 0,
+        "offscreen_groups": 0,
+        "offscreen_reserved_bytes": 0,
+        "offscreen_resizes": 0,
+        "shaders": 4,
+        "uploads": 5391
+      },
+      "renderer": "gl_compatibility",
+      "sample_frames": 600,
+      "schema_version": 1,
+      "status": "passed",
+      "warmup_frames": 60,
+      "workload": "gpu-fixture"
+    }
+  ],
+  "median": {
+    "refresh_cpu_ms": {
+      "mean": 0.461251666666667,
+      "p50": 0.448,
+      "p95": 0.717,
+      "p99": 0.832
+    },
+    "frame_ms": {
+      "mean": 8.33445999999999,
+      "p50": 7.985,
+      "p95": 14.62,
+      "p99": 15.123
+    }
+  }
+}

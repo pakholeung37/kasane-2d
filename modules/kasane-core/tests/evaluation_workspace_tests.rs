@@ -133,6 +133,58 @@ fn workspace_reuses_geometry_and_preserves_output_on_late_failure() {
     assert_eq!(output, fresh);
 }
 
+// A renderer that retains the previous published frame through the next
+// evaluation prevents PreviewState::invalidate from reclaiming its buffers.
+// Measure that ownership cost before adopting persistent Arc frame caching.
+#[test]
+fn published_frame_ownership_preserves_snapshots_and_recycles_released_buffers() {
+    use kasane_core::preview::PreviewState;
+
+    let mut doc = document(100);
+    let parameter = id(200);
+    assert!(doc
+        .create_parameter(Parameter {
+            id: parameter.clone(),
+            minimum: -1.0,
+            maximum: 1.0,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+
+    let measure = |retain: bool| {
+        let mut state = PreviewState::default();
+        let mut retained: Option<std::sync::Arc<DrawableFrame>> = None;
+        let mut step = |i| {
+            let value = if i % 2 == 0 { -0.5 } else { 0.5 };
+            assert!(state
+                .replace(&doc, 1, [(parameter.clone(), value)].into())
+                .unwrap());
+            let frame = state.frame(&doc, 1).unwrap();
+            assert_eq!(frame.drawables.len(), 100);
+            assert_eq!(frame.parameters[0].value, value);
+            if let Some(old) = &retained {
+                assert_eq!(old.parameters[0].value, -value);
+            }
+            retained = retain.then_some(frame);
+        };
+        for i in 0..8 {
+            step(i);
+        }
+        allocations(|| {
+            for i in 8..20 {
+                step(i);
+            }
+        })
+    };
+    let released = measure(false);
+    let retained = measure(true);
+    println!("12 publications / 100 meshes: released={released}, retained={retained} allocations");
+    // Gate cheap recycling, but do not make the current retained-frame penalty
+    // a required behavior: a future pool may legitimately improve that path.
+    assert!(released < 120, "released={released}, retained={retained}");
+}
+
 #[test]
 fn binding_index_tracks_retarget_delete_and_restore() {
     let mut doc = document(2);
