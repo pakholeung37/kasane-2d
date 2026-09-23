@@ -31,6 +31,12 @@ GLUE = "00000000-0000-4000-8000-000000000015"
 BLEND_PARAMETER = "00000000-0000-4000-8000-000000000016"
 BLEND_TABLE = "00000000-0000-4000-8000-000000000017"
 BLEND_CONSTRAINT = "00000000-0000-4000-8000-000000000018"
+BLEND_MESH = "00000000-0000-4000-8000-000000000019"
+BLEND_WARP = "00000000-0000-4000-8000-000000000020"
+BLEND_ROTATION = "00000000-0000-4000-8000-000000000021"
+BLEND_PART = "00000000-0000-4000-8000-000000000022"
+BLEND_GLUE = "00000000-0000-4000-8000-000000000023"
+BLEND_OFFSCREEN = "00000000-0000-4000-8000-000000000024"
 TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
@@ -606,6 +612,78 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(model.version, version)
         model.undo()
         self.assertEqual(model.blend_key_table(BLEND_TABLE).keys, [0, 1])
+
+    def test_blend_bindings_cover_all_targets(self):
+        model = session()
+        zero = [(0, 0)] * 4
+        warp_points = [(0, 0), (1, 0), (0, 1), (1, 1)]
+        with model.edit("blend targets") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "mesh", ASSET, (0, 0), (1, 1))
+            edit.create_rectangle(MESH_B, "second", ASSET, (0, 0), (1, 1))
+            edit.create_part(PART, "part")
+            edit.create_rotation_transform(
+                ROTATION, "rotation", kasane.RotationData(0, kasane.RotationPose((0, 0)))
+            )
+            edit.create_warp_transform(WARP, "warp", kasane.WarpData(1, 1, True, warp_points))
+            edit.create_glue(kasane.GlueSpec(
+                GLUE, "seam", MESH, MESH_B, [kasane.GlueVertexPair(0, 0, 1, 1)]
+            ))
+            edit.create_offscreen(kasane.OffscreenSpec(
+                OFFSCREEN, "layer", PART, keyforms=[kasane.OffscreenKeyform(1)]
+            ))
+            edit.create_parameter(BLEND_PARAMETER, "shape", 0, 1, 0, kind="blend_shape")
+            edit.create_parameter(PARAMETER, "limit", 0, 1, 0)
+            edit.create_blend_key_table(kasane.BlendKeyTableSpec(
+                BLEND_TABLE, BLEND_PARAMETER, [0, 1], 0,
+            ))
+            edit.create_blend_constraint(kasane.BlendConstraintSpec(
+                BLEND_CONSTRAINT, PARAMETER, [0, 1], [1, 1],
+            ))
+            for spec in [
+                kasane.BlendBindingSpec(BLEND_MESH, MESH, "mesh", BLEND_TABLE,
+                    [BLEND_CONSTRAINT], [kasane.BlendMeshDelta(zero),
+                    kasane.BlendMeshDelta([(1, 0)] * 4, 0.2, 2, (0.8, 1, 1), (0, 0.1, 0))]),
+                kasane.BlendBindingSpec(BLEND_WARP, WARP, "warp", BLEND_TABLE, [],
+                    [kasane.BlendWarpDelta(zero), kasane.BlendWarpDelta([(0.1, 0)] * 4, 0.3)]),
+                kasane.BlendBindingSpec(BLEND_ROTATION, ROTATION, "rotation", BLEND_TABLE, [],
+                    [kasane.BlendRotationDelta(), kasane.BlendRotationDelta((1, 2), 30, 1.5, 0.4)]),
+                kasane.BlendBindingSpec(BLEND_PART, PART, "part", BLEND_TABLE, [],
+                    [kasane.BlendPartDelta(0), kasane.BlendPartDelta(5)]),
+                kasane.BlendBindingSpec(BLEND_GLUE, GLUE, "glue", BLEND_TABLE, [],
+                    [kasane.BlendGlueDelta(0), kasane.BlendGlueDelta(1)]),
+                kasane.BlendBindingSpec(BLEND_OFFSCREEN, OFFSCREEN, "offscreen", BLEND_TABLE, [],
+                    [kasane.BlendOffscreenDelta(0), kasane.BlendOffscreenDelta(0.5, (1, 0.9, 1))]),
+            ]:
+                edit.create_blend_binding(spec)
+        self.assertEqual(len(model.blend_binding_ids()), 6)
+        self.assertEqual(model.blend_binding(BLEND_MESH).keyforms[1].draw_order, 2)
+        self.assertAlmostEqual(model.blend_binding(BLEND_WARP).keyforms[1].points[0][0], 0.1)
+        self.assertEqual(model.blend_binding(BLEND_ROTATION).keyforms[1].angle, 30)
+        self.assertEqual(model.blend_binding(BLEND_PART).keyforms[1].draw_order, 5)
+        self.assertEqual(model.blend_binding(BLEND_GLUE).keyforms[1].intensity, 1)
+        self.assertAlmostEqual(model.blend_binding(BLEND_OFFSCREEN).keyforms[1].opacity, 0.5)
+        binding = model.blend_binding(BLEND_MESH)
+        binding.keyforms[1].positions[0] = (99, 99)
+        self.assertEqual(model.blend_binding(BLEND_MESH).keyforms[1].positions[0], (1, 0))
+        with model.edit("replace blend binding") as edit:
+            edit.replace_blend_binding(binding._replace(keyforms=[
+                kasane.BlendMeshDelta(zero), kasane.BlendMeshDelta([(2, 0)] * 4),
+            ]))
+        self.assertEqual(model.blend_binding(BLEND_MESH).keyforms[1].positions[0], (2, 0))
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            model.save(destination)
+            reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.blend_binding(BLEND_MESH).keyforms[1].positions[0], (2, 0))
+        version = model.version
+        with self.assertRaises(kasane.SdkFailure) as error:
+            with model.edit("invalid blend binding") as edit:
+                edit.replace_blend_binding(binding._replace(keyforms=[kasane.BlendMeshDelta(zero)]))
+        self.assertEqual(error.exception.code, "INCOMPLETE_KEYFORMS")
+        self.assertEqual(model.version, version)
+        model.undo()
+        self.assertEqual(model.blend_binding(BLEND_MESH).keyforms[1].positions[0], (1, 0))
 
     def test_png_base_relocation_and_replacement(self):
         model = session()

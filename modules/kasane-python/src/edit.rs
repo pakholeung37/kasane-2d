@@ -48,6 +48,8 @@ enum Command {
     ReplaceBlendKeyTable(BlendShapeKeyTable),
     CreateBlendConstraint(BlendShapeConstraint),
     ReplaceBlendConstraint(BlendShapeConstraint),
+    CreateBlendBinding(kasane_core::BlendShapeBinding),
+    ReplaceBlendBinding(kasane_core::BlendShapeBinding),
     UpdateRotation(String, RotationTransform),
     UpdateWarpPoints(String, Vec<Vec2>),
     ReplaceAsset(kasane_core::ImageAsset),
@@ -436,6 +438,30 @@ impl NativeEdit {
                 keys,
                 weights,
             }));
+        Ok(())
+    }
+
+    fn create_blend_binding(
+        &mut self,
+        py: Python<'_>,
+        data: BlendBindingDataTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "create_blend_binding")?;
+        self.commands
+            .push(Command::CreateBlendBinding(blend_binding_from_tuple(data)?));
+        Ok(())
+    }
+
+    fn replace_blend_binding(
+        &mut self,
+        py: Python<'_>,
+        data: BlendBindingDataTuple,
+    ) -> PyResult<()> {
+        self.ensure_open(py, "replace_blend_binding")?;
+        self.commands
+            .push(Command::ReplaceBlendBinding(blend_binding_from_tuple(
+                data,
+            )?));
         Ok(())
     }
 
@@ -961,6 +987,8 @@ impl NativeEdit {
                         Command::ReplaceBlendConstraint(value) => {
                             edit.replace_blend_constraint(value)?
                         }
+                        Command::CreateBlendBinding(value) => edit.create_blend_binding(value)?,
+                        Command::ReplaceBlendBinding(value) => edit.replace_blend_binding(value)?,
                         Command::UpdateRotation(id, rotation) => {
                             edit.update_rotation(&id, rotation)?
                         }

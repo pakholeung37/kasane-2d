@@ -99,4 +99,6 @@ Python Glue 提供完整顶点对、权重、强度和可选参数绑定的创�
 
 Python 参数支持 `kind="blend_shape"`；BlendShape key table 和 constraint 均支持创建、读取及完整替换。清单更新至 110/116 项 Python 绑定、1 项 Rust 专用、5 项待绑定。
 
+Python BlendShape binding 的六种 target 均有对应 delta keyform 类型，支持完整创建、快照与替换。清单更新至 113/116 项 Python 绑定、1 项 Rust 专用、2 项待绑定。
+
 逐方法迁移状态见 [SDK-COVERAGE.md](SDK-COVERAGE.md)。

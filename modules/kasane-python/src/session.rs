@@ -432,6 +432,13 @@ impl NativeSession {
         }))
     }
 
+    fn blend_binding(&self, id: &str) -> PyResult<Option<BlendBindingTuple>> {
+        let session = self.inner.lock().map_err(|_| poisoned())?;
+        Ok(session
+            .blend_binding(id)
+            .map(|value| blend_binding_tuple(value, session.version())))
+    }
+
     fn scene_binding(&self, id: &str) -> PyResult<Option<SceneBindingTuple>> {
         let session = self.inner.lock().map_err(|_| poisoned())?;
         Ok(session

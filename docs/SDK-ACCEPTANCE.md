@@ -57,3 +57,5 @@ Offscreen 续测：创建、快照副本、完整替换、保存重开、非法�
 Glue 续测：创建、快照副本、带参数绑定的完整替换、保存重开、无效顶点回滚和 undo。仓库外 wheel 的 `test_cpu.py` 24 项通过；覆盖清单为 104/116 项 Python 绑定、1 项 Rust 专用、11 项待绑定。
 
 BlendShape 元数据续测：blend_shape 参数、key table 与 constraint 创建、替换、快照副本和保存重开；约束长度错误整批回滚，undo 恢复旧表。仓库外 wheel 的 `test_cpu.py` 25 项通过；覆盖清单为 110/116 项 Python 绑定、1 项 Rust 专用、5 项待绑定。
+
+BlendShape binding 续测：六种 target 的 delta keyform 创建、读取；mesh binding 替换、快照副本、保存重开、错误长度回滚及 undo。仓库外 wheel 的 `test_cpu.py` 26 项通过；覆盖清单为 113/116 项 Python 绑定、1 项 Rust 专用、2 项待绑定。

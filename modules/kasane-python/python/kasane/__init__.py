@@ -306,6 +306,69 @@ class BlendConstraintSnapshot(NamedTuple):
     version: Version
 
 
+class BlendMeshDelta(NamedTuple):
+    positions: Sequence[Point]
+    opacity: float | None = None
+    draw_order: float | None = None
+    multiply: tuple[float, float, float] | None = None
+    screen: tuple[float, float, float] | None = None
+
+
+class BlendWarpDelta(NamedTuple):
+    points: Sequence[Point]
+    opacity: float | None = None
+    multiply: tuple[float, float, float] | None = None
+    screen: tuple[float, float, float] | None = None
+
+
+class BlendRotationDelta(NamedTuple):
+    origin: Point | None = None
+    angle: float | None = None
+    scale: float | None = None
+    opacity: float | None = None
+    multiply: tuple[float, float, float] | None = None
+    screen: tuple[float, float, float] | None = None
+
+
+class BlendPartDelta(NamedTuple):
+    draw_order: float
+
+
+class BlendGlueDelta(NamedTuple):
+    intensity: float
+
+
+class BlendOffscreenDelta(NamedTuple):
+    opacity: float
+    multiply: tuple[float, float, float] | None = None
+    screen: tuple[float, float, float] | None = None
+
+
+BlendDelta = (
+    BlendMeshDelta | BlendWarpDelta | BlendRotationDelta |
+    BlendPartDelta | BlendGlueDelta | BlendOffscreenDelta
+)
+
+
+class BlendBindingSpec(NamedTuple):
+    id: str
+    target_id: str
+    target_kind: str
+    key_table_id: str
+    constraint_ids: Sequence[str]
+    keyforms: Sequence[BlendDelta]
+
+
+class BlendBindingSnapshot(NamedTuple):
+    id: str
+    target_id: str
+    target_kind: str
+    key_table_id: str
+    constraint_ids: list[str]
+    keyforms: list[BlendDelta]
+    version: Version
+
+
 class ResourceIssue(NamedTuple):
     asset_id: str
     code: str
@@ -516,6 +579,12 @@ class Edit:
             constraint.id, constraint.parameter_id,
             list(constraint.keys), list(constraint.weights),
         ))
+
+    def create_blend_binding(self, binding: BlendBindingSpec) -> None:
+        self._call(lambda: self._native.create_blend_binding(_blend_binding_data(binding)))
+
+    def replace_blend_binding(self, binding: BlendBindingSnapshot) -> None:
+        self._call(lambda: self._native.replace_blend_binding(_blend_binding_data(binding)))
 
     def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
         self._call(lambda: self._native.update_warp_points(transform_id, list(points)))
@@ -897,6 +966,29 @@ class Session:
         raw = self._native.blend_constraint(constraint_id)
         return BlendConstraintSnapshot(*raw) if raw is not None else None
 
+    def blend_binding(self, binding_id: str) -> BlendBindingSnapshot | None:
+        raw = self._native.blend_binding(binding_id)
+        if raw is None:
+            return None
+        id, target_id, kind, table_id, constraint_ids, forms, version = raw
+        keyforms: list[BlendDelta] = []
+        for positions, origin, angle, scale, opacity, draw_order, intensity, multiply, screen in forms:
+            if kind == "mesh":
+                keyforms.append(BlendMeshDelta(positions, opacity, draw_order, multiply, screen))
+            elif kind == "warp":
+                keyforms.append(BlendWarpDelta(positions, opacity, multiply, screen))
+            elif kind == "rotation":
+                keyforms.append(BlendRotationDelta(origin, angle, scale, opacity, multiply, screen))
+            elif kind == "part":
+                keyforms.append(BlendPartDelta(draw_order))
+            elif kind == "glue":
+                keyforms.append(BlendGlueDelta(intensity))
+            elif kind == "offscreen":
+                keyforms.append(BlendOffscreenDelta(opacity, multiply, screen))
+            else:
+                raise ValueError("Unknown BlendShape target kind")
+        return BlendBindingSnapshot(id, target_id, kind, table_id, constraint_ids, keyforms, version)
+
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
         return self._native.handle(kind, object_id)
 
@@ -1054,6 +1146,33 @@ def _glue_data(value: GlueSpec | GlueSnapshot):
     )
 
 
+def _blend_form_tuple(kind: str, form: BlendDelta):
+    if kind == "mesh" and isinstance(form, BlendMeshDelta):
+        return (list(form.positions), None, None, None, form.opacity, form.draw_order,
+                None, form.multiply, form.screen)
+    if kind == "warp" and isinstance(form, BlendWarpDelta):
+        return (list(form.points), None, None, None, form.opacity, None,
+                None, form.multiply, form.screen)
+    if kind == "rotation" and isinstance(form, BlendRotationDelta):
+        return ([], form.origin, form.angle, form.scale, form.opacity, None,
+                None, form.multiply, form.screen)
+    if kind == "part" and isinstance(form, BlendPartDelta):
+        return ([], None, None, None, None, form.draw_order, None, None, None)
+    if kind == "glue" and isinstance(form, BlendGlueDelta):
+        return ([], None, None, None, None, None, form.intensity, None, None)
+    if kind == "offscreen" and isinstance(form, BlendOffscreenDelta):
+        return ([], None, None, None, form.opacity, None, None, form.multiply, form.screen)
+    raise TypeError("Blend delta does not match target kind")
+
+
+def _blend_binding_data(value: BlendBindingSpec | BlendBindingSnapshot):
+    return (
+        value.id, value.target_id, value.target_kind, value.key_table_id,
+        list(value.constraint_ids),
+        [_blend_form_tuple(value.target_kind, form) for form in value.keyforms],
+    )
+
+
 def _rotation_tuple(rotation: RotationData):
     pose = rotation.pose
     return (rotation.base_angle, (
@@ -1115,6 +1234,14 @@ __all__ = [
     "BlendConstraintSpec",
     "BlendKeyTableSnapshot",
     "BlendKeyTableSpec",
+    "BlendBindingSnapshot",
+    "BlendBindingSpec",
+    "BlendMeshDelta",
+    "BlendWarpDelta",
+    "BlendRotationDelta",
+    "BlendPartDelta",
+    "BlendGlueDelta",
+    "BlendOffscreenDelta",
     "Appearance",
     "AssetSnapshot",
     "CanvasSnapshot",

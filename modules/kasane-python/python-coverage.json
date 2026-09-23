@@ -15,7 +15,9 @@
     "test": "test_mesh_binding_preserves_appearance_and_replaces_forms"
   },
   "Edit.create_blend_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.create_blend_binding",
+    "test": "test_blend_bindings_cover_all_targets"
   },
   "Edit.create_blend_constraint": {
     "status": "bound",
@@ -83,7 +85,9 @@
     "test": "test_mesh_binding_preserves_appearance_and_replaces_forms"
   },
   "Edit.replace_blend_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Edit.replace_blend_binding",
+    "test": "test_blend_bindings_cover_all_targets"
   },
   "Edit.replace_blend_constraint": {
     "status": "bound",
@@ -247,7 +251,9 @@
     "test": "test_parameter_binding_samples_and_reopens"
   },
   "Session.blend_binding": {
-    "status": "pending"
+    "status": "bound",
+    "python": "Session.blend_binding",
+    "test": "test_blend_bindings_cover_all_targets"
   },
   "Session.blend_binding_ids": {
     "status": "bound",
