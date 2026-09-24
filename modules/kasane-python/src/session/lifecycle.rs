@@ -142,6 +142,11 @@ impl NativeSession {
         ))
     }
 
+    fn uv_v_origin(&self) -> PyResult<&'static str> {
+        let flag = self.inner.lock().map_err(|_| poisoned())?.canvas().flag;
+        Ok(if flag & 1 == 0 { "bottom" } else { "top" })
+    }
+
     fn draw_order_groups(&self) -> PyResult<Option<Vec<DrawOrderTuple>>> {
         Ok(self
             .inner

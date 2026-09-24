@@ -83,6 +83,7 @@ class CpuWheelTests(unittest.TestCase):
     def test_create_save_reopen_and_snapshot_copy(self):
         model = session()
         self.assertEqual(model.canvas.origin, (50, 50))
+        self.assertEqual(model.uv_v_origin, "top")
         with model.edit("create") as edit:
             edit.add_png_asset(ASSET, "texture", TEXTURE)
             edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
@@ -225,6 +226,7 @@ class CpuWheelTests(unittest.TestCase):
         imported = model.import_model3(EXTERNAL / "model.model3.json")
         self.assertEqual(imported.moc_version, 5)
         self.assertEqual(imported.diagnostics, [])
+        self.assertEqual(model.uv_v_origin, "top")
         mesh_id = model.mesh_ids()[0]
         with model.edit("rename") as edit:
             edit.rename_mesh(mesh_id, "changed")
@@ -264,6 +266,7 @@ class CpuWheelTests(unittest.TestCase):
             self.assertTrue(result.durable)
             self.assertEqual(model.project_path, result.manifest)
             self.assertEqual(model.mesh(model.mesh_ids()[0]).name, "face")
+            self.assertEqual(model.uv_v_origin, "top")
             self.assertEqual(model.mesh_record(model.mesh_ids()[0]).runtime_id, "face")
             self.assertEqual(model.diagnose_resources(), [])
             reopened = kasane.open_project(result.manifest)

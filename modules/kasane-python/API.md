@@ -55,7 +55,7 @@ not override a `PROJECT_CONFLICT` on a session's own saved project. Check
 
 | API | Returns / behavior |
 | --- | --- |
-| Properties: `version`, `document_id`, `canvas`, `draw_order_groups`, `evaluation_revision`, `modified`, `project_path` | Current values; `project_path` is `Path | None`. `canvas.origin` returns the original `(x, y)` pair. `draw_order_groups` is `None` when no explicit groups exist. |
+| Properties: `version`, `document_id`, `canvas`, `uv_v_origin`, `draw_order_groups`, `evaluation_revision`, `modified`, `project_path` | Current values; `project_path` is `Path | None`. `canvas.origin` returns the original `(x, y)` pair. `uv_v_origin` is `"top"` or `"bottom"` for mesh UVs relative to PNG rows. `draw_order_groups` is `None` when no explicit groups exist. |
 | `asset_ids()`, `mesh_ids()`, `parameter_ids()`, `binding_ids()` | IDs of PNG assets, meshes, parameters, and mesh bindings. |
 | `part_ids()`, `transform_ids()`, `scene_binding_ids()`, `offscreen_ids()`, `glue_ids()` | IDs of scene and composition objects. |
 | `blend_key_table_ids()`, `blend_constraint_ids()`, `blend_binding_ids()` | IDs of BlendShape objects. |
@@ -84,6 +84,12 @@ positions are in canvas pixels; positions under a deformer are local to their
 parent. `mesh_record()` is for full replacement and topology work;
 `mesh_properties()` is for drawing-only changes.
 
+When locating a mesh's texels in a PNG atlas, use `session.uv_v_origin`.
+For `"top"`, a UV `v` maps near PNG row `v * height`; for `"bottom"`, it maps
+near `(1 - v) * height`. `u` maps near column `u * width`. UV bounds only locate
+the neighborhood: filtering and packed raster edges can differ from a resized
+PSD layer. Check the actual atlas pixels before editing an asset.
+
 ## Atomic edits
 
 ```python
@@ -110,7 +116,7 @@ import/export, undo/redo, project reset, and nested edits are rejected with
 | --- | --- |
 | `add_png_asset(id, name, absolute_path)` | Add a PNG after reading its size and hash. |
 | `add_png_asset_from_base(id, name, absolute_base, relative_path)` | Resolve a PNG against an explicit absolute base. |
-| `replace_png_asset(id, name, absolute_path)` | Replace asset content, allowing a new size and hash. |
+| `replace_png_asset(id, name, absolute_path)` | Replace asset content, allowing a new size and hash. Keep the source PNG at that path until save and package export finish; those operations read it again. |
 | `relocate_png_asset(id, absolute_path)` | Move an asset reference only when the replacement PNG matches the old size and hash. |
 | `create_rectangle(mesh_id, name, asset_id, minimum, maximum)` | Create a four-vertex, two-triangle root mesh. |
 | `create_mesh(MeshRecordSpec)`, `replace_mesh(MeshRecordSnapshot)` | Create or replace a full mesh record. |

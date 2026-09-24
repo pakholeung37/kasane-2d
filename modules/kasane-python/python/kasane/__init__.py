@@ -1686,6 +1686,11 @@ class Session:
         return CanvasSnapshot(*self._native.canvas())
 
     @property
+    def uv_v_origin(self) -> str:
+        """``top`` or ``bottom`` origin for mesh UV V relative to PNG rows."""
+        return self._native.uv_v_origin()
+
+    @property
     def draw_order_groups(self) -> list[DrawOrderGroup] | None:
         """Copy of explicit draw-order groups, or None when no groups exist."""
         raw = self._native.draw_order_groups()

@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -330,6 +331,20 @@ class WheelIntegrationTests(unittest.TestCase):
         self.assertEqual(blink['controls']['extra_midpoint']['status'], 'passed')
         self.assertTrue(all(row['status'] == 'failed' for name, row in blink['controls'].items()
                             if name not in ('positive', 'extra_midpoint')))
+        subprocess.run([shutil.which('uv'), 'pip', 'install', '--python',
+                        str(study / '.venv/bin/python'), 'pillow==12.3.0'],
+                       capture_output=True, text=True, check=True)
+        for variant in ('a', 'b', 'c'):
+            with self.subTest(art_revision=variant):
+                call('prepare', '--trial', 'art-' + variant,
+                     '--task', 'shirousagi-art-revision', '--variant', variant,
+                     '--model', 'fixture', '--cohort', 'learning')
+                art = harness.read(study / 'host/trials' / ('art-' + variant) / 'oracle.json')
+                self.assertEqual(len(art['frames']), 10)
+                self.assertEqual(art['controls']['positive']['status'], 'passed')
+                self.assertEqual(art['controls']['edge_inclusive']['status'], 'passed')
+                self.assertTrue(all(row['status'] == 'failed' for name, row in art['controls'].items()
+                                    if name not in ('positive', 'edge_inclusive')))
 
     def test_input_tamper_cannot_pass_and_assessments_are_preserved(self):
         packet = self.prepare('tamper')

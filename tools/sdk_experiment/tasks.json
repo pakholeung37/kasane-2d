@@ -44,6 +44,10 @@
     "shirousagi-blink": {
       "version": 1,
       "goal": "从真实 Shirousagi 的 24 层 PSD 静态工程创作双眼独立眨眼，交付可编辑工程和可搬迁模型包。"
+    },
+    "shirousagi-art-revision": {
+      "version": 1,
+      "goal": "将真实 Shirousagi PSD 的单图层颜色修订应用到已交付模型的纹理图集，保留 34 参数 rig 并交付可搬迁模型包。"
     }
   }
 }

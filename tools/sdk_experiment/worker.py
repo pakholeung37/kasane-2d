@@ -1147,10 +1147,268 @@ def prepare_blink(packet, oracle_path):
     return {"status": "passed", "controls": controls}
 
 
+ART_REVISION_VARIANTS = {
+    "a": {"mesh": "ArtMesh15", "rgb_multipliers": [0.60, 0.92, 1.40]},
+    "b": {"mesh": "ArtMesh14", "rgb_multipliers": [1.28, 0.70, 1.12]},
+    "c": {"mesh": "ArtMesh22", "rgb_multipliers": [0.65, 1.10, 1.40]},
+}
+
+ART_REVISION_POSES = [
+    {},
+    {"ParamAngleX": 30, "ParamAngleY": -30, "ParamEyeLOpen": 1},
+    {"ParamAngleX": -30, "ParamAngleY": 30, "ParamEyeROpen": 1},
+    {"ParamEyeLOpen": 0.5, "ParamEyeROpen": 1},
+    {"ParamEyeLOpen": 0, "ParamEyeROpen": 1},
+    {"ParamEyeLOpen": 1, "ParamEyeROpen": 0.5},
+    {"ParamEyeLOpen": 1, "ParamEyeROpen": 0},
+    {"ParamAngleX": 20, "ParamAngleY": 15, "ParamMouthOpenY": 1},
+    {"ParamBreath": 1, "ParamAngleX": -20, "ParamAngleY": -15},
+    {"ParamAngleX": 12, "ParamAngleY": 18, "ParamEyeLOpen": 0.3,
+     "ParamEyeROpen": 0.7, "ParamMouthOpenY": 0.6},
+]
+
+
+def art_asset(session, mesh_name):
+    mesh = session.require_unique_mesh(mesh_name)
+    record = session.mesh_record(mesh.id)
+    return mesh, record, session.asset(record.drawing.texture_asset_id)
+
+
+def art_uv_box(record, width, height, margin=0):
+    u = [point[0] for point in record.geometry.uvs]
+    v = [point[1] for point in record.geometry.uvs]
+    return (math.ceil(min(u) * width) + margin,
+            math.ceil((1 - max(v)) * height) + margin,
+            math.floor(max(u) * width) - margin,
+            math.floor((1 - min(v)) * height) - margin)
+
+
+def art_recolor(source, output, factors, box=None):
+    from PIL import Image
+    image = Image.open(source).convert("RGBA")
+    x0, y0, x1, y1 = box or (0, 0, *image.size)
+    pixels = image.load()
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            red, green, blue, alpha = pixels[x, y]
+            if alpha:
+                pixels[x, y] = tuple(min(255, math.floor(value * factor + 0.5))
+                                     for value, factor in zip((red, green, blue), factors)) + (alpha,)
+    image.save(output)
+
+
+def art_texture_hashes(path, box):
+    from PIL import Image
+    image = Image.open(path).convert("RGBA")
+    width, height = image.size
+    data = bytearray(image.tobytes())
+    x0, y0, x1, y1 = box
+    for y in range(y0, y1):
+        data[(y * width + x0) * 4:(y * width + x1) * 4] = bytes((x1 - x0) * 4)
+    return {"outside": hashlib.sha256(data).hexdigest(),
+            "alpha": hashlib.sha256(image.getchannel("A").tobytes()).hexdigest(),
+            "size": [width, height]}
+
+
+def art_patch(session, source_png, output_png, spec, mode="positive"):
+    from PIL import Image
+    target = spec["mesh"]
+    selected = ("ArtMesh14" if target != "ArtMesh14" else "ArtMesh15") if mode == "wrong_layer" else target
+    _, record, asset = art_asset(session, selected)
+    width, height = Image.open(source_png).size
+    margin = 0 if mode == "edge_inclusive" else 1
+    box = None if mode == "whole_atlas" else art_uv_box(record, width, height, margin)
+    factors = [0.9, 0.9, 0.9] if mode == "wrong_tint" else spec["rgb_multipliers"]
+    art_recolor(source_png, output_png, factors, box)
+    with session.edit("apply PSD layer art revision") as edit:
+        edit.replace_png_asset(asset.id, asset.name, output_png.resolve())
+    if mode == "rig_change":
+        parameter = next(session.parameter(pid) for pid in session.parameter_ids()
+                         if session.parameter(pid).name == "ParamAngleX")
+        with session.edit("unrelated rig change") as edit:
+            edit.replace_parameter(parameter.id, parameter.name, parameter.minimum,
+                                   parameter.maximum, parameter.default_value + 1,
+                                   parameter.repeat, parameter.kind)
+
+
+def art_revision_fixture(packet, oracle_path, variant_name):
+    if not kasane.capabilities()["gpu_observation"]:
+        raise RuntimeError("shirousagi-art-revision requires the observe wheel")
+    spec = ART_REVISION_VARIANTS[variant_name]
+    input_dir = packet / "input"
+    shutil.copy2(Path(__file__).parent / "shirousagi/Shirousagi.psd",
+                 input_dir / "Shirousagi.psd")
+    original = shirousagi_model()
+    mesh, record, atlas = art_asset(original, spec["mesh"])
+    if len(original.mesh_ids()) != 24 or len(original.parameter_ids()) != 34:
+        raise RuntimeError("Shirousagi delivered model changed")
+    with tempfile.TemporaryDirectory(dir=oracle_path.parent) as folder:
+        art = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+        imported = art.import_psd(input_dir / "Shirousagi.psd", Path(folder) / "psd-project")
+        if imported.warnings or imported.raster_layers != 24:
+            raise RuntimeError("Shirousagi PSD no longer has 24 layers")
+        _, _, layer_asset = art_asset(art, spec["mesh"])
+        layer_source = Path(folder) / "psd-project" / layer_asset.source
+        shutil.copy2(layer_source, input_dir / "original-layer.png")
+    art_recolor(input_dir / "original-layer.png", input_dir / "revised-layer.png",
+                spec["rgb_multipliers"])
+    (input_dir / "revision.json").write_text(json.dumps(spec, indent=2) + "\n")
+    original.save(input_dir / "project")
+    atlas_path = Path(atlas.source)
+    box = art_uv_box(record, atlas.width, atlas.height)
+    source_hashes = art_texture_hashes(atlas_path, box)
+    revised = kasane.open_project(input_dir / "project")
+    with tempfile.TemporaryDirectory(dir=oracle_path.parent) as folder:
+        art_patch(revised, atlas_path, Path(folder) / "revised-atlas.png", spec)
+        observer = {"width": 700, "height": 700, "fit_long_side": 700}
+        frames = []
+        with kasane.Observer(**observer) as renderer:
+            for index, pose in enumerate(ART_REVISION_POSES):
+                base = renderer.observe(original, pose)
+                reference = renderer.observe(revised, pose)
+                bounds = next((entry.bounds for entry in reference.drawable_bounds
+                               if entry.id == mesh.id), None)
+                if bounds is None:
+                    raise RuntimeError("target art is not visible in an oracle pose")
+                x0, y0, x1, y1 = bounds
+                crop_box = [max(0, x0 - 2), max(0, y0 - 2),
+                            min(700, x1 + 2), min(700, y1 + 2)]
+                baseline = blink_mae(blink_crop(base.rgba, 700, crop_box),
+                                     blink_crop(reference.rgba, 700, crop_box))
+                if baseline <= 1:
+                    raise RuntimeError("art revision reference change is too small")
+                frames.append({"pose": pose, "box": crop_box,
+                               "reference": blink_pack(blink_crop(reference.rgba, 700, crop_box)),
+                               "baseline_mae": baseline,
+                               "outside_sha256": blink_outside_hash(base.rgba, 700, [crop_box])})
+                if index < 3:
+                    reference.save_png(input_dir / f"reference-{index}.png")
+    (input_dir / "references.json").write_text(json.dumps({"observer": observer,
+        "samples": [{"values": pose, "image": f"reference-{index}.png"}
+                    for index, pose in enumerate(ART_REVISION_POSES[:3])]}, indent=2) + "\n")
+    return {"spec": spec, "target_asset_id": atlas.id,
+            "expected": state(original, "ParamAngleX", (-30, 0, 30)),
+            "texture": source_hashes, "atlas_box": box, "observer": observer,
+            "frames": frames}
+
+
+def art_state_without_target_hash(value, oracle):
+    result = json.loads(json.dumps(value))
+    result["asset"][oracle["target_asset_id"]].pop("sha256")
+    return result
+
+
+def art_texture_checks(session, base_dir, oracle, prefix):
+    _, _, asset = art_asset(session, oracle["spec"]["mesh"])
+    source = Path(asset.source)
+    path = source if source.is_absolute() else base_dir / source
+    hashes = art_texture_hashes(path, oracle["atlas_box"])
+    return {f"{prefix}_texture_outside": hashes["outside"] == oracle["texture"]["outside"],
+            f"{prefix}_texture_alpha": hashes["alpha"] == oracle["texture"]["alpha"],
+            f"{prefix}_texture_size": hashes["size"] == oracle["texture"]["size"]}
+
+
+def art_render_checks(session, oracle, prefix):
+    checks = {}
+    with kasane.Observer(**oracle["observer"]) as renderer:
+        for index, spec in enumerate(oracle["frames"]):
+            frame = renderer.observe(session, spec["pose"])
+            checks[f"{prefix}_outside_{index}"] = (
+                blink_outside_hash(frame.rgba, 700, [spec["box"]]) == spec["outside_sha256"])
+            checks[f"{prefix}_art_{index}"] = (
+                blink_mae(blink_crop(frame.rgba, 700, spec["box"]),
+                          blink_unpack(spec["reference"])) <= spec["baseline_mae"] * 0.25)
+    return checks
+
+
+def art_revision_checks(manifest, package, oracle):
+    session = kasane.open_project(manifest)
+    actual = state(session, "ParamAngleX", (-30, 0, 30))
+    checks = {"structure": not session.validate_structure(),
+              "resources": not session.diagnose_resources(),
+              "non_target_state": close(art_state_without_target_hash(actual, oracle),
+                                        art_state_without_target_hash(oracle["expected"], oracle))}
+    checks.update(art_texture_checks(session, manifest.parent, oracle, "project"))
+    checks.update(art_render_checks(session, oracle, "project"))
+    package_dir = package.parent
+    checks["package_path"] = package.name == "model.model3.json" and package.is_file()
+    try:
+        references = json.loads(package.read_text())["FileReferences"]
+        paths = [references["Moc"], *references["Textures"]]
+        checks["package_refs"] = all(not Path(p).is_absolute() and ".." not in Path(p).parts
+                                     and (package_dir / p).is_file() for p in paths)
+    except (OSError, KeyError, TypeError, ValueError):
+        checks["package_refs"] = False
+    with tempfile.TemporaryDirectory() as folder:
+        receiver = Path(folder)
+        shutil.copytree(manifest.parent, receiver / "project")
+        shutil.copytree(package_dir, receiver / "package")
+        moved = kasane.open_project(receiver / "project" / manifest.name)
+        checks["moved_project_structure"] = not moved.validate_structure()
+        checks["moved_project_resources"] = not moved.diagnose_resources()
+        checks["moved_project_state"] = close(
+            art_state_without_target_hash(state(moved, "ParamAngleX", (-30, 0, 30)), oracle),
+            art_state_without_target_hash(oracle["expected"], oracle))
+        checks.update(art_texture_checks(moved, receiver / "project", oracle, "moved_project"))
+        checks.update(art_render_checks(moved, oracle, "moved_project"))
+        imported = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+        result = imported.import_model3(receiver / "package/model.model3.json")
+        checks["package_import"] = not result.warnings and not result.diagnostics
+        checks["package_structure"] = not imported.validate_structure()
+        checks["package_resources"] = not imported.diagnose_resources()
+        checks["package_counts"] = all(
+            len(getattr(imported, group + "_ids")()) == len(oracle["expected"][group])
+            for group in GROUPS)
+        checks["package_mesh_runtime_ids"] = (
+            {imported.mesh_record(mid).runtime_id for mid in imported.mesh_ids()}
+            == {record["runtime_id"] for record in oracle["expected"]["mesh"].values()})
+        checks["package_parameter_runtime_ids"] = (
+            {imported.parameter(pid).runtime_id for pid in imported.parameter_ids()}
+            == {record["runtime_id"] for record in oracle["expected"]["parameter"].values()})
+        checks.update(art_texture_checks(imported, receiver / "package", oracle, "moved_package"))
+        checks.update(art_render_checks(imported, oracle, "moved_package"))
+    return {"status": "passed" if all(checks.values()) else "failed", "checks": checks}
+
+
+def safe_art_revision_grade(manifest, package, oracle):
+    try:
+        return art_revision_checks(manifest, package, oracle)
+    except Exception as exc:
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def prepare_art_revision(packet, oracle_path, variant_name):
+    oracle = art_revision_fixture(packet, oracle_path, variant_name)
+    controls = {}
+    input_project = packet / "input/project"
+    asset = kasane.open_project(input_project).asset(oracle["target_asset_id"])
+    source_png = input_project / asset.source
+    with tempfile.TemporaryDirectory(dir=oracle_path.parent) as folder:
+        root = Path(folder)
+        for mode in ("positive", "edge_inclusive", "no_edit", "wrong_layer",
+                     "wrong_tint", "whole_atlas", "rig_change"):
+            session = kasane.open_project(input_project)
+            if mode != "no_edit":
+                art_patch(session, source_png, root / f"{mode}.png", oracle["spec"], mode)
+            manifest = session.save(root / mode / "project").manifest
+            exported = session.export_package(root / mode / "package")
+            if not exported.published or exported.warnings:
+                raise RuntimeError(f"art revision control export failed: {exported}")
+            controls[mode] = safe_art_revision_grade(
+                manifest, root / mode / "package/model.model3.json", oracle)
+    oracle["controls"] = controls
+    oracle_path.write_text(json.dumps(oracle, indent=2, allow_nan=False) + "\n")
+    if any(controls[name]["status"] != "passed" for name in ("positive", "edge_inclusive")) or any(
+            row["status"] != "failed" for name, row in controls.items()
+            if name not in ("positive", "edge_inclusive")):
+        raise RuntimeError(f"Shirousagi art revision controls failed: {controls}")
+    return {"status": "passed", "controls": controls}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=["prepare", "grade"])
-    parser.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision", "shirousagi-repair", "shirousagi-blink"], required=True)
+    parser.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision", "shirousagi-repair", "shirousagi-blink", "shirousagi-art-revision"], required=True)
     parser.add_argument("--packet", type=Path, required=True)
     parser.add_argument("--oracle", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
@@ -1161,7 +1419,9 @@ def main():
     if args.operation == "grade":
         try:
             oracle = json.loads(args.oracle.read_text())
-            result = (safe_blink_grade(args.manifest, args.package, oracle)
+            result = (safe_art_revision_grade(args.manifest, args.package, oracle)
+                      if args.task == "shirousagi-art-revision" else
+                      safe_blink_grade(args.manifest, args.package, oracle)
                       if args.task == "shirousagi-blink" else
                       safe_shirousagi_grade(args.manifest, args.package, oracle)
                       if args.task == "shirousagi-repair" else
@@ -1191,6 +1451,9 @@ def main():
         return
     if args.task == "shirousagi-blink":
         print(json.dumps(prepare_blink(args.packet, args.oracle), allow_nan=False))
+        return
+    if args.task == "shirousagi-art-revision":
+        print(json.dumps(prepare_art_revision(args.packet, args.oracle, args.variant), allow_nan=False))
         return
     import hashlib
     import tempfile

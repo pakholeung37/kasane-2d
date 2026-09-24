@@ -20,6 +20,7 @@
 | `handoff-revision` | 接手前关作品并缩小标记位移 | 保留嘴部和绑定身份、五档采样、端点图像与搬迁 |
 | `shirousagi-repair` | 用真实 PSD 和组合姿态参考诊断已交付模型 | 局部修复、未公开姿态、非目标保持、工程与模型包搬迁 |
 | `shirousagi-blink` | 从真实 24 层 PSD 创作双眼独立眨眼 | 双参数运行时 ID、公开与未公开组合姿态、其余图层保持、工程与模型包搬迁 |
+| `shirousagi-art-revision` | 把 PSD 单图层颜色修订应用到交付模型的纹理图集 | 10 个动态姿态、图集目标外像素、34 参数 rig、工程与模型包搬迁 |
 
 任务、规则在 `tools/sdk_experiment/tasks.json` 和 `worker.py` 中版本化。
 新建任务允许自行选择 UUID、资源名称、顶点编号、对角线和工程输出文件名；
@@ -30,7 +31,7 @@
 
 视觉任务需要支持 Observer 的 GPU wheel 和可用的图像观察环境；`handoff-revision`
 需要初始化时冻结一个已通过 `compose-expression` 的工程。任务控制脚本不能算作
-受试 agent 成功率，十一项任务也不代表 SDK 的全部使用情境。
+受试 agent 成功率，十二项任务也不代表 SDK 的全部使用情境。
 
 ## 1. 构建并冻结实验
 
@@ -51,7 +52,9 @@ Shirousagi 和其他视觉任务需要 Observer wheel；构建时使用
 真实 Shirousagi 任务另加 `--shirousagi-root /absolute/path/to/Shirousagi`，冻结
 model3、MOC3、纹理和 24 层 PSD；`shirousagi-repair` 的 `prepare` 用
 `--variant a|b|c` 选择故障变体。`shirousagi-blink` 的三个任务包来自同一 PSD，
-各自重新导入并冻结对象身份。
+各自重新导入并冻结对象身份。`shirousagi-art-revision` 的三个 `--variant a|b|c`
+分别修改两只眼和一侧腮红的 PSD 图层；准备该任务前在实验的 uv 环境安装
+`pillow==12.3.0`，供主持人生成修订 PNG 和检查图集。
 
 先在仓库根目录执行 `uv sync --locked`。实验目录必须在源码仓库外，且不能已存在。
 `init` 用 `uv venv --python 3.14` 创建本轮实验共用的环境，通过 `uv pip install`
@@ -201,7 +204,7 @@ learning；同关作品和重放稳定后才推进。设计见
 [续轮计划](experiments/NEXT-ROUND.md)，实际证据、修正与限制见
 [2026-09-24 续轮记录](experiments/ROUND-2026-09-24.md)。后续真实素材任务设计见
 [Shirousagi 实验计划](experiments/SHIROUSAGI-PLAN.md)及
-[S6 结果](experiments/SHIROUSAGI-ROUND.md)。
+[S6–S8 结果](experiments/SHIROUSAGI-ROUND.md)。
 
 小批量运行用于发现摩擦，不能估算一般用户成功率。按 SDK 实现、接口设计、文档、agent 环境、任务/判分器
 分别归因；从成功轨迹中也寻找反复误用和绕路。
