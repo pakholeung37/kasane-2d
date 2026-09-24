@@ -4,13 +4,31 @@
 //! by Godot, wgpu, and headless validation: deciding when project resources
 //! must be revalidated, loading the resources required by a frame through a
 //! host-provided adapter, and checking the loaded texture metadata against the
-//! document. Host APIs only implement [`AssetResolver`].
+//! document. Hosts provide a read-only [`PreviewAssetSource`] and implement
+//! [`AssetResolver`] for texture upload.
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use kasane_core::evaluation::DrawableFrame;
 use kasane_core::types::{ImageAsset, Status};
-use kasane_project::store::{DocumentSession, ResourceDiagnostic};
+use kasane_project::{AssetData, ResourceDiagnostic};
+
+/// Read-only project resources needed to prepare a preview frame.
+///
+/// A host can implement this for its own session or an immutable snapshot.
+pub trait PreviewAssetSource {
+    fn manifest_path(&self) -> &Path;
+    fn project_root(&self) -> &Path;
+    fn asset_ids(&self) -> &[String];
+    fn asset(&self, asset_id: &str) -> Option<&ImageAsset>;
+    fn read_asset(&self, asset_id: &str) -> Result<AssetData, Status>;
+    fn read_asset_if_changed(
+        &self,
+        asset_id: &str,
+        validated_image: Option<(&str, u32, u32)>,
+    ) -> Result<Option<AssetData>, Status>;
+}
 
 /// Metadata for a texture that a host has made available to the renderer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,7 +45,7 @@ pub struct LoadedTextureInfo {
 pub trait AssetResolver {
     fn texture_info(&self, asset_id: &str) -> Option<LoadedTextureInfo>;
 
-    fn resolve_asset(&mut self, session: &DocumentSession, asset_id: &str) -> Status;
+    fn resolve_asset(&mut self, source: &dyn PreviewAssetSource, asset_id: &str) -> Status;
 }
 
 /// Failure returned by [`PreviewResources::verify_frame`].
@@ -63,14 +81,13 @@ impl PreviewResources {
 
     /// Return whether the project resource snapshot has changed since the last
     /// successful verification.
-    pub fn needs_reload(&self, session: &DocumentSession) -> bool {
-        let source = session.document();
-        self.verified_manifest != session.manifest().to_string_lossy()
-            || source.asset_order().len() != self.verified_assets.len()
+    pub fn needs_reload(&self, source: &dyn PreviewAssetSource) -> bool {
+        self.verified_manifest != source.manifest_path().to_string_lossy()
+            || source.asset_ids().len() != self.verified_assets.len()
             || source
-                .asset_order()
+                .asset_ids()
                 .iter()
-                .any(|id| source.get_asset(id) != self.verified_assets.get(id))
+                .any(|id| source.asset(id) != self.verified_assets.get(id))
     }
 
     /// Validate and, when necessary, load every asset used by `frame`.
@@ -80,21 +97,21 @@ impl PreviewResources {
     /// resolves only assets used by the evaluated frame.
     pub fn verify_frame<R: AssetResolver>(
         &self,
-        session: &DocumentSession,
+        source: &dyn PreviewAssetSource,
         frame: &DrawableFrame,
         resolver: &mut R,
         reload_assets: bool,
     ) -> Result<(), ResourceFailure> {
-        let has_project_root = !session.root().as_os_str().is_empty();
+        let has_project_root = !source.project_root().as_os_str().is_empty();
         let used = required_asset_ids(frame);
 
         if reload_assets && has_project_root {
             let mut diagnostics = Vec::new();
-            for asset_id in session.document().asset_order() {
+            for asset_id in source.asset_ids() {
                 let status = if used.contains(asset_id.as_str()) {
-                    resolver.resolve_asset(session, asset_id)
+                    resolver.resolve_asset(source, asset_id)
                 } else {
-                    session
+                    source
                         .read_asset(asset_id)
                         .map(|_| Status::ok())
                         .unwrap_or_else(|status| status)
@@ -120,7 +137,7 @@ impl PreviewResources {
 
         for asset_id in used {
             if resolver.texture_info(asset_id).is_none() && !reload_assets && has_project_root {
-                let status = resolver.resolve_asset(session, asset_id);
+                let status = resolver.resolve_asset(source, asset_id);
                 if !status.is_ok() {
                     return Err(ResourceFailure::status(status));
                 }
@@ -132,7 +149,7 @@ impl PreviewResources {
                     "Preview texture is not loaded; source edits remain valid.",
                 )));
             };
-            let Some(asset) = session.document().get_asset(asset_id) else {
+            let Some(asset) = source.asset(asset_id) else {
                 return Err(ResourceFailure::status(Status::error(
                     "MISSING_ASSET",
                     asset_id,
@@ -152,18 +169,13 @@ impl PreviewResources {
     /// Record the current project snapshot after the host has rendered it
     /// successfully. Keeping this separate prevents a failed draw from
     /// certifying a resource snapshot that was never displayed.
-    pub fn mark_verified(&mut self, session: &DocumentSession) {
-        let source = session.document();
+    pub fn mark_verified(&mut self, source: &dyn PreviewAssetSource) {
         self.verified_assets = source
-            .asset_order()
+            .asset_ids()
             .iter()
-            .filter_map(|id| {
-                source
-                    .get_asset(id)
-                    .map(|asset| (id.clone(), asset.clone()))
-            })
+            .filter_map(|id| source.asset(id).map(|asset| (id.clone(), asset.clone())))
             .collect();
-        self.verified_manifest = session.manifest().to_string_lossy().into_owned();
+        self.verified_manifest = source.manifest_path().to_string_lossy().into_owned();
     }
 }
 
@@ -180,6 +192,7 @@ pub fn required_asset_ids(frame: &DrawableFrame) -> HashSet<&str> {
 mod tests {
     use super::*;
     use kasane_core::types::{Canvas, ImageAsset, Vec2};
+    use std::path::PathBuf;
 
     const ASSET_ID: &str = "00000000-0000-0000-0000-000000000001";
 
@@ -189,39 +202,69 @@ mod tests {
         resolved: Vec<String>,
     }
 
+    #[derive(Default)]
+    struct TestSource {
+        manifest: PathBuf,
+        root: PathBuf,
+        ids: Vec<String>,
+        assets: HashMap<String, ImageAsset>,
+    }
+
+    impl PreviewAssetSource for TestSource {
+        fn manifest_path(&self) -> &Path {
+            &self.manifest
+        }
+
+        fn project_root(&self) -> &Path {
+            &self.root
+        }
+
+        fn asset_ids(&self) -> &[String] {
+            &self.ids
+        }
+
+        fn asset(&self, asset_id: &str) -> Option<&ImageAsset> {
+            self.assets.get(asset_id)
+        }
+
+        fn read_asset(&self, _asset_id: &str) -> Result<AssetData, Status> {
+            Ok(AssetData::default())
+        }
+
+        fn read_asset_if_changed(
+            &self,
+            _asset_id: &str,
+            _validated_image: Option<(&str, u32, u32)>,
+        ) -> Result<Option<AssetData>, Status> {
+            Ok(Some(AssetData::default()))
+        }
+    }
+
     impl AssetResolver for TestResolver {
         fn texture_info(&self, asset_id: &str) -> Option<LoadedTextureInfo> {
             self.textures.get(asset_id).copied()
         }
 
-        fn resolve_asset(&mut self, _session: &DocumentSession, asset_id: &str) -> Status {
+        fn resolve_asset(&mut self, _source: &dyn PreviewAssetSource, asset_id: &str) -> Status {
             self.resolved.push(asset_id.to_owned());
             Status::ok()
         }
     }
 
-    fn session_with_asset() -> DocumentSession {
-        let mut session = DocumentSession::new();
-        assert!(session
-            .document_mut()
-            .initialize(
-                "00000000-0000-0000-0000-000000000010",
-                Canvas::new(64.0, 32.0, Vec2::default(), 1.0),
-            )
-            .is_ok());
-        assert!(session
-            .document_mut()
-            .add_asset(ImageAsset {
-                id: ASSET_ID.to_owned(),
-                name: "atlas".to_owned(),
-                source: "assets/atlas.png".to_owned(),
-                width: 64,
-                height: 32,
-                ..Default::default()
-            })
-            .status
-            .is_ok());
-        session
+    fn source_with_asset() -> TestSource {
+        let asset = ImageAsset {
+            id: ASSET_ID.to_owned(),
+            name: "atlas".to_owned(),
+            source: "assets/atlas.png".to_owned(),
+            width: 64,
+            height: 32,
+            ..Default::default()
+        };
+        TestSource {
+            ids: vec![ASSET_ID.to_owned()],
+            assets: HashMap::from([(ASSET_ID.to_owned(), asset)]),
+            ..Default::default()
+        }
     }
 
     #[test]
@@ -252,7 +295,7 @@ mod tests {
 
     #[test]
     fn successful_verification_can_commit_and_detect_a_later_metadata_change() {
-        let mut session = session_with_asset();
+        let mut source = source_with_asset();
         let frame = DrawableFrame {
             canvas: Canvas::new(64.0, 32.0, Vec2::default(), 1.0),
             drawables: vec![kasane_core::evaluation::Drawable {
@@ -274,10 +317,10 @@ mod tests {
         let mut resources = PreviewResources::default();
 
         assert!(resources
-            .verify_frame(&session, &frame, &mut resolver, true)
+            .verify_frame(&source, &frame, &mut resolver, true)
             .is_ok());
-        resources.mark_verified(&session);
-        assert!(!resources.needs_reload(&session));
+        resources.mark_verified(&source);
+        assert!(!resources.needs_reload(&source));
 
         let replacement = ImageAsset {
             id: ASSET_ID.to_owned(),
@@ -287,17 +330,13 @@ mod tests {
             height: 32,
             ..Default::default()
         };
-        assert!(session
-            .document_mut()
-            .replace_asset(replacement)
-            .status
-            .is_ok());
-        assert!(resources.needs_reload(&session));
+        source.assets.insert(ASSET_ID.to_owned(), replacement);
+        assert!(resources.needs_reload(&source));
     }
 
     #[test]
     fn missing_loaded_texture_is_reported_before_document_lookup() {
-        let session = DocumentSession::new();
+        let source = TestSource::default();
         let frame = DrawableFrame {
             drawables: vec![kasane_core::evaluation::Drawable {
                 texture_asset_id: "missing".to_owned(),
@@ -308,7 +347,7 @@ mod tests {
         let mut resolver = TestResolver::default();
 
         let failure = PreviewResources::default()
-            .verify_frame(&session, &frame, &mut resolver, false)
+            .verify_frame(&source, &frame, &mut resolver, false)
             .unwrap_err();
         assert_eq!(failure.status.code, "MISSING_TEXTURE");
     }

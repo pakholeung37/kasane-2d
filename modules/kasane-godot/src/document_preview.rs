@@ -4,12 +4,13 @@ use std::collections::HashMap;
 
 use kasane_core::evaluation::DrawableFrame;
 use kasane_core::types::Status;
-use kasane_preview::{AssetResolver, LoadedTextureInfo, PreviewResources, ResourceFailure};
-use kasane_project::DocumentSession;
+use kasane_preview::{
+    AssetResolver, LoadedTextureInfo, PreviewAssetSource, PreviewResources, ResourceFailure,
+};
 
 use crate::conversions::{error_dict, status_to_dict, Array, Dictionary};
 use crate::document_bridge::KasaneDocumentBridge;
-use crate::texture_store::KasaneTextureStore;
+use crate::texture_store::{KasaneTextureStore, ProjectPreviewSource};
 
 use kasane_render_godot::{BackendRenderResult, GodotRenderBackend, KasaneMeshView, RenderRequest};
 
@@ -164,10 +165,10 @@ impl KasaneDocumentPreview {
             self.refresh_inner(false);
             return;
         }
-        let reload_assets = self
-            .document
-            .as_ref()
-            .is_none_or(|doc| self.resources.needs_reload(doc.bind().session()));
+        let reload_assets = self.document.as_ref().is_none_or(|doc| {
+            self.resources
+                .needs_reload(&ProjectPreviewSource::new(doc.bind().session()))
+        });
         self.refresh_inner(reload_assets);
     }
 
@@ -286,8 +287,12 @@ impl KasaneDocumentPreview {
             let mut resolver = GodotTextureResolver {
                 textures: &mut textures,
             };
-            self.resources
-                .verify_frame(doc_bind.session(), &frame, &mut resolver, reload_assets)
+            self.resources.verify_frame(
+                &ProjectPreviewSource::new(doc_bind.session()),
+                &frame,
+                &mut resolver,
+                reload_assets,
+            )
         };
         if let Err(failure) = resource_check {
             self.clear_views();
@@ -319,7 +324,8 @@ impl KasaneDocumentPreview {
         }
         let result = self.render_frame(&frame, &resolved);
         if reload_assets && result.get("ok").and_then(|v| v.try_to::<bool>().ok()) == Some(true) {
-            self.resources.mark_verified(doc.bind().session());
+            self.resources
+                .mark_verified(&ProjectPreviewSource::new(doc.bind().session()));
         }
         result
     }
@@ -408,10 +414,10 @@ impl AssetResolver for GodotTextureResolver<'_> {
             })
     }
 
-    fn resolve_asset(&mut self, session: &DocumentSession, asset_id: &str) -> Status {
+    fn resolve_asset(&mut self, source: &dyn PreviewAssetSource, asset_id: &str) -> Status {
         self.textures
             .bind_mut()
-            .resolve_asset_from_session(session, asset_id)
+            .resolve_asset_from_source(source, asset_id)
     }
 }
 
