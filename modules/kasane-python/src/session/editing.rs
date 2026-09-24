@@ -2,6 +2,24 @@ use super::*;
 
 #[pymethods]
 impl NativeSession {
+    #[pyo3(signature = (mesh_id, columns, rows, expected_version=None))]
+    fn remesh_rectangle_grid(
+        &self,
+        py: Python<'_>,
+        mesh_id: &str,
+        columns: usize,
+        rows: usize,
+        expected_version: Option<(u64, u64, u64)>,
+    ) -> PyResult<()> {
+        self.ensure_idle(py, "remesh_rectangle_grid")?;
+        let mut session = self.inner.lock().map_err(|_| poisoned())?;
+        self.ensure_idle(py, "remesh_rectangle_grid")?;
+        session
+            .remesh_rectangle_grid(mesh_id, columns, rows, expected_version.map(tuple_version))
+            .map(|_| ())
+            .map_err(|e| crate::geometry::grid_error(py, e))
+    }
+
     #[pyo3(signature = (label, expected_version=None))]
     fn start_edit(
         &self,

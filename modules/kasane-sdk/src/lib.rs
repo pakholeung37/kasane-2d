@@ -20,3 +20,6 @@ pub use types::{
     ObjectHandle, ObjectKind, PsdImportReceipt, SaveReceipt, SdkError, SourceSpace,
     TopologyReplacement, Version,
 };
+
+mod geometry;
+pub use geometry::{rectangle_grid_geometry, MeshGeometry};

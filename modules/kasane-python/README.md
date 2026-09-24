@@ -141,6 +141,22 @@ The import publishes the project manifest and cropped PNG assets together, then
 replaces the session. The destination must not already exist. Unsupported PSD
 features fail the import without changing the current session.
 
+Imported PSD layers start as four-vertex rectangles. To add an editable grid
+to one layer, including one that already has mesh keyforms, mesh BlendShape
+deltas, or corner glue, use:
+
+```python
+mesh = session.require_unique_mesh("ArtMesh24")
+session.remesh_rectangle_grid(mesh.id, 12, 12)
+```
+
+The operation retains corner vertex IDs and migrates existing dependencies in
+one undoable edit. Bound meshes require equal column and row counts. For a new
+binding created in the same edit, `kasane.rectangle_grid_geometry()` provides
+the grid without opening a separate edit. The one-off
+[`Shirousagi experiment`](../../docs/experiments/shirousagi_head_x.py) records
+a real-PSD run, including its reference-model displacement projection.
+
 ## GPU observation
 
 With an `observe` wheel and `gpu_observation` capability, a saved project can

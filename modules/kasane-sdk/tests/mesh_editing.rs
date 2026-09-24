@@ -11,8 +11,8 @@ const MESH_ID: &str = "00000000-0000-4000-8000-000000000103";
 const OTHER_ID: &str = "00000000-0000-4000-8000-000000000104";
 
 fn fixture() -> AuthoringSession {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/asymmetric-2x2.png");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(ASSET_ID, "texture", &path).unwrap();
     let mesh = rectangle_mesh(
         MESH_ID,
@@ -202,4 +202,128 @@ fn name_only_edit_preserves_evaluation_revision() {
     session.undo().unwrap();
     assert_eq!(session.mesh(MESH_ID).unwrap().name, "eye");
     assert_eq!(session.evaluation_revision(), session.version().revision);
+}
+
+#[test]
+fn rectangle_grid_preserves_bound_surface_and_history() {
+    use kasane_core::{BindingAxis, MeshBinding, MeshKeyform, Parameter};
+    let mut session = fixture();
+    let parameter_id = "00000000-0000-4000-8000-000000000105";
+    let binding_id = "00000000-0000-4000-8000-000000000106";
+    let corners = vec![
+        Vec2::new(0., 0.),
+        Vec2::new(12., -1.),
+        Vec2::new(8., 12.),
+        Vec2::new(-1., 11.),
+    ];
+    session
+        .edit("binding", None, |edit| {
+            edit.create_parameter(Parameter {
+                id: parameter_id.into(),
+                name: "pose".into(),
+                minimum: 0.,
+                maximum: 1.,
+                default_value: 0.,
+                ..Default::default()
+            })?;
+            edit.create_binding(MeshBinding {
+                id: binding_id.into(),
+                mesh_id: MESH_ID.into(),
+                axes: vec![BindingAxis {
+                    parameter_id: parameter_id.into(),
+                    keys: vec![0., 1.],
+                }],
+                keyforms: vec![
+                    MeshKeyform {
+                        keys: vec![0.],
+                        positions: vec![
+                            Vec2::new(0., 0.),
+                            Vec2::new(10., 0.),
+                            Vec2::new(10., 10.),
+                            Vec2::new(0., 10.),
+                        ],
+                        ..Default::default()
+                    },
+                    MeshKeyform {
+                        keys: vec![1.],
+                        positions: corners,
+                        ..Default::default()
+                    },
+                ],
+            })
+        })
+        .unwrap();
+    let original = session.mesh(MESH_ID).unwrap();
+    let version = session.version();
+    let history = session.history_lengths();
+    assert!(session.remesh_rectangle_grid(MESH_ID, 4, 3, None).is_err());
+    assert_eq!(session.version(), version);
+    assert_eq!(session.history_lengths(), history);
+    let values = HashMap::from([(parameter_id.to_string(), 0.5)]);
+    let before = session.evaluate(&values).unwrap();
+    let receipt = session
+        .remesh_rectangle_grid(MESH_ID, 4, 4, Some(version))
+        .unwrap();
+    assert!(receipt.changed);
+    let mesh = session.mesh(MESH_ID).unwrap();
+    assert_eq!(mesh.vertex_ids.len(), 25);
+    assert_eq!(mesh.triangles.len(), 32);
+    let after = session.evaluate(&values).unwrap();
+    // Independently interpolate the old evaluated surface at every new vertex.
+    let old = &before.drawables[0].positions;
+    let new = &after.drawables[0].positions;
+    for row in 0..=4 {
+        for col in 0..=4 {
+            let u = col as f32 / 4.;
+            let v = row as f32 / 4.;
+            let weights = if u >= v {
+                [1. - u, u - v, v, 0.]
+            } else {
+                [1. - v, 0., u, v - u]
+            };
+            let x: f32 = old.iter().zip(weights).map(|(p, w)| p.x * w).sum();
+            let y: f32 = old.iter().zip(weights).map(|(p, w)| p.y * w).sum();
+            assert!((new[row * 5 + col].x - x).abs() < 1e-5);
+            assert!((new[row * 5 + col].y - y).abs() < 1e-5);
+        }
+    }
+    session.undo().unwrap();
+    assert_eq!(session.mesh(MESH_ID).unwrap(), original);
+    let current = session.version();
+    assert_eq!(
+        session
+            .remesh_rectangle_grid(MESH_ID, 4, 4, Some(version))
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "STALE_VERSION"
+    );
+    assert_eq!(session.version(), current);
+    session.redo().unwrap();
+    assert_eq!(session.mesh(MESH_ID).unwrap(), mesh);
+}
+
+#[test]
+fn rectangle_grid_rejects_invalid_geometry_and_overflow() {
+    use kasane_sdk::{rectangle_grid_geometry, MeshGeometry};
+    let mesh = fixture().mesh(MESH_ID).unwrap();
+    let mut source = MeshGeometry {
+        vertex_ids: mesh.vertex_ids,
+        positions: mesh.base_positions,
+        uvs: mesh.uvs,
+        triangles: mesh.triangles,
+    };
+    assert!(rectangle_grid_geometry(&source, usize::MAX, 1).is_err());
+    assert!(rectangle_grid_geometry(&source, 0, 1).is_err());
+    assert!(rectangle_grid_geometry(&source, 256, 256).is_err());
+    let grid = rectangle_grid_geometry(&source, 4, 3).unwrap();
+    assert_eq!(grid.vertex_ids.len(), 20);
+    assert_eq!(grid.triangles.len(), 24);
+    source.positions[0].x = f32::NAN;
+    assert!(rectangle_grid_geometry(&source, 4, 4).is_err());
+    source.positions[0].x = 0.;
+    source.vertex_ids[3] = u32::MAX;
+    source.triangles[1][2] = u32::MAX;
+    assert!(rectangle_grid_geometry(&source, 2, 2).is_err());
+    assert!(rectangle_grid_geometry(&source, 1, 1).is_ok());
 }

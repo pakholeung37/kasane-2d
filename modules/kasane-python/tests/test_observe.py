@@ -184,6 +184,27 @@ class GpuWheelTests(unittest.TestCase):
                 self.assertEqual(failed_report["status"], "failed")
                 self.assertEqual(failed_report["frames"], [])
 
+    def test_rectangle_grid_remesh_keeps_bound_appearance(self):
+        parameter_id = "00000000-0000-4000-8000-000000000020"
+        binding_id = "00000000-0000-4000-8000-000000000021"
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("bound rectangle") as edit:
+            edit.add_png_asset(ASSET, "asymmetric", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (20, 20), (80, 80))
+            edit.create_parameter(parameter_id, "Turn", 0, 1, 0)
+            edit.create_mesh_binding(binding_id, MESH, [kasane.Axis(parameter_id, [0, 1])], [
+                kasane.MeshKeyform([0], [(20, 20), (80, 20), (80, 80), (20, 80)]),
+                kasane.MeshKeyform([1], [(20, 20), (76, 18), (67, 82), (21, 77)]),
+            ])
+        with kasane.Observer(256, 256, 256) as observer:
+            before = [observer.observe(model, {"Turn": value}).rgba for value in (0, 0.5, 1)]
+            model.remesh_rectangle_grid(MESH, 8, 8)
+            after = [observer.observe(model, {"Turn": value}).rgba for value in (0, 0.5, 1)]
+        for original, remeshed in zip(before, after):
+            changed = sum(original[i:i + 4] != remeshed[i:i + 4]
+                          for i in range(0, len(original), 4))
+            self.assertLessEqual(changed, 256 * 256 // 1000)
+
 
 if __name__ == "__main__":
     unittest.main()

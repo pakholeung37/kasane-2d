@@ -2,6 +2,7 @@
 mod conversion;
 mod edit;
 mod error;
+mod geometry;
 mod handle;
 #[cfg(feature = "observe")]
 mod observe;
@@ -55,5 +56,6 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module.add_class::<NativeObserver>()?;
     }
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
+    module.add_function(wrap_pyfunction!(geometry::rectangle_grid_geometry, module)?)?;
     Ok(())
 }

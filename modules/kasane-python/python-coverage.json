@@ -510,6 +510,11 @@
     "python": "Session.references_to",
     "test": "test_queries_geometry_history_and_events"
   },
+  "Session.remesh_rectangle_grid": {
+    "status": "bound",
+    "python": "Session.remesh_rectangle_grid",
+    "test": "test_rectangle_grid_generation_and_bound_topology_migration"
+  },
   "Session.require_unique_mesh": {
     "status": "bound",
     "python": "Session.require_unique_mesh",
@@ -600,6 +605,11 @@
     "status": "bound",
     "python": "Edit.relocate_png_asset",
     "test": "test_png_base_relocation_and_replacement"
+  },
+  "free.rectangle_grid_geometry": {
+    "status": "bound",
+    "python": "rectangle_grid_geometry",
+    "test": "test_rectangle_grid_generation_and_bound_topology_migration"
   },
   "free.rectangle_mesh": {
     "status": "bound",

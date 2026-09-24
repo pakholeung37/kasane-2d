@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import traceback
 
-from . import _sessions
+from ._session import _sessions
 
 
 def _snapshot_sessions() -> list[dict]:

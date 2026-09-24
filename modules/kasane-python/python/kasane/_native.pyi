@@ -196,6 +196,7 @@ class NativeEdit:
 
 
 class NativeSession:
+    def remesh_rectangle_grid(self, mesh_id: str, columns: int, rows: int, expected_version: Version | None = None) -> None: ...
     def __init__(
         self,
         document_id: str,
@@ -313,3 +314,6 @@ class NativeSession:
 def capabilities() -> dict[str, bool]:
     """Report available import, export, validation, and GPU observation features."""
     ...
+
+MeshGeometryData = tuple[list[int], list[Point], list[Point], list[tuple[int, int, int]]]
+def rectangle_grid_geometry(source: MeshGeometryData, columns: int, rows: int) -> MeshGeometryData: ...

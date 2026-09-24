@@ -2,7 +2,8 @@
 
 This reference describes the public `kasane` package in this repository. Use
 `import kasane`; `kasane._native` is an implementation module. The typed Python
-records and wrappers are defined in [`python/kasane/__init__.py`](python/kasane/__init__.py).
+records and wrappers are exposed by [`python/kasane/__init__.py`](python/kasane/__init__.py);
+geometry builders and editing recipes live in separate Python modules.
 For installation and runnable recipes, start with the [SDK README](README.md).
 
 ## Conventions
@@ -11,7 +12,8 @@ For installation and runnable recipes, start with the [SDK README](README.md).
   not a constructor. Canvas and editable mesh positions use source pixel
   coordinates. Evaluated drawable positions use runtime coordinates: for a
   root mesh, `((x - origin_x) / pixels_per_unit,
-  (origin_y - y) / pixels_per_unit)`.
+  (origin_y - y) / pixels_per_unit)`. `CanvasSnapshot.source_to_runtime()`
+  and `runtime_to_source()` perform these conversions for root drawables.
 - Object IDs and document IDs are canonical lowercase UUID strings; generate
   them with `str(uuid.uuid4())`. IDs identify objects across reads and edits.
   Display names are not IDs and may be duplicated.
@@ -46,6 +48,7 @@ For installation and runnable recipes, start with the [SDK README](README.md).
 | `PsdImportResult` | `version`, `manifest`, `width`, `height`, `raster_layers`, `groups`, `durable`, `warnings`. The new project is already saved. |
 | `Session.export_package(absolute_path, expected_version=None)` | Publish a MOC3/model3/texture directory; return `ExportResult(published, durable, warnings)`. |
 | `Session.new_project(document_id, width, height, origin, pixels_per_unit, expected_version=None)` | Replace the current in-memory project and return its new `Version`. |
+| `Session.remesh_rectangle_grid(mesh_id, columns, rows, expected_version=None)` | Atomically subdivide a PSD/create_rectangle quad and migrate its ordinary mesh keyforms, mesh BlendShape deltas, and glue references. Bound meshes require equal columns and rows. |
 
 `save()` never silently replaces an unrelated project. `on_exists="new"` does
 not override a `PROJECT_CONFLICT` on a session's own saved project. Check
@@ -83,6 +86,19 @@ use public runtime IDs or names to find objects after a fresh import.
 positions are in canvas pixels; positions under a deformer are local to their
 parent. `mesh_record()` is for full replacement and topology work;
 `mesh_properties()` is for drawing-only changes.
+
+`rectangle_grid_geometry` and `Session.remesh_rectangle_grid` delegate geometry
+generation and dependency migration to the Rust SDK.
+
+`rectangle_grid_geometry(source, columns, rows)` returns a deterministic
+regular grid from a four-corner, axis-aligned PSD/create_rectangle mesh with
+canonical UVs and the standard diagonal. It retains corner vertex IDs and
+interpolates the two original triangles. Use it when preparing a new binding
+inside an existing edit; use `Session.remesh_rectangle_grid()` when the mesh
+already has binding, BlendShape, or glue dependencies. The session method is
+one undoable edit and rejects bound rectangular grids with unequal dimensions
+because the old triangle diagonal would cross new cells. It cannot remesh an
+already subdivided mesh.
 
 When locating a mesh's texels in a PNG atlas, use `session.uv_v_origin`.
 For `"top"`, a UV `v` maps near PNG row `v * height`; for `"bottom"`, it maps

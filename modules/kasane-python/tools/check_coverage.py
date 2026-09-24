@@ -16,13 +16,14 @@ TESTS = Path(__file__).resolve().parents[1] / "tests/test_cpu.py"
 def public_api() -> set[str]:
     sources = {
         name: (SDK / f"{name}.rs").read_text(encoding="utf-8")
-        for name in ("session", "project_io", "diagnostics", "edit", "types", "assets")
+        for name in ("session", "project_io", "diagnostics", "edit", "types", "assets", "geometry")
     }
+    geometry_free, geometry_session = sources["geometry"].split("impl AuthoringSession", 1)
     sections = {
-        "Session": sources["session"] + sources["project_io"] + sources["diagnostics"],
+        "Session": sources["session"] + sources["project_io"] + sources["diagnostics"] + geometry_session,
         "Edit": sources["edit"],
         "ObjectHandle": sources["types"],
-        "free": sources["assets"],
+        "free": sources["assets"] + geometry_free,
     }
     result = set()
     for owner, body in sections.items():

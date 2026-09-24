@@ -46,6 +46,29 @@ def session():
 
 
 class CpuWheelTests(unittest.TestCase):
+    def test_public_api_survives_module_split(self):
+        import pickle
+        import typing
+
+        for name in kasane.__all__:
+            value = getattr(kasane, name)
+            if isinstance(value, type):
+                typing.get_type_hints(value)
+        records = [kasane.Appearance(), kasane.Axis(PARAMETER, [0, 1]),
+                   kasane.SaveResult(Path("/tmp/project"), True, [], [])]
+        for record in records:
+            self.assertEqual(type(record).__module__, "kasane")
+            self.assertEqual(pickle.loads(pickle.dumps(record)), record)
+        self.assertEqual(kasane.Session.__module__, "kasane")
+        from kasane._session import _sessions
+        model = session()
+        self.assertIn(model, _sessions)
+
+    def test_canvas_conversion(self):
+        canvas = session().canvas
+        self.assertEqual(canvas.runtime_to_source((1, -2)), (60, 70))
+        self.assertEqual(canvas.source_to_runtime((60, 70)), (1, -2))
+
     def test_shared_authoring_contract_matches_expected_results(self):
         spec = json.loads((TEXTURE.parent / "authoring-contract.json").read_text())
         model = kasane.Session(spec["document_id"], 100, 100, (50, 50), 10)
@@ -1004,6 +1027,84 @@ class CpuWheelTests(unittest.TestCase):
         model.undo()
         self.assertEqual(model.geometry(MESH).vertex_ids, [0, 1, 2, 3])
         self.assertEqual(model.glue(GLUE).pairs[0].vertex_a, 0)
+
+    def test_rectangle_grid_generation_and_bound_topology_migration(self):
+        model = session()
+        with model.edit("rectangle with dependencies") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+            edit.create_rectangle(MESH_B, "neighbor", ASSET, (60, 40), (80, 60))
+            edit.create_parameter(PARAMETER, "ordinary", 0, 1, 0)
+            edit.create_parameter(BLEND_PARAMETER, "shape", 0, 1, 0, kind="blend_shape")
+            edit.create_mesh_binding(BINDING, MESH, [kasane.Axis(PARAMETER, [0, 1])], [
+                kasane.MeshKeyform([0], [(40, 40), (60, 40), (60, 60), (40, 60)]),
+                kasane.MeshKeyform([1], [(40, 40), (62, 39), (58, 62), (39, 61)]),
+            ])
+            edit.create_blend_key_table(kasane.BlendKeyTableSpec(
+                BLEND_TABLE, BLEND_PARAMETER, [0, 1], 0,
+            ))
+            edit.create_blend_binding(kasane.BlendBindingSpec(
+                BLEND_MESH, MESH, "mesh", BLEND_TABLE, [], [
+                    kasane.BlendMeshDelta([(0, 0)] * 4),
+                    kasane.BlendMeshDelta([(0, 0), (1, 0), (2, 1), (0, 1)]),
+                ],
+            ))
+            edit.create_glue(kasane.GlueSpec(
+                GLUE, "seam", MESH, MESH_B, [kasane.GlueVertexPair(1, 0, 1, 1)],
+            ))
+        source = model.mesh_record(MESH)
+        grid = kasane.rectangle_grid_geometry(source.geometry, 4, 3)
+        self.assertEqual(len(grid.vertex_ids), 20)
+        self.assertEqual(len(grid.triangles), 24)
+        self.assertEqual({0, 1, 2, 3}.intersection(grid.vertex_ids), {0, 1, 2, 3})
+        self.assertEqual(grid.uvs[1], (0.25, 0.0))
+        self.assertEqual(source.geometry.positions, model.mesh_record(MESH).geometry.positions)
+        with self.assertRaisesRegex(ValueError, "equal columns and rows"):
+            model.remesh_rectangle_grid(MESH, 4, 3)
+        self.assertEqual(model.mesh_record(MESH), source)
+
+        # The native operation must respect the Python edit lifecycle.
+        with model.edit("active edit"):
+            with self.assertRaises(kasane.SdkFailure) as active:
+                model.remesh_rectangle_grid(MESH, 4, 4)
+            self.assertEqual(active.exception.code, "EDIT_ACTIVE")
+        stale_version = model.version
+        with model.edit("rename") as edit:
+            edit.rename_mesh(MESH, "renamed face")
+        with self.assertRaises(kasane.SdkFailure) as stale:
+            model.remesh_rectangle_grid(MESH, 4, 4, stale_version)
+        self.assertEqual(stale.exception.code, "STALE_VERSION")
+        self.assertEqual(model.mesh_record(MESH).geometry, source.geometry)
+        before = model.evaluate({"ordinary": 0.5, "shape": 0.5})
+        old_ids = source.geometry.vertex_ids
+        old_positions = dict(zip(old_ids, next(d for d in before.drawables if d.id == MESH).positions))
+        replacement = model.remesh_rectangle_grid(MESH, 4, 4)
+        self.assertEqual(len(replacement.geometry.vertex_ids), 25)
+        self.assertEqual(len(replacement.geometry.triangles), 32)
+        self.assertEqual(model.binding_for_mesh(MESH).id, BINDING)
+        self.assertEqual(len(model.binding(BINDING).keyforms[1].positions), 25)
+        self.assertEqual(len(model.blend_binding(BLEND_MESH).keyforms[1].positions), 25)
+        self.assertEqual(model.glue(GLUE).pairs[0].vertex_a, 1)
+        self.assertEqual(model.validate_structure(), [])
+        self.assertEqual(model.diagnose_geometry(), [])
+        # The source diagonal remains a grid edge, preserving old poses at
+        # every old corner even when the bound quadrilateral is non-affine.
+        after = model.evaluate({"ordinary": 0.5, "shape": 0.5})
+        new_positions = dict(zip(replacement.geometry.vertex_ids,
+                                 next(d for d in after.drawables if d.id == MESH).positions))
+        for vertex_id in old_ids:
+            self.assertAlmostEqual(new_positions[vertex_id][0], old_positions[vertex_id][0], places=5)
+            self.assertAlmostEqual(new_positions[vertex_id][1], old_positions[vertex_id][1], places=5)
+        self.assertEqual(model.binding(BINDING).keyforms[1].positions[7], (50.0, 45.25))
+        model.undo()
+        self.assertEqual(len(model.mesh_record(MESH).geometry.vertex_ids), 4)
+        model.redo()
+        self.assertEqual(len(model.mesh_record(MESH).geometry.vertex_ids), 25)
+        with TemporaryDirectory() as directory:
+            saved = model.save(Path(directory).resolve() / "project")
+            reopened = kasane.open_project(saved.manifest)
+            self.assertEqual(reopened.mesh_record(MESH).geometry, replacement.geometry)
+            self.assertEqual(len(reopened.binding(BINDING).keyforms[1].positions), 25)
 
     def test_png_base_relocation_and_replacement(self):
         model = session()
