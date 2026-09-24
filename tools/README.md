@@ -8,7 +8,6 @@
 | `compare_sdk_image.py` | 读取 RGBA8 PNG，比较整图和 focus crop，保存差分图。 |
 | `compare_wgpu_blends.py` | 将 720 个 WGPU 混合样本与固定的官方 Framework GPU 参考图比较。 |
 | `validate_official_core.py`、`probes/` | 对 Rust MOC3 导出运行官方与 Purism Core 数值对照。 |
-| `prepare_sdk_usability.py`、`evaluate_sdk_usability.py` | 准备并判分 SDK 可用性实验。 |
 | `create_*_fixture.py` | 生成被 Rust/Python 测试复用的 MOC3 fixture。 |
 | `run_purism_fuzz.sh`、`check_purism_bundle.sh` | Purism Core 模糊测试与单头文件 smoke test。 |
 

@@ -151,6 +151,11 @@ class ObservationRun(NamedTuple):
     crops: list[Path]
     contact_sheet: Path
 
+    @property
+    def output(self) -> Path:
+        """The unique output directory created for this observation run."""
+        return self.directory
+
 
 class AssetSnapshot(NamedTuple):
     id: str
@@ -168,6 +173,11 @@ class CanvasSnapshot(NamedTuple):
     origin_x: float
     origin_y: float
     pixels_per_unit: float
+
+    @property
+    def origin(self) -> Point:
+        """Canvas origin as the same ``(x, y)`` pair accepted by Session."""
+        return (self.origin_x, self.origin_y)
 
 
 class DrawOrderGroup(NamedTuple):
@@ -1009,17 +1019,36 @@ class Session:
             expected_version,
         )
 
-    def save(self, absolute_path: Path, expected_version: Version | None = None) -> SaveResult:
+    def save(
+        self, absolute_path: Path, expected_version: Version | None = None,
+        *, on_exists: str = "error",
+    ) -> SaveResult:
         """Save to an absolute path and return a receipt with ``manifest``.
 
-        An existing destination from another session may raise
-        ``SdkFailure(code='DESTINATION_EXISTS')``. Use a new path or open the
-        existing project before editing it.
+        ``on_exists='new'`` picks a numbered sibling when another project already
+        occupies the destination. It never overwrites a project or bypasses a
+        ``PROJECT_CONFLICT`` on the current session's own saved path.
         """
-        manifest, durable, warnings, history_warnings = self._native.save(
-            str(absolute_path), expected_version
-        )
-        return SaveResult(Path(manifest), durable, warnings, history_warnings)
+        if on_exists not in ("error", "new"):
+            raise ValueError("on_exists must be 'error' or 'new'")
+        if not absolute_path.is_absolute():
+            raise ValueError("Project path must be absolute")
+        candidate = absolute_path
+        for number in range(0, 1001):
+            try:
+                manifest, durable, warnings, history_warnings = self._native.save(
+                    str(candidate), expected_version
+                )
+                return SaveResult(Path(manifest), durable, warnings, history_warnings)
+            except SdkFailure as error:
+                if on_exists != "new" or error.code != "DESTINATION_EXISTS" or number == 1000:
+                    raise
+                if absolute_path.name.endswith(".kasane.json"):
+                    stem = absolute_path.name.removesuffix(".kasane.json")
+                    candidate = absolute_path.with_name(f"{stem}-{number + 1}.kasane.json")
+                else:
+                    candidate = absolute_path.with_name(f"{absolute_path.name}-{number + 1}")
+        raise RuntimeError("No free project destination found")
 
     def import_model3(
         self, absolute_path: Path, expected_version: Version | None = None
@@ -1104,6 +1133,39 @@ class Session:
         if raw is None:
             return None
         return ParameterSnapshot(*raw)
+
+    def parameter_id(self, name_or_id: str) -> str:
+        """Resolve an ID or unique display name to a parameter ID.
+
+        IDs take precedence if a display name happens to equal another ID.
+        """
+        ids = self.parameter_ids()
+        if name_or_id in ids:
+            return name_or_id
+        matches = [parameter_id for parameter_id in ids
+                   if (parameter := self.parameter(parameter_id)) is not None
+                   and parameter.name == name_or_id]
+        if len(matches) == 1:
+            return matches[0]
+        if matches:
+            raise ValueError(f"Ambiguous parameter name {name_or_id!r}; use an ID")
+        try:
+            UUID(name_or_id)
+        except ValueError:
+            pass
+        else:
+            # Preserve the native structured error for an unknown UUID.
+            return name_or_id
+        raise ValueError(f"Unknown parameter {name_or_id!r}; use an ID or unique name")
+
+    def _parameter_values(self, values: Mapping[str, float]) -> dict[str, float]:
+        resolved: dict[str, float] = {}
+        for name_or_id, value in values.items():
+            parameter_id = self.parameter_id(name_or_id)
+            if parameter_id in resolved:
+                raise ValueError(f"Parameter {parameter_id!r} was supplied twice")
+            resolved[parameter_id] = value
+        return resolved
 
     def mesh(self, mesh_id: str) -> MeshSnapshot | None:
         raw = self._native.mesh(mesh_id)
@@ -1247,7 +1309,7 @@ class Session:
         return [EditEvent(*event) for event in self._native.drain_events()]
 
     def evaluate(self, values: Mapping[str, float]) -> Evaluation:
-        parameters, drawables = self._native.evaluate(dict(values))
+        parameters, drawables = self._native.evaluate(self._parameter_values(values))
         return Evaluation(
             [ParameterSample(*sample) for sample in parameters],
             [DrawableSample(*sample) for sample in drawables],
@@ -1255,7 +1317,7 @@ class Session:
 
     def evaluate_snapshot(self, values: Mapping[str, float]) -> EvaluationSnapshot:
         """Return all evaluated render attributes and the source version."""
-        return _evaluation_snapshot(self._native.evaluate_snapshot(dict(values)))
+        return _evaluation_snapshot(self._native.evaluate_snapshot(self._parameter_values(values)))
 
     def diagnose_resources(self) -> list[ResourceIssue]:
         return [ResourceIssue(*item) for item in self._native.diagnose_resources()]
@@ -1293,10 +1355,10 @@ class Session:
         return _evaluation_snapshot(self._native.preview_snapshot())
 
     def set_preview_values(self, values: Mapping[str, float]) -> bool:
-        return self._native.set_preview_values(dict(values))
+        return self._native.set_preview_values(self._parameter_values(values))
 
     def set_preview_parameter(self, parameter_id: str, value: float) -> bool:
-        return self._native.set_preview_parameter(parameter_id, value)
+        return self._native.set_preview_parameter(self.parameter_id(parameter_id), value)
 
     def reset_preview_values(self) -> bool:
         return self._native.reset_preview_values()
@@ -1352,7 +1414,7 @@ class Observer:
         self._native.set_fit_long_side(value)
 
     def observe(self, session: Session, values: Mapping[str, float] | None = None) -> ObservedFrame:
-        raw = self._native.observe(session._native, dict(values or {}))
+        raw = self._native.observe(session._native, session._parameter_values(values or {}))
         metadata, width, height, rgba, png, textures, adapter_name, backend = raw
         version, input_sha256, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
         return ObservedFrame(

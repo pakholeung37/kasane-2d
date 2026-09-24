@@ -79,6 +79,7 @@ class GpuWheelTests(unittest.TestCase):
             self.assertEqual(frame.width, 64)
             with TemporaryDirectory() as directory:
                 run = observer.observe_run(model, [{}], Path(directory).resolve(), focus=[MESH])
+                self.assertEqual(run.output, run.directory)
                 report = json.loads(run.report.read_text())
                 self.assertEqual(report["status"], "frames_complete")
                 self.assertEqual(report["frames"][0]["alpha_convention"],

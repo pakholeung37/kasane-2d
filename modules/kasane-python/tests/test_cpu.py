@@ -81,6 +81,7 @@ class CpuWheelTests(unittest.TestCase):
 
     def test_create_save_reopen_and_snapshot_copy(self):
         model = session()
+        self.assertEqual(model.canvas.origin, (50, 50))
         with model.edit("create") as edit:
             edit.add_png_asset(ASSET, "texture", TEXTURE)
             edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
@@ -97,6 +98,7 @@ class CpuWheelTests(unittest.TestCase):
             self.assertEqual(model.project_path, result.manifest)
             self.assertFalse(model.modified)
             reopened = kasane.open_project(destination)
+            self.assertEqual(reopened.canvas.origin, (50, 50))
             self.assertEqual(reopened.mesh_ids(), [MESH])
             self.assertEqual(reopened.mesh(MESH).positions, model.mesh(MESH).positions)
             self.assertEqual(reopened.mesh(MESH).vertex_ids, model.mesh(MESH).vertex_ids)
@@ -265,12 +267,22 @@ class CpuWheelTests(unittest.TestCase):
         binding.keyforms[0].positions[0] = (999, 999)
         self.assertEqual(model.binding(BINDING).keyforms[0].positions[0], base[0])
         self.assertEqual(model.parameter(PARAMETER).name, "open")
+        self.assertEqual(model.parameter_id("open"), PARAMETER)
+        self.assertEqual(model.parameter_id(PARAMETER), PARAMETER)
         middle = model.evaluate({PARAMETER: 0.5})
+        self.assertEqual(model.evaluate({"open": 0.5}), middle)
+        self.assertEqual(model.evaluate_snapshot({"open": 0.5}),
+                         model.evaluate_snapshot({PARAMETER: 0.5}))
+        with self.assertRaisesRegex(ValueError, "Unknown parameter"):
+            model.evaluate({"missing": 0.5})
+        with self.assertRaisesRegex(ValueError, "supplied twice"):
+            model.evaluate({PARAMETER: 0.5, "open": 0.5})
         self.assertEqual(middle.parameters[0].value, 0.5)
         self.assertEqual(middle.drawables[0].positions[0], (-0.5, 1))
         self.assertEqual(model.evaluate({PARAMETER: 2}).parameters[0].value, 1)
         preview_before = model.preview_revision
         self.assertTrue(model.set_preview_values({PARAMETER: 0.5}))
+        self.assertFalse(model.set_preview_values({"open": 0.5}))
         self.assertEqual(model.preview_values, {PARAMETER: 0.5})
         self.assertGreater(model.preview_revision, preview_before)
         self.assertEqual(model.preview_frame().drawables[0].positions[0], (-0.5, 1))
@@ -281,6 +293,7 @@ class CpuWheelTests(unittest.TestCase):
             model.set_preview_parameter("00000000-0000-4000-8000-000000000099", 1)
         self.assertEqual(model.preview_revision, revision)
         self.assertTrue(model.set_preview_parameter(PARAMETER, 1))
+        self.assertFalse(model.set_preview_parameter("open", 1))
         self.assertEqual(model.preview_frame().drawables[0].positions[0], (0, 1))
         self.assertTrue(model.reset_preview_values())
         self.assertEqual(model.preview_values, {})
@@ -289,6 +302,38 @@ class CpuWheelTests(unittest.TestCase):
             model.save(destination)
             reopened = kasane.open_project(destination)
             self.assertEqual(reopened.evaluate({PARAMETER: 0.5}), middle)
+
+    def test_save_new_allocates_sibling_without_overwriting(self):
+        first = session()
+        with TemporaryDirectory() as directory:
+            destination = Path(directory).resolve() / "project"
+            first_manifest = first.save(destination).manifest
+            before = first_manifest.read_bytes()
+            second = session()
+            with self.assertRaises(kasane.SdkFailure) as failure:
+                second.save(destination)
+            self.assertEqual(failure.exception.code, "DESTINATION_EXISTS")
+            receipt = second.save(destination, on_exists="new")
+            self.assertEqual(receipt.manifest.parent.name, "project-1")
+            self.assertEqual(first_manifest.read_bytes(), before)
+            self.assertTrue(kasane.open_project(receipt.manifest).validate_structure() == [])
+            with self.assertRaisesRegex(ValueError, "on_exists"):
+                second.save(destination, on_exists="overwrite")
+            first_manifest.write_bytes(before + b" ")
+            with self.assertRaises(kasane.SdkFailure) as conflict:
+                first.save(destination, on_exists="new")
+            self.assertEqual(conflict.exception.code, "PROJECT_CONFLICT")
+
+    def test_duplicate_parameter_name_requires_id(self):
+        model = session()
+        other = "00000000-0000-4000-8000-000000000099"
+        with model.edit("duplicate names") as edit:
+            edit.create_parameter(PARAMETER, "open", 0, 1, 0)
+            edit.create_parameter(other, "open", 0, 1, 0)
+        with self.assertRaisesRegex(ValueError, "Ambiguous parameter name"):
+            model.evaluate({"open": 0.5})
+        self.assertEqual(model.parameter_id(PARAMETER), PARAMETER)
+        self.assertEqual(len(model.evaluate({PARAMETER: 0.5}).parameters), 2)
 
     def test_queries_geometry_history_and_events(self):
         model = session()

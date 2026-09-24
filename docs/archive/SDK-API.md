@@ -45,6 +45,8 @@ Python `evaluate_snapshot(values)` 和 `preview_snapshot()` 返回完整求值�
 
 `Version` 为 `(session_id, generation, revision)`。新建会话 generation 为 1；`new_project(document_id, canvas, expected)` 成功时原子替换内存文档、增加 generation，并清空旧 history、预览和事件。失败时旧会话不变。批次 `expected_version` 检查三个字段；过期错误提供 expected 和 actual。`SdkError` 有 `code/message/operation/object_ids` 及可选字段路径、版本和 referrers；core 未提供字段路径时留空。`EditReceipt` 提供前后版本、直接对象 ID、变化种类与标签。`drain_events()` 目前返回成功内容提交及 undo/redo 的 receipt。
 
+Python `CanvasSnapshot.origin` 返回创建 Session 时使用的 `(x, y)`，也保留 `origin_x` 和 `origin_y`。`Session.evaluate`、`evaluate_snapshot`、预览值设置和 `Observer.observe` 的参数键可使用 ID 或当前工程中唯一的显示名；`Session.parameter_id(name_or_id)` 显式解析。若名称重名，调用会要求使用 ID。`Session.save(path, on_exists="new")` 在目标被其他工程占用时选择编号新路径，并通过 `SaveResult.manifest` 返回实际位置；默认 `on_exists="error"`，且该选项不绕过当前工程的 `PROJECT_CONFLICT`。
+
 `ObjectHandle` 当前覆盖 asset、mesh、parameter、mesh binding、Part、Transform、SceneBinding、BlendShape key table/constraint/binding、Glue 和 Offscreen。`handle(kind, id)` 只获取已提交对象；`resolve_handle` 校验 session、generation、对象种类和 incarnation。普通字段修改保留句柄，undo 使对象消失后即使 redo 恢复，旧句柄也保持过期。`mesh_by_handle` 是当前的强类型读取入口，其余类型仍通过 ID 查询。拓扑快照带 `Version`；`replace_topology` 要求它来自 edit 开始时的同一版本和 mesh，并把顶点映射与所有相关 binding/glue 一次交给 core 校验。
 
 `create` 与 `replace` 分开。当前可显式替换 asset/mesh/parameter/mesh binding；`update_mesh_properties` 保留 mesh ID、runtime ID 与几何；`rename_mesh` 的纯名称提交只推进文档 revision，保留 evaluation revision。`find_meshes_by_name` 返回所有匹配，`require_unique_mesh` 区分缺失和重名。参数绑定以完整 `MeshBinding`（全部轴和笛卡尔积 keyform）提交，不能先发布空表；`evaluate` 返回 requested、actual 和 clamp/repeat 后的采样值。
@@ -112,6 +114,8 @@ S4 可选 GPU 入口开始接入：带 `observe` feature 的 wheel 提供 `kasan
 GPU 上传前按设备限制检查全部纹理尺寸，超限返回 `TEXTURE_SIZE_LIMIT` 并保留 Observer 可复用；输出尺寸超限返回 `OUTPUT_SIZE_LIMIT`。`capabilities()["purism_core_validation"]` 表示 PurismCore 已编入；当前未接入官方 Core 验证器，因此 `official_core_validation` 为 false。Rust 与 Python 的基本创作和失败回滚使用同一 [契约 fixture](../examples/sdk/authoring-contract.json) 验证。
 
 `Observer.observe_run(session, samples, absolute_output, focus=[])` 为每次运行创建独立目录，输出逐样本 PNG、focus crop、`contact-sheet.png`、`samples.json`、`diagnostics.json` 和 `report.json`。crop 从完整合成帧裁剪，保留遮挡、mask 和 Offscreen。报告记录 SDK 版本与原生模块 hash、平台、requested/actual、session/generation/document/source/evaluation revision、求值帧加资源与 view 的输入 hash、adapter、view、资源与图像 hash，并声明颜色及 alpha 约定；成功状态为 `frames_complete`，失败状态为 `failed` 并附样本序号。S4 后续补叠加层及逐项图像预期对照。
+
+视觉对照可直接调用 `kasane.compare_png(reference, actual)`，或 `ObservedFrame.compare_png(reference)`，无需 Pillow。每个 PNG 输入可为 `Path`、字符串路径或 PNG 字节（例如 `frame.png`）。返回 `ImageComparison`，包含 `exact_match`、`changed_pixels`、`total_pixels`、`changed_bounds`（左、上、右、下；右下为排他边界）、归一化 `mean_absolute_error`/`max_channel_error`，以及可由 `save_difference_png(absolute_path)` 写出的可见差异图。差异图 RGB 表示对应通道的绝对差，变化像素绘制为不透明；仅 alpha 变化显示在红色通道。输入支持无交错 RGB8/RGBA8 PNG；尺寸不符或 PNG 损坏会明确报错。该接口只报告像素差异，不替任务决定可接受阈值。`ObservationRun.output` 与 `directory` 都指向本次运行实际创建的唯一目录；`report`、`frames` 和 `contact_sheet` 给出具体文件路径。
 
 可运行示例：以 `maturin build --features observe` 构建 wheel 并安装到外部 venv 后，从仓库外运行 `python /absolute/path/to/examples/sdk/python_observe_recipe.py /absolute/output/dir`。示例在未保存 Session 中创建 mask 与 Offscreen、采样参数 0/0.5/1，并打印报告路径。
 
