@@ -144,6 +144,14 @@ def initialize(args):
     shutil.copy2(Path(__file__), frozen / "sdk_experiments.py")
     for name in ("README.md", "API.md"):
         shutil.copy2(ROOT / "modules/kasane-python" / name, frozen / name)
+    for name in ("delivery-transfer.md", "resource-recovery.md", "visual-locate.md", "visual-parent.md", "compose-expression.md", "handoff-revision.md"):
+        shutil.copy2(ROOT / "docs/experiments/tasks" / name, frozen / name)
+    if args.handoff_project is not None:
+        project = args.handoff_project.resolve(strict=True)
+        if not project.is_dir() or not (project / "project.kasane.json").is_file():
+            raise ValueError("--handoff-project must contain project.kasane.json")
+        hashes(project)
+        shutil.copytree(project, frozen / "handoff-project")
     shutil.copy2(ROOT / "modules/kasane-python/tests/fixtures/asymmetric-2x2.png", frozen / "texture.png")
     uv = shutil.which(args.uv)
     if not uv:
@@ -210,7 +218,12 @@ def prepare(args):
     frozen = root / "host/frozen"
     for name in ("README.md", "API.md"):
         shutil.copy2(frozen / name, packet / "docs" / name)
-    shutil.copy2(frozen / "texture.png", packet / "input/texture.png")
+    if args.task in ("create", "parameter", "edit"):
+        shutil.copy2(frozen / "texture.png", packet / "input/texture.png")
+    if args.task == "handoff-revision":
+        if not (frozen / "handoff-project").is_dir():
+            raise ValueError("handoff-revision requires an experiment initialized with --handoff-project")
+        shutil.copytree(frozen / "handoff-project", packet / "input/project")
     tasks = read(frozen / "tasks.json")["tasks"]
     task = tasks[args.task]
     goal = task["goal"]
@@ -218,7 +231,14 @@ def prepare(args):
         goal = tasks["create"]["goal"].replace("不要添加参数或其他场景对象。", "") + "\n\n" + goal
     # Preparation must pass positive and negative controls before publishing trial.json.
     controls = worker(root, lock, args.task, packet, host / "oracle.json", "prepare", host / "logs/prepare")
-    instructions = f"""# SDK 使用实验：{args.task} v{task['version']}
+    if args.task in ("delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"):
+        template = frozen / f"{args.task}.md"
+        instructions = template.read_text(encoding="utf-8")
+        instructions += (f"\n## 本轮环境\n\n任务目录：`{packet}`；共享 Python：`{lock['python']}`；"
+                         f"预算：{args.budget} 秒。公开文档见 `docs/README.md`、`docs/API.md`。\n"
+                         f"先在 `{packet / 'output'}` 运行，脚本接受 `--output` 绝对路径。\n")
+    else:
+        instructions = f"""# SDK 使用实验：{args.task} v{task['version']}
 
 {goal}
 
@@ -292,18 +312,49 @@ def run_agent(args):
     return 0 if result["status"] == "completed" else 1
 
 
+def result_file(output, task):
+    direct = output / "result.json"
+    if task not in ("delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"):
+        return direct
+    candidates = list(output.rglob("result.json"))
+    if not candidates:
+        return direct
+    return max(candidates, key=lambda path: (path.stat().st_mtime_ns, str(path)))
+
+
 def inspect_output(root, lock, record, packet, host, output, log):
     try:
         if output.is_symlink():
             raise ValueError("output must not be a symlink to an existing result")
         hashes(output)  # Reject symlinked artifacts, including links to prior runs.
-        result = read(output / "result.json")
+        result_path = result_file(output, record["task"])
+        result = read(result_path)
         raw = Path(result["project_manifest"])
         if not raw.is_absolute():
             raise ValueError("project_manifest must be absolute")
         manifest = raw.resolve(strict=True)
         if not manifest.is_relative_to(output.resolve()):
             raise ValueError("manifest must be inside the declared output directory")
+        if record["task"] in ("visual-locate", "visual-parent", "compose-expression", "handoff-revision"):
+            argv = [lock["python"], "-I", str(root / "host/frozen/worker.py"), "grade",
+                    "--task", record["task"], "--packet", str(packet), "--oracle", str(host / "oracle.json"),
+                    "--manifest", str(manifest), "--result", str(result_path)]
+            grade = json.loads(checked(argv, root, log))
+            grade["result_file"] = str(result_path)
+            return grade
+        if record["task"] in ("delivery-transfer", "resource-recovery"):
+            package_raw = Path(result["package_model3"])
+            if not package_raw.is_absolute():
+                raise ValueError("package_model3 must be absolute")
+            package = package_raw.resolve(strict=True)
+            if not package.is_relative_to(output.resolve()):
+                raise ValueError("package_model3 must be inside the declared output directory")
+            argv = [lock["python"], "-I", str(root / "host/frozen/worker.py"), "grade",
+                    "--task", record["task"], "--packet", str(packet), "--oracle", str(host / "oracle.json"),
+                    "--manifest", str(manifest), "--package", str(package)]
+            grade = json.loads(checked(argv, root, log))
+            grade["result_file"] = str(result_path)
+            return grade
         return worker(root, lock, record["task"], packet, host / "oracle.json", "grade", log, manifest)
     except (ValueError, OSError, KeyError, TypeError) as exc:
         return {"status": "failed", "error": str(exc)}
@@ -330,12 +381,29 @@ def assess(args):
         report["replay_environment"] = environment_state(lock, replay)
         report["environment_unchanged_during_replay"] = report["environment"] == report["replay_environment"]
         report["replay"] = inspect_output(root, lock, record, replay, host, replay / "output", assessment / "replay-grade")
+        if record["task"] in ("delivery-transfer", "resource-recovery"):
+            previous = read(result_file(replay / "output", record["task"])) if report["replay"]["status"] == "passed" else None
+            report["repeat_command"] = command([lock["python"], str(replay / "solution.py"),
+                "--output", str(replay / "output")], replay, assessment / "repeat-command", args.timeout)
+            report["repeat"] = inspect_output(root, lock, record, replay, host, replay / "output", assessment / "repeat-grade")
+            if previous is not None:
+                argv = [lock["python"], "-I", str(root / "host/frozen/worker.py"), "grade",
+                        "--task", record["task"], "--packet", str(replay),
+                        "--oracle", str(host / "oracle.json"), "--manifest", previous["project_manifest"],
+                        "--package", previous["package_model3"]]
+                report["previous_after_repeat"] = json.loads(checked(argv, root, assessment / "previous-grade"))
+            else:
+                report["previous_after_repeat"] = {"status": "not_run"}
         report["replay_input_unchanged"] = hashes(replay / "input") == record["protected"]["input"]
         report["protected_after_replay"] = protected_hashes(packet) == record["protected"]
         passed = (report["environment"]["sdk_unchanged"] and report["replay_environment"]["sdk_unchanged"]
                   and report["notes_present"] and report["protected_unchanged"] and report["replay_input_unchanged"]
                   and report["protected_after_replay"] and report["original"]["status"] == "passed"
                   and report["replay"]["status"] == "passed" and report["replay_command"]["status"] == "completed")
+        if record["task"] in ("delivery-transfer", "resource-recovery"):
+            passed = (passed and report["repeat_command"]["status"] == "completed"
+                      and report["repeat"]["status"] == "passed"
+                      and report["previous_after_repeat"]["status"] == "passed")
         report["status"] = "passed" if passed else "failed"
     except Exception as exc:
         report.update(status="harness_error", error=f"{type(exc).__name__}: {exc}")
@@ -421,10 +489,11 @@ def main():
             item.add_argument("--trial", required=True)
         if name == "init":
             item.add_argument("--wheel", type=Path, required=True)
+            item.add_argument("--handoff-project", type=Path)
             item.add_argument("--python", default="3.14", help="uv Python version or interpreter path")
             item.add_argument("--uv", default="uv")
         elif name == "prepare":
-            item.add_argument("--task", choices=["create", "parameter", "edit"], required=True)
+            item.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"], required=True)
             item.add_argument("--model", required=True, help="Exact model identifier, not a nickname")
             item.add_argument("--model-config", default="{}", help="JSON: reasoning, sampling, harness version, etc.")
             item.add_argument("--cohort", choices=["fresh", "learning"], default="fresh")

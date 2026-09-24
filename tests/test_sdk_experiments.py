@@ -46,8 +46,110 @@ manifest = model.save(out / 'my-custom-layout' / 'project').manifest
 (out / 'result.json').write_text(json.dumps({'project_manifest':str(manifest)}))
 '''
 
+ADVANCED_SOLUTION = '''from pathlib import Path
+from uuid import uuid4
+import argparse, json, kasane
+p = argparse.ArgumentParser(); p.add_argument('--output', type=Path, required=True)
+out = p.parse_args().output; out.mkdir(parents=True, exist_ok=True)
+packet = Path(__file__).resolve().parent
+task = TASK
+if task == 'delivery-transfer':
+    request = json.loads((packet / 'input/request.json').read_text())
+    model = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+    model.import_model3(packet / 'input/model.model3.json')
+    mesh = next(mid for mid in model.mesh_ids() if model.mesh_record(mid).runtime_id == request['mesh_runtime_id'])
+    binding = model.binding_for_mesh(mesh)
+    form = next(f for f in binding.keyforms if f.keys == [request['key']])
+    with model.edit('target') as edit:
+        edit.set_mesh_keyform(binding.id, form._replace(positions=[(x+7,y) for x,y in form.positions]))
+else:
+    model = kasane.open_project(packet / 'input/project')
+    bad = model.diagnose_resources()[0].asset_id
+    with model.edit('recover') as edit:
+        edit.relocate_png_asset(bad, packet / 'input/candidates/tile_17.png')
+index = len(list(out.glob('project-*')))
+manifest = model.save(out / f'project-{index}').manifest
+model.export_package(out / f'package-{index}')
+(out / 'result.json').write_text(json.dumps({'project_manifest': str(manifest),
+    'package_model3': str(out / f'package-{index}/model.model3.json')}))
+'''
+
+VISUAL_SOLUTION = '''from pathlib import Path
+import argparse, json, kasane
+p=argparse.ArgumentParser(); p.add_argument('--output',type=Path,required=True)
+out=p.parse_args().output.resolve(); out.mkdir(parents=True,exist_ok=True)
+session=kasane.open_project(Path(__file__).resolve().parent/'input/project')
+mesh=session.require_unique_mesh('segment-1')
+binding=session.binding_for_mesh(mesh.id)
+form=next(f for f in binding.keyforms if f.keys==[1])
+with session.edit('visual control') as edit:
+    edit.set_mesh_keyform(binding.id,form._replace(positions=[(x-12,y) for x,y in form.positions]))
+manifest=session.save(out/'project').manifest
+with kasane.Observer(256,256,256) as observer:
+    run=observer.observe_run(session,[{'Pose':v} for v in (0,0.5,1)],out/'observations')
+(out/'result.json').write_text(json.dumps({'project_manifest':str(manifest),'observation_report':str(run.report),
+    'contact_sheet':str(run.contact_sheet),'frames':[str(p) for p in run.frames]}))
+'''
+
+EXPRESSION_SOLUTION = '''from pathlib import Path
+from uuid import uuid4
+import argparse, json, kasane
+p=argparse.ArgumentParser(); p.add_argument('--output',type=Path,required=True)
+out=p.parse_args().output.resolve(); out.mkdir(parents=True,exist_ok=True)
+session=kasane.open_project(Path(__file__).resolve().parent/'input/project')
+parameter=session.parameter_id('Expression')
+with session.edit('expression control') as edit:
+    for name in ('mouth','left-mark','right-mark'):
+        mesh=session.require_unique_mesh(name)
+        base=mesh.positions
+        if name=='mouth':
+            center=(min(y for x,y in base)+max(y for x,y in base))/2
+            end=[(x,y-5 if y<center else y+5) for x,y in base]
+        else:
+            end=[(x,y-6) for x,y in base]
+        edit.create_mesh_binding(str(uuid4()),mesh.id,[kasane.Axis(parameter,[0,1])],
+            [kasane.MeshKeyform([0],base),kasane.MeshKeyform([1],end)])
+manifest=session.save(out/'project').manifest
+with kasane.Observer(256,256,256) as observer:
+    run=observer.observe_run(session,[{'Expression':v} for v in (0,0.25,0.5,0.75,1)],out/'observations')
+(out/'result.json').write_text(json.dumps({'project_manifest':str(manifest),'observation_report':str(run.report),
+    'contact_sheet':str(run.contact_sheet),'frames':[str(p) for p in run.frames]}))
+'''
+
+HANDOFF_SOLUTION = '''from pathlib import Path
+import argparse, json, kasane
+p=argparse.ArgumentParser(); p.add_argument('--output',type=Path,required=True)
+out=p.parse_args().output.resolve(); out.mkdir(parents=True,exist_ok=True)
+session=kasane.open_project(Path(__file__).resolve().parent/'input/project')
+with session.edit('handoff control') as edit:
+    for name in ('left-mark','right-mark'):
+        mesh=session.require_unique_mesh(name)
+        binding=session.binding_for_mesh(mesh.id)
+        base=next(f for f in binding.keyforms if f.keys==[0])
+        end=next(f for f in binding.keyforms if f.keys==[1])
+        edit.set_mesh_keyform(binding.id,end._replace(positions=[(x,y-3) for x,y in base.positions]))
+manifest=session.save(out/'project').manifest
+with kasane.Observer(256,256,256) as observer:
+    run=observer.observe_run(session,[{'Expression':v} for v in (0,0.25,0.5,0.75,1)],out/'observations')
+(out/'result.json').write_text(json.dumps({'project_manifest':str(manifest),'observation_report':str(run.report),
+    'contact_sheet':str(run.contact_sheet),'frames':[str(p) for p in run.frames]}))
+'''
+
 
 class InfrastructureTests(unittest.TestCase):
+    def test_latest_nested_result_supersedes_stale_root_result(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output = Path(folder)
+            direct = output / 'result.json'
+            direct.write_text('{}')
+            nested = output / 'delivery/result.json'
+            nested.parent.mkdir()
+            nested.write_text('{}')
+            os.utime(direct, ns=(1, 1))
+            os.utime(nested, ns=(2, 2))
+            self.assertEqual(harness.result_file(output, 'delivery-transfer'), nested)
+            self.assertEqual(harness.result_file(output, 'create'), direct)
+
     def test_timeout_retains_partial_output(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -125,6 +227,76 @@ class WheelIntegrationTests(unittest.TestCase):
                 self.assertEqual(row['artifact_status'], 'passed')
                 self.assertIsNone(row['independent_success'])
                 self.assertTrue(row['measured_run_matches'])
+
+    def test_advanced_tasks_move_and_repeat_delivery(self):
+        for task in ('delivery-transfer', 'resource-recovery'):
+            with self.subTest(task=task):
+                trial = 'advanced-' + task
+                packet = self.prepare(trial, task)
+                (packet / 'solution.py').write_text(ADVANCED_SOLUTION.replace('TASK', repr(task)))
+                self.run_solution(trial, packet)
+                self.cli('assess', '--trial', trial)
+                report_path = next((self.root / 'host/trials' / trial / 'assessments').glob('*/report.json'))
+                report = json.loads(report_path.read_text())
+                self.assertEqual(report['status'], 'passed')
+                self.assertEqual(report['repeat']['status'], 'passed')
+
+    def test_advanced_nested_result_is_accepted(self):
+        packet = self.prepare('advanced-nested', 'delivery-transfer')
+        script = ADVANCED_SOLUTION.replace('TASK', repr('delivery-transfer'))
+        script = script.replace("(out / 'result.json').write_text", "(out / f'project-{index}/result.json').write_text")
+        (packet / 'solution.py').write_text(script)
+        self.run_solution('advanced-nested', packet)
+        self.cli('assess', '--trial', 'advanced-nested')
+
+    def test_visual_locate_controls_and_replay(self):
+        if 'gpu_observation' not in harness.read(self.root / 'host/lock.json')['runtime']['capabilities'] or not harness.read(self.root / 'host/lock.json')['runtime']['capabilities']['gpu_observation']:
+            self.skipTest('observe wheel required')
+        packet = self.prepare('visual-control', 'visual-locate')
+        (packet / 'solution.py').write_text(VISUAL_SOLUTION)
+        self.run_solution('visual-control', packet)
+        self.cli('assess', '--trial', 'visual-control')
+
+    def test_visual_parent_controls_and_replay(self):
+        if not harness.read(self.root / 'host/lock.json')['runtime']['capabilities']['gpu_observation']:
+            self.skipTest('observe wheel required')
+        packet = self.prepare('visual-parent-control', 'visual-parent')
+        (packet / 'solution.py').write_text(VISUAL_SOLUTION.replace('x-12', 'x-1.2'))
+        self.run_solution('visual-parent-control', packet)
+        self.cli('assess', '--trial', 'visual-parent-control')
+
+    def test_compose_expression_controls_and_replay(self):
+        if not harness.read(self.root / 'host/lock.json')['runtime']['capabilities']['gpu_observation']:
+            self.skipTest('observe wheel required')
+        packet = self.prepare('expression-control', 'compose-expression')
+        (packet / 'solution.py').write_text(EXPRESSION_SOLUTION)
+        self.run_solution('expression-control', packet)
+        self.cli('assess', '--trial', 'expression-control')
+
+    def test_handoff_project_is_frozen_before_controls(self):
+        if not harness.read(self.root / 'host/lock.json')['runtime']['capabilities']['gpu_observation']:
+            self.skipTest('observe wheel required')
+        seed = self.prepare('handoff-seed', 'compose-expression')
+        (seed / 'solution.py').write_text(EXPRESSION_SOLUTION)
+        self.run_solution('handoff-seed', seed)
+        self.cli('assess', '--trial', 'handoff-seed')
+        manifest = Path(json.loads((seed / 'output/result.json').read_text())['project_manifest'])
+        handoff_root = self.root.parent / 'handoff-experiment'
+
+        def call(action, *args):
+            result = subprocess.run([sys.executable, str(ROOT / 'tools/sdk_experiments.py'),
+                action, '--experiment', str(handoff_root), *args], capture_output=True, text=True)
+            if result.returncode:
+                raise AssertionError(f'{result.args}\n{result.stdout}\n{result.stderr}')
+
+        call('init', '--wheel', os.environ['SDK_EXPERIMENT_WHEEL'], '--handoff-project', str(manifest.parent))
+        call('prepare', '--trial', 'handoff', '--task', 'handoff-revision', '--model', 'fixture')
+        packet = handoff_root / 'packets/handoff'
+        (packet / 'solution.py').write_text(HANDOFF_SOLUTION)
+        (packet / 'notes.md').write_text('Deterministic handoff control, not an agent run.')
+        call('run', '--trial', 'handoff', '--', str(handoff_root / '.venv/bin/python'),
+             str(packet / 'solution.py'), '--output', str(packet / 'output'))
+        call('assess', '--trial', 'handoff')
 
     def test_input_tamper_cannot_pass_and_assessments_are_preserved(self):
         packet = self.prepare('tamper')

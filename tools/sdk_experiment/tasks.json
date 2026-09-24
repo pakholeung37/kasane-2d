@@ -12,6 +12,30 @@
     "edit": {
       "version": 1,
       "goal": "打开 input/project 中的已有工程。仅修改名为 right 的 mesh 的 Open=1 关键形态：将其中所有顶点的 X 增加 10 个源画布像素，Y 不变。保留该关键形态的外观与绘制顺序，其他内容（含对象 ID、基础几何、其他关键形态、资源、参数和画布）必须不变。在新的输出目录保存，不覆盖输入。确认 Open=0、0.5、1 的求值结果符合修改。"
+    },
+    "delivery-transfer": {
+      "version": 1,
+      "goal": "导入 model3，局部修改指定关键形态，保存工程并导出可搬迁模型包。"
+    },
+    "resource-recovery": {
+      "version": 1,
+      "goal": "诊断并恢复失联纹理，保存工程并导出可搬迁模型包。"
+    },
+    "visual-locate": {
+      "version": 1,
+      "goal": "从参考图定位唯一偏移部件并修正参数终点，生成观察报告。"
+    },
+    "visual-parent": {
+      "version": 2,
+      "goal": "从参考图定位旋转父级下的偏移部件并修正局部关键形态，生成观察报告。"
+    },
+    "compose-expression": {
+      "version": 1,
+      "goal": "让一个表情参数驱动嘴部和左右标记，验证五档连续采样与可编辑交付。"
+    },
+    "handoff-revision": {
+      "version": 1,
+      "goal": "接手已交付的表情工程，减小左右标记位移幅度并保留嘴部行为。"
     }
   }
 }

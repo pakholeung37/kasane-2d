@@ -69,6 +69,13 @@ not override a `PROJECT_CONFLICT` on a session's own saved project. Check
 | `drain_events()` | Consume published edit and undo/redo `EditEvent` records. |
 | `validate_structure()`, `diagnose_resources()`, `diagnose_geometry(min_triangle_area=0, canvas_bounds=None)` | Lists of `StructureIssue`, `ResourceIssue`, or `GeometryIssue`. Geometry issues are authoring hints; resource diagnosis checks files separately from structure validation. |
 
+`evaluate(values).drawables` contains `DrawableSample` records. Each record has
+`id` (the authoring mesh ID) and `positions` (runtime coordinates); it has no
+`mesh_id` or `name` field. To select a drawable, first resolve the mesh with
+`require_unique_mesh(name)` or compare `mesh_record(id).runtime_id`, then match
+`drawable.id == mesh.id`. On model3 import, authoring IDs may be rebuilt, so
+use public runtime IDs or names to find objects after a fresh import.
+
 `GeometrySnapshot` includes `vertex_ids`, `positions`, `uvs`, `triangles`,
 `space`, `parent_id`, and `version`. Triangles refer to vertex IDs. Root mesh
 positions are in canvas pixels; positions under a deformer are local to their
@@ -177,6 +184,12 @@ short `evaluate()` when only runtime positions are needed.
 `report`, `frames`, `crops`, and `contact_sheet` are paths under it. A failed
 run writes a failure report and attaches `run_directory` to the exception.
 GPU failures use `ObservationFailure.code` and, when applicable, `asset_id`.
+`ObservedFrame` exposes `width`, `height`, `rgba`, and `png`; it has no `size`
+field. Observer image pixels, evaluated runtime coordinates, and editable
+source or parent-local mesh coordinates are different spaces. For root meshes,
+convert runtime to source pixels with the canvas origin and
+`pixels_per_unit`; for meshes under a transform, inspect `geometry.space` and
+`geometry.parent_id` before changing keyforms.
 
 ## Errors and command-line runner
 

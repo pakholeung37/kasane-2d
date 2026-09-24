@@ -12,6 +12,12 @@
 | `create` | PNG 新建单 mesh 工程 | 画布、纹理内容、几何、UV、三角形、绘制属性、保存重开 |
 | `parameter` | 新建并添加 Open 参数和两端关键形态 | 上述检查，加参数定义、绑定、端点和中点求值 |
 | `edit` | 修改已有双 mesh 工程的一个终点关键形态 | 目标变化，所有其他公开对象状态保持，三档求值 |
+| `delivery-transfer` | 导入、局部修改、保存并导出模型包 | 搬迁后重开、语义等价、空目录重放和同根重复交付 |
+| `resource-recovery` | 恢复失联纹理并导出模型包 | 纹理内容匹配、诊断、搬迁、重放和重复交付 |
+| `visual-locate` | 从参考图定位偏移部件 | 目标几何、观察帧与参考逐像素一致、搬迁重开 |
+| `visual-parent` | 修正旋转父级下的局部关键形态 | 父级坐标、几何、观察帧与参考逐像素一致 |
+| `compose-expression` | 一个参数驱动嘴部和两侧标记 | 三个绑定、五档采样、端点图像与可编辑交付 |
+| `handoff-revision` | 接手前关作品并缩小标记位移 | 保留嘴部和绑定身份、五档采样、端点图像与搬迁 |
 
 任务、规则在 `tools/sdk_experiment/tasks.json` 和 `worker.py` 中版本化。
 新建任务允许自行选择 UUID、资源名称、顶点编号、对角线和工程输出文件名；
@@ -20,8 +26,9 @@
 错误几何的负控制；参数/编辑任务还有错误关键形态控制，编辑任务另有未修改控制。
 任何控制失效都不会生成可发放的 `trial.json`。
 
-视觉参考修正、GPU、导出任务留待后续增加；不能将当前三个 CPU 任务的结果称为
-SDK 全面可用性结论。
+视觉任务需要支持 Observer 的 GPU wheel 和可用的图像观察环境；`handoff-revision`
+需要初始化时冻结一个已通过 `compose-expression` 的工程。任务控制脚本不能算作
+受试 agent 成功率，九项任务也不代表 SDK 的全部使用情境。
 
 ## 1. 构建并冻结实验
 
@@ -33,6 +40,9 @@ uv run --locked python tools/sdk_experiments.py init \
   --experiment /tmp/kasane-study-v1 \
   --wheel /absolute/path/to/kasane.whl
 ```
+
+接手任务在 `init` 时另加 `--handoff-project /absolute/path/to/passed/project`，
+该目录须含 `project.kasane.json`；底座将其冻结，并在准备任务包时复制到 `input/project`。
 
 先在仓库根目录执行 `uv sync --locked`。实验目录必须在源码仓库外，且不能已存在。
 `init` 用 `uv venv --python 3.14` 创建本轮实验共用的环境，通过 `uv pip install`
@@ -81,8 +91,8 @@ uv run --locked python tools/sdk_experiments.py prepare \
 `fresh` 表示无先前任务经验；`learning` 表示保留经验，必须分别分析。
 
 任务要求交付 `solution.py --output <绝对目录>`，可带辅助 Python 文件，
-并先在任务包 `output/` 实际运行。`output/result.json` 只声明真实工程 manifest 的
-绝对路径；判分器重新打开工程，不信任受试者自报的检查结果。工程输出布局可自选，
+并先在任务包 `output/` 实际运行。`result.json` 只声明真实工程 manifest 的
+绝对路径；可放在 output 根或交付子目录。判分器重新打开工程，不信任受试者自报的检查结果。工程输出布局可自选，
 但必须在声明的 output 根目录内。脚本从自身目录寻找 input，不依赖旧输出。
 
 受试者可以安装第三方依赖，所有受试者共用本轮 `.venv`：
@@ -176,10 +186,11 @@ uv run --locked python tools/sdk_experiments.py summarize \
 
 ## 5. 每轮迭代
 
-本仓库已有 S0–S3 和窄范围 S4 的历史受试记录，不再从三个基础任务各跑三次开始。
-当前续轮设计见 [承接 S3/S4 的实验计划](experiments/NEXT-ROUND.md)：先做交付迁移与
-资源恢复各三次 fresh 运行，再推进视觉定位、父级坐标与多部件接手。新增任务尚未
-接入 CLI；当前 create/parameter/edit 保留作基础回归。
+本仓库已有 S0–S3 和窄范围 S4 的历史受试记录。当前续轮使用三位 Luna subagent：
+S3-A 各做一次 fresh，后续依次进入 S3-B、S4-A、S4-B、S5-A、S5-B，均记为
+learning；同关作品和重放稳定后才推进。设计见
+[续轮计划](experiments/NEXT-ROUND.md)，实际证据、修正与限制见
+[2026-09-24 续轮记录](experiments/ROUND-2026-09-24.md)。
 
 小批量运行用于发现摩擦，不能估算一般用户成功率。按 SDK 实现、接口设计、文档、agent 环境、任务/判分器
 分别归因；从成功轨迹中也寻找反复误用和绕路。
@@ -209,7 +220,7 @@ uv run --locked python tools/sdk_experiments.py summarize \
 uv run --locked python -m unittest discover -s tests -p test_sdk_experiments.py -v
 ```
 
-完整验证包括独立安装 wheel、三个任务的正负控制、三种任务重放、输入篡改、
+完整验证包括独立安装 wheel、九个任务的正负控制与重放、输入篡改、
 错误几何、缺失/越界 manifest、旧审阅不能给新提交背书，以及受试者安装依赖后
 其他受试者和重放脚本能在共享环境使用它：
 
