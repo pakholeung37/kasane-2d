@@ -1,4 +1,8 @@
-"""Kasane 2D authoring SDK. Paths passed to native IO must be absolute."""
+"""Kasane 2D authoring SDK.
+
+Paths passed to native IO must be absolute. Coordinates are ordinary ``(x, y)``
+tuples; ``Point`` is a type alias, not a two-argument constructor.
+"""
 
 from __future__ import annotations
 
@@ -224,6 +228,8 @@ class Axis(NamedTuple):
 
 
 class MeshKeyform(NamedTuple):
+    """Immutable keyform record; use ``_replace`` to copy with changed fields."""
+
     keys: list[float]
     positions: list[Point]
     appearance: Appearance = Appearance()
@@ -556,6 +562,8 @@ def _evaluation_snapshot(data) -> EvaluationSnapshot:
 
 
 class SaveResult(NamedTuple):
+    """Save receipt; ``manifest`` is the path to the saved project."""
+
     manifest: Path
     durable: bool
     warnings: list[str]
@@ -1002,6 +1010,12 @@ class Session:
         )
 
     def save(self, absolute_path: Path, expected_version: Version | None = None) -> SaveResult:
+        """Save to an absolute path and return a receipt with ``manifest``.
+
+        An existing destination from another session may raise
+        ``SdkFailure(code='DESTINATION_EXISTS')``. Use a new path or open the
+        existing project before editing it.
+        """
         manifest, durable, warnings, history_warnings = self._native.save(
             str(absolute_path), expected_version
         )
@@ -1297,6 +1311,7 @@ class Session:
 
     @property
     def canvas(self) -> CanvasSnapshot:
+        """Current canvas snapshot (property)."""
         return CanvasSnapshot(*self._native.canvas())
 
     @property
@@ -1314,6 +1329,7 @@ class Session:
 
     @property
     def project_path(self) -> Path | None:
+        """Current manifest path, if saved or opened (property)."""
         value = self._native.project_path()
         return Path(value) if value is not None else None
 

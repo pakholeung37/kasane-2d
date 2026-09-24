@@ -1,6 +1,6 @@
 # SDK 创作可用性实验：第一轮
 
-第一轮独立试验已完成，结果见 [SDK-USABILITY-RESULTS.md](SDK-USABILITY-RESULTS.md)。
+第一轮独立试验已完成，结果见 [SDK-USABILITY-RESULTS.md](SDK-USABILITY-RESULTS.md)。第二轮以三个 Luna subagent 对照类型检查步骤，结果见 [SDK-USABILITY-ROUND2-RESULTS.md](SDK-USABILITY-ROUND2-RESULTS.md)。
 
 ## 要回答的问题
 
@@ -10,7 +10,9 @@
 
 ## 第一轮任务与成功条件
 
-准备器生成 `TASK.md`、`SDK-API.md`、已保存的 `baseline/` 工程、空 `output/` 与记录输入 hash 的 `setup.json`。主持人先把 `setup.json` 复制到受试者无法修改的位置，再把任务目录交给受试者。任务正文见 [task-01.md](../examples/sdk/usability/task-01.md)。不提供源码、现有 recipe、测试和判分器。使用相同 CPython 3.14 wheel，CPU 即可完成。
+准备器生成 `TASK.md`、`SDK-API.md`、已保存的 `baseline/` 工程、空 `output/` 与记录输入 hash 的 `setup.json`。主持人先把 `setup.json` 复制到受试者无法修改的位置，再把任务目录交给受试者。任务正文见 [task-01.md](../examples/sdk/usability/task-01.md)。不提供源码、现有 recipe、测试和判分器。使用相同 CPython 3.14 wheel，CPU 即可完成。下一轮任务只新增 Pyright 检查命令；[Python 类型速查](SDK-PYTHON-TYPING.md)可供日常开发使用，但不能在同任务对照试验中泄露操作答案。
+
+2026-09-24 的第一轮**未**提供 Pyright 步骤；原始任务包已保存在本地证据目录。现在的任务模板加入类型检查，供下一轮使用，成绩不能直接与第一轮合并。
 
 目标是只调整名称为 `right` 的 mesh 在唯一参数 1.0 处的 keyform：父级局部 X 全部增加 0.1。输入工程必须原样保留；输出工程需保存并可重开。受试者交付 `solution.py`、manifest 路径和简短过程说明。允许公开 Python API、包帮助和运行时签名检查；禁止直接改 JSON 或调用私有原生对象。
 

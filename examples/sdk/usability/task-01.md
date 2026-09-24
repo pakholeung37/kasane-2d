@@ -13,3 +13,11 @@
 3. 一小段说明：你如何找到目标、验证结果，以及遇到的 SDK 阻碍。
 
 可以使用公开的 Python API、`help(kasane)` 和运行时签名检查。不要读取仓库源码、现有 recipe、测试或判分器；不要直接改工程 JSON、调用私有 `_native` 或用导入导出重建整份工程。遇到错误可自行重试并保留错误记录。本任务从第一次打开文档开始计时，限时 25 分钟。
+
+提交前运行类型检查：
+
+```bash
+uvx --from pyright==1.1.414 pyright --pythonpath {python_executable} /absolute/path/to/solution.py
+```
+
+类型检查通过后，再实际运行脚本并重开工程验证。把类型检查结果记入说明。

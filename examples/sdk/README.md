@@ -6,3 +6,5 @@
 
 SDK 首轮创作可用性实验的任务、判分与记录口径见 [实验方案](../../docs/SDK-USABILITY-EXPERIMENT.md)。
 五次独立试验的结果与使用障碍见 [实验结果](../../docs/SDK-USABILITY-RESULTS.md)。
+第二轮 Luna 类型检查对照见 [第二轮结果](../../docs/SDK-USABILITY-ROUND2-RESULTS.md)。
+使用 Python wheel 写脚本时，可先看 [类型速查](../../docs/SDK-PYTHON-TYPING.md) 并运行 Pyright。

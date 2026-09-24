@@ -21,7 +21,9 @@ def create(output: Path) -> kasane.Session:
         edit.add_png_asset(ASSET, "texture", texture)
         edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
 
-    base = session.mesh(MESH).positions
+    mesh = session.mesh(MESH)
+    assert mesh is not None
+    base = mesh.positions
     shifted = [(x + 10, y) for x, y in base]
     with session.edit("bind open parameter") as edit:
         edit.create_parameter(PARAMETER, "open", 0, 1, 0)

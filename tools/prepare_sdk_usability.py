@@ -59,6 +59,7 @@ def prepare(destination: Path) -> Path:
     task = TASK.read_text(encoding="utf-8").format(
         baseline_manifest=baseline_manifest,
         output_directory=output,
+        python_executable=sys.executable,
     )
     (destination / "TASK.md").write_text(task, encoding="utf-8")
     setup = {
