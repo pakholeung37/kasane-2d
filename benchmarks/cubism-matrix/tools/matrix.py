@@ -29,6 +29,8 @@ PURISM_ROOT = Path(
     os.environ.get("PURISM_CORE_ROOT", REPO_ROOT / "modules/purism-core")
 ).expanduser().resolve()
 PURISM_BUILD_ROOT = REPO_ROOT / "target/cubism-matrix/core/purism-v6"
+MAO_SOURCE = REPO_ROOT / "models/local/mao"
+MAO_MOC3 = MAO_SOURCE / "runtime/mao_pro.moc3"
 
 
 def read_json(path: Path) -> dict:
@@ -134,9 +136,14 @@ def select_core_variant_for_editor(
 
 
 def prepare_model(model_source: Path | None = None) -> Path:
-    model_source = model_source or REPO_ROOT / "demos/godot/assets/live2d/mao"
-    replace_tree(model_source, MATRIX_ROOT / "assets/live2d/mao")
-    return MATRIX_ROOT / "assets/live2d/mao/runtime/mao_pro.model3.json"
+    destination = MATRIX_ROOT / "assets/live2d/mao"
+    source = model_source or MAO_SOURCE
+    if source.resolve() != destination.resolve():
+        replace_tree(source, destination)
+    model3 = destination / "runtime/mao_pro.model3.json"
+    if not model3.is_file():
+        raise FileNotFoundError(f"Mao model is missing: {model3}")
+    return model3
 
 
 def prepare_godot(addon_source: Path | None = None, model_source: Path | None = None) -> None:
@@ -292,8 +299,7 @@ def run_case(case_id: str, godot_bin: str) -> None:
         executable = BUILD_ROOT / case_id / "core/cubism-core-benchmark"
         if not executable.is_file():
             raise FileNotFoundError(f"build {case_id} before running it")
-        moc = REPO_ROOT / "demos/godot/assets/live2d/mao/runtime/mao_pro.moc3"
-        run([str(executable), str(moc)], cwd=executable.parent)
+        run([str(executable), str(MAO_MOC3)], cwd=executable.parent)
         return
     if case["host"] == "cubism-framework-native":
         executable = BUILD_ROOT / case_id / "native/bin/Demo/Demo"
@@ -327,13 +333,12 @@ def benchmark_core(repeats: int, jobs: int) -> Path:
         raise ValueError("repeats must be at least 1")
     case_ids = ["cubism-core", "purism-core"]
     executables = {case_id: build_core(case_id, jobs) for case_id in case_ids}
-    moc = REPO_ROOT / "demos/godot/assets/live2d/mao/runtime/mao_pro.moc3"
     trials: dict[str, list[dict]] = {case_id: [] for case_id in case_ids}
     for repeat in range(repeats):
         order = case_ids if repeat % 2 == 0 else list(reversed(case_ids))
         for case_id in order:
             executable = executables[case_id]
-            output = run_capture([str(executable), str(moc)], cwd=executable.parent)
+            output = run_capture([str(executable), str(MAO_MOC3)], cwd=executable.parent)
             trials[case_id].append(parse_benchmark_result(output))
 
     phase_names = list(trials[case_ids[0]][0]["phases"])
@@ -390,7 +395,7 @@ def validate(local: bool) -> None:
         required = [
             SDK_ROOT,
             PURISM_ROOT / "CMakeLists.txt",
-            REPO_ROOT / "demos/godot/assets/live2d/mao/runtime/mao_pro.model3.json",
+            MAO_SOURCE / "runtime/mao_pro.model3.json",
             SDK_ROOT / "Samples/OpenGL/thirdParty/glew/build/cmake",
             SDK_ROOT / "Samples/OpenGL/thirdParty/glfw",
         ]

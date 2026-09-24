@@ -23,4 +23,4 @@ python3 tools/compare_wgpu_blends.py
 
 参考图是历史外部运行时捕获，不在每次运行时重新生成。其模型、纹理、PNG 哈希和视图参数在 `tests/fixtures/render_reference/`；任何参考图更新都应留下新的来源与对照证据。
 
-`run_cubism_core_demo.sh`、`run_cubism_core_experiment.sh` 和 `stage_godot_addon.py` 仅服务于独立的 `gd-cubism` 比较 demo。
+`stage_godot_addon.py` 服务于独立的 Cubism benchmark，用于把 `gd-cubism` 插件暂存到 benchmark 的 Godot 工程。

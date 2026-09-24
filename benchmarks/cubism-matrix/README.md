@@ -30,7 +30,7 @@ share one scene and script.
   40-model update-plus-readback working set.
 - `tools/matrix.py` validates, prepares, builds, and runs individual cases.
 - `results/historical/` preserves measurements from before this restructure.
-- `artifacts/results/`, `addons/`, and `assets/` are generated/local and ignored.
+- `artifacts/results/`, `addons/`, and `assets/` are generated/local and ignored. The Mao source is kept under `models/local/mao/` and copied into `assets/` when preparing a rendering case.
 - `target/cubism-matrix/build/` holds isolated build artifacts outside the
   Godot project, so Godot cannot discover and load multiple GDExtensions.
 
@@ -40,8 +40,10 @@ The proprietary SDK and Mao model are not tracked. Put them at:
 
 ```text
 third_party/CubismSdkForNative-5-r.5/
-demos/godot/assets/live2d/mao/
+models/local/mao/
 ```
+
+The [model inventory](../../models/README.md) lists their uses and the optional SDK samples.
 
 PurismCore is pinned at `modules/purism-core` as a Git submodule. Initialize
 submodules after cloning, or set `PURISM_CORE_ROOT` to use another checkout.
@@ -107,7 +109,13 @@ python3 benchmarks/cubism-matrix/tools/matrix.py benchmark-core --repeats 3
 
 ## Godot cases
 
-Initialize the extension build environment as described in `demos/godot/README.md`.
+Create the extension build environment with SCons in `modules/gd-cubism/.venv`:
+
+```sh
+python3 -m venv modules/gd-cubism/.venv
+modules/gd-cubism/.venv/bin/python -m pip install scons==4.7.0
+```
+
 Building a case copies its complete addon into a case-specific artifact and
 rewrites the editor/debug GDExtension entry to select the freshly built release
 library. It then stages that addon plus the local Mao fixture into this isolated

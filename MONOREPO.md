@@ -12,11 +12,11 @@
 - `modules/kasane-sdk-observe/` — immutable observation and GPU capture.
 - `modules/kasane-python/` — Python wheel and agent scripting interface.
 - `tests/` — acceptance-gate tests and shared model, texture and image-reference fixtures.
+- `models/` — local Live2D model sources and their usage inventory; small generated test fixtures stay in `tests/fixtures/`.
 - `tools/` — SDK, Core and WGPU acceptance commands.
 
 ## Separate comparison projects
 
 - `modules/purism-core/` — Cubism Core-compatible implementation.
-- `modules/gd-cubism/` and `demos/gd-cubism-demo/` — independent Godot comparison demo.
-- `benchmarks/cubism-matrix/` — official Cubism/Purism benchmark matrix.
+- `modules/gd-cubism/` and `benchmarks/cubism-matrix/` — independent official Cubism/Purism comparison benchmark.
 - `third_party/` — local, untracked SDKs and assets.

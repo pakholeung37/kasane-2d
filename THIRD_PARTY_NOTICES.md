@@ -30,13 +30,6 @@ Copyright (c) 2026 Sakura Motion Project.
 
 PurismCore is distributed under the MIT License included in that submodule.
 
-## undoredo
-
-The first-write delta recording and reversible-edit design in
-`modules/kasane-core/src/history.rs` is adapted from
-[mikwielgus/undoredo](https://github.com/mikwielgus/undoredo), version 0.15.1,
-commit `70306463634a5f2723333a8b2c30acaf98bac041`.
-
 Copyright (c) 2025-2026 undoredo contributors.
 Used under the MIT option of its MIT OR Apache-2.0 license.
 The upstream MIT license text is included in [licenses/undoredo-MIT.txt](licenses/undoredo-MIT.txt).

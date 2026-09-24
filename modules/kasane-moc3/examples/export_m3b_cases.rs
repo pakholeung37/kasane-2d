@@ -289,16 +289,10 @@ fn main() {
         .parent()
         .unwrap();
 
-    let candidates = [
-        root.join("demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3"),
-        PathBuf::from("demos/gd-cubism-demo/assets/live2d/mao/runtime/mao_pro.moc3"),
-    ];
-    let mao_path = candidates
-        .iter()
-        .find(|p| p.exists())
-        .expect("mao_pro.moc3 not found");
+    let mao_path = root.join("models/local/mao/runtime/mao_pro.moc3");
+    assert!(mao_path.exists(), "mao_pro.moc3 not found at {mao_path:?}");
 
-    let mao_bytes = fs::read(mao_path).expect("Failed to read mao_pro.moc3");
+    let mao_bytes = fs::read(&mao_path).expect("Failed to read mao_pro.moc3");
     let decoded = import_from_bare_moc3(&mao_bytes, &HashMap::new()).expect("Import failed");
     let orig_doc = &decoded.document;
 

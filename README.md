@@ -6,7 +6,9 @@ for editable 2D models. The current workflow creates or imports a project with
 `kasane.Observer`, and exports a MOC3 package.
 
 See [architecture](docs/ARCHITECTURE.md), [SDK API](docs/SDK-API.md), and
-[validation](docs/VALIDATION.md) for the current interfaces and checks.
+[validation](docs/VALIDATION.md) for the current interfaces and checks. The
+[model inventory](models/README.md) records local and SDK sample models used by
+tests and benchmarks.
 
 ## Build and test
 
@@ -27,7 +29,7 @@ An observe-enabled wheel can also run GPU and pinned image-reference checks;
 This project builds on upstream open-source projects:
 
 - [GDCubism](https://github.com/MizunagiKB/gd_cubism) by MizunagiKB remains in
-  the separate Godot comparison demo and benchmark. GDCubism-derived portions
+  the separate Cubism comparison benchmark. GDCubism-derived portions
   remain Copyright (c) 2023 MizunagiKB under the MIT License.
 - [PurismCore](https://github.com/SakuraMotion/PurismCore) by the Sakura Motion
   Project is included through a forked Git submodule as an alternative Cubism

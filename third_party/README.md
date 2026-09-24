@@ -14,3 +14,7 @@ third_party/CubismSdkForNative-5-r.5/
 Set `CUBISM_SDK_ROOT` to use a different SDK location. A locally modified Cubism
 Framework can be placed at `third_party/CubismNativeFramework/` or selected with
 `CUBISM_FRAMEWORK_ROOT`.
+
+The Live2D models used by the repository are inventoried in
+[`models/README.md`](../models/README.md). Keep model files outside the SDK
+under `models/local/`; SDK sample models remain in their vendor package.
