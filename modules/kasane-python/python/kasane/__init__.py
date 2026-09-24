@@ -712,6 +712,19 @@ class ImportResult(NamedTuple):
     warnings: list[str]
 
 
+class PsdImportResult(NamedTuple):
+    """Published PSD project and imported artwork summary."""
+
+    version: Version
+    manifest: Path
+    width: int
+    height: int
+    raster_layers: int
+    groups: int
+    durable: bool
+    warnings: list[str]
+
+
 class ExportResult(NamedTuple):
     """Export publication and durability status with warnings."""
 
@@ -1258,6 +1271,24 @@ class Session:
         )
         return ImportResult(
             version, moc_version, [ResourceIssue(*item) for item in diagnostics], warnings
+        )
+
+    def import_psd(
+        self, absolute_path: Path, destination: Path,
+        expected_version: Version | None = None,
+    ) -> PsdImportResult:
+        """Import a layered PSD into a new project directory and replace this session.
+
+        Both paths must be absolute; the destination must not already exist.
+        The session is preserved if decoding or publication fails.
+        """
+        version, manifest, width, height, layers, groups, durable, warnings = (
+            self._native.import_psd(
+                str(absolute_path), str(destination), expected_version
+            )
+        )
+        return PsdImportResult(
+            version, Path(manifest), width, height, layers, groups, durable, warnings
         )
 
     def import_bare_moc3(
@@ -2046,6 +2077,7 @@ __all__ = [
     "GlueVertexPair",
     "HistoryState",
     "ImportResult",
+    "PsdImportResult",
     "EvaluatedOffscreenSnapshot",
     "MeshSnapshot",
     "MeshGeometryData",

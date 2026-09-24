@@ -54,7 +54,7 @@ pub(super) fn evaluate(
         }
         d.enabled = d.visible;
 
-        if d.visible {
+        if d.visible || state.include_hidden_geometry {
             let sel_ref = selection.unwrap_or(default_selection());
             let blended = blend_positions(
                 doc,

@@ -37,6 +37,7 @@ BLEND_PART = "00000000-0000-4000-8000-000000000022"
 BLEND_GLUE = "00000000-0000-4000-8000-000000000023"
 BLEND_OFFSCREEN = "00000000-0000-4000-8000-000000000024"
 TEXTURE = Path(__file__).resolve().parent / "fixtures/asymmetric-2x2.png"
+LAYERED_PSD = Path(__file__).resolve().parents[2] / "kasane-psd/tests/fixtures/layered.psd"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
 
@@ -242,6 +243,36 @@ class CpuWheelTests(unittest.TestCase):
         )
         self.assertEqual(bare_import.moc_version, 5)
         self.assertEqual(bare_import.diagnostics, [])
+
+    def test_import_psd_publishes_reopenable_project(self):
+        model = session()
+        with TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            destination = root / "art-project"
+            before = model.version
+            with self.assertRaises(kasane.SdkFailure) as failure:
+                model.import_psd(root / "missing.psd", destination)
+            self.assertEqual(failure.exception.code, "PROJECT_IO")
+            self.assertEqual(model.version, before)
+            self.assertFalse(destination.exists())
+
+            result = model.import_psd(LAYERED_PSD, destination, before)
+            self.assertEqual((result.width, result.height), (8, 8))
+            self.assertEqual((result.raster_layers, result.groups), (1, 0))
+            self.assertEqual(result.manifest, destination / "project.kasane.json")
+            self.assertTrue(result.manifest.is_file())
+            self.assertTrue(result.durable)
+            self.assertEqual(model.project_path, result.manifest)
+            self.assertEqual(model.mesh(model.mesh_ids()[0]).name, "face")
+            self.assertEqual(model.diagnose_resources(), [])
+            reopened = kasane.open_project(result.manifest)
+            self.assertEqual(reopened.mesh_ids(), model.mesh_ids())
+            self.assertEqual(reopened.diagnose_resources(), [])
+
+            with self.assertRaises(kasane.SdkFailure) as conflict:
+                model.import_psd(LAYERED_PSD, destination)
+            self.assertEqual(conflict.exception.code, "DESTINATION_EXISTS")
+            self.assertEqual(model.version, result.version)
 
     def test_parameter_binding_samples_and_reopens(self):
         model = session()

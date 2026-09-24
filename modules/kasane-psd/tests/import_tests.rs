@@ -32,6 +32,18 @@ fn psd(layers: Vec<Layer>) -> Vec<u8> {
 }
 
 #[test]
+fn shared_layered_fixture_is_generated_and_imported_here() {
+    let fixture = include_bytes!("fixtures/layered.psd");
+    let mut layer = raster("face", 1.0, 2.0, [255, 20, 30, 255]);
+    layer.blend_mode = None;
+    assert_eq!(fixture.as_slice(), psd(vec![layer]));
+    let bundle = import_psd(fixture).unwrap();
+    assert_eq!((bundle.report.width, bundle.report.height), (8, 8));
+    assert_eq!(bundle.report.raster_layers, 1);
+    assert_eq!(bundle.document.mesh_order().len(), 1);
+}
+
+#[test]
 fn imports_cropped_layers_as_a_valid_document_and_pngs() {
     let bytes = psd(vec![
         raster("背面", 1.0, 2.0, [255, 0, 0, 128]),

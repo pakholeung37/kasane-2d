@@ -23,6 +23,7 @@ fn capabilities(py: Python<'_>) -> PyResult<Py<PyDict>> {
     result.set_item("project_io", true)?;
     result.set_item("model3_import", true)?;
     result.set_item("bare_moc3_import", true)?;
+    result.set_item("psd_import", true)?;
     result.set_item("moc3_export", true)?;
     result.set_item("purism_core_validation", kasane_moc3::HAS_CORE_VALIDATION)?;
     result.set_item("official_core_validation", false)?;

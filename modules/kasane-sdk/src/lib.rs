@@ -12,10 +12,11 @@ pub use assets::{
 pub use diagnostics::{GeometryBounds, GeometryChecks, GeometryDiagnostic, GeometryDiagnosticKind};
 pub use edit::EditSession;
 pub use kasane_project::{
-    FileSystem, ImportReport, NativeFileSystem, ProjectResult, ResourceDiagnostic,
+    FileSystem, ImportReport, NativeFileSystem, ProjectResult, PsdImportReport, ResourceDiagnostic,
 };
 pub use session::AuthoringSession;
 pub use types::{
     EditReceipt, GeometrySnapshot, HistoryLimits, HistoryState, ImportReceipt, MeshProperties,
-    ObjectHandle, ObjectKind, SaveReceipt, SdkError, SourceSpace, TopologyReplacement, Version,
+    ObjectHandle, ObjectKind, PsdImportReceipt, SaveReceipt, SdkError, SourceSpace,
+    TopologyReplacement, Version,
 };

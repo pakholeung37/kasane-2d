@@ -7,7 +7,7 @@ use kasane_core::{
     Appearance, BlendMode, BlendShapeBinding, ChangeKind, Glue, Mesh, MeshBinding, Status, Vec2,
     VertexId,
 };
-use kasane_project::{ImportReport, ProjectResult};
+use kasane_project::{ImportReport, ProjectResult, PsdImportReport};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Version {
@@ -88,6 +88,15 @@ pub struct ImportReceipt {
     pub after: Version,
     pub project: ProjectResult,
     pub report: ImportReport,
+}
+
+#[derive(Debug, Clone)]
+pub struct PsdImportReceipt {
+    pub before: Version,
+    pub after: Version,
+    pub project: ProjectResult,
+    pub report: PsdImportReport,
+    pub manifest: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

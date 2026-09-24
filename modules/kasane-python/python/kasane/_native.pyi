@@ -293,6 +293,9 @@ class NativeSession:
     def import_model3(
         self, path: str, expected_version: Version | None = None
     ) -> tuple[Version, int, list[tuple[str, str, str]], list[str]]: ...
+    def import_psd(
+        self, path: str, destination: str, expected_version: Version | None = None
+    ) -> tuple[Version, str, int, int, int, int, bool, list[str]]: ...
     def import_bare_moc3(
         self,
         path: str,

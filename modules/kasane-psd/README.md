@@ -13,4 +13,4 @@ Raster layers become cropped PNG assets and rectangular meshes. The PSD canvas, 
 
 Current supported blend modes are normal, multiply, and linear dodge (additive). Clipping, layer masks, vector masks, adjustments, layer effects, group opacity, and unsupported blend modes return `UNSUPPORTED_LAYER`. Text, vector, and placed layers with available raster pixels import as raster images and produce warnings. Empty or pixel-less layers are rejected. PSD/PSB features outside 8-bit RGB PSD version 1 are rejected. Input and decoded-image limits guard memory use.
 
-The returned asset paths are relative. A future project/session integration must publish the PNG files and document together, and leave the active project untouched if that publication fails.
+The returned asset paths are relative. `kasane-project` publishes the PNG files and manifest together through `DocumentSession::import_psd_authoring`; `kasane-sdk` and Python expose this as `import_psd(source, destination)`. The destination must be a new project directory. A failed import leaves the active project untouched.

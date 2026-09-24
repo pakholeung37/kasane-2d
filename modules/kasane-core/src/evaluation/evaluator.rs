@@ -20,6 +20,7 @@ pub(super) struct EvalContext<'a> {
     pub(super) items: &'a mut Vec<(usize, i32)>,
     pub(super) plan_items: &'a mut Vec<(i32, usize)>,
     pub(super) active_offscreens: &'a mut Vec<usize>,
+    pub(super) include_hidden_geometry: bool,
 }
 
 #[derive(Debug, Default)]
@@ -45,7 +46,17 @@ impl FrameEvaluator {
         preview: &PreviewValues,
         out: &mut DrawableFrame,
     ) -> Status {
-        let status = evaluate_into(doc, preview, self);
+        self.evaluate_with_hidden_geometry(doc, preview, out, false)
+    }
+
+    fn evaluate_with_hidden_geometry(
+        &mut self,
+        doc: &Document,
+        preview: &PreviewValues,
+        out: &mut DrawableFrame,
+        include_hidden_geometry: bool,
+    ) -> Status {
+        let status = evaluate_into(doc, preview, self, include_hidden_geometry);
         if status.is_ok() {
             std::mem::swap(out, &mut self.scratch);
         }
@@ -55,6 +66,16 @@ impl FrameEvaluator {
 
 pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut DrawableFrame) -> Status {
     FrameEvaluator::default().evaluate(doc, preview, out)
+}
+
+/// Evaluate geometry for hidden drawables while retaining their visibility.
+/// This is intended for raster exports that include invisible ArtMeshes.
+pub fn evaluate_frame_including_hidden(
+    doc: &Document,
+    preview: &PreviewValues,
+    out: &mut DrawableFrame,
+) -> Status {
+    FrameEvaluator::default().evaluate_with_hidden_geometry(doc, preview, out, true)
 }
 
 pub(super) fn set_value<T>(map: &mut HashMap<String, T>, id: &str, value: T) {
@@ -69,6 +90,7 @@ fn evaluate_into(
     doc: &Document,
     preview: &PreviewValues,
     workspace: &mut FrameEvaluator,
+    include_hidden_geometry: bool,
 ) -> Status {
     let FrameEvaluator {
         scratch: frame,
@@ -114,6 +136,7 @@ fn evaluate_into(
         items,
         plan_items,
         active_offscreens,
+        include_hidden_geometry,
     };
 
     let status = super::parameters::evaluate(doc, preview, &mut state);

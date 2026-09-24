@@ -405,6 +405,11 @@
     "python": "Session.import_model3",
     "test": "test_import_edit_save_and_export"
   },
+  "Session.import_psd": {
+    "status": "bound",
+    "python": "Session.import_psd",
+    "test": "test_import_psd_publishes_reopenable_project"
+  },
   "Session.mesh": {
     "status": "bound",
     "python": "Session.mesh",

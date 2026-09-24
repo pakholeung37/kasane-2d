@@ -2,8 +2,8 @@ use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 
 use kasane_core::{
-    evaluate_frame, Appearance, Canvas, Document, DrawableFrame, ImageAsset, Mesh, Part,
-    RotationPose, Transform, Vec2,
+    evaluate_frame, evaluation::evaluate_frame_including_hidden, Appearance, Canvas, Document,
+    DrawableFrame, ImageAsset, Mesh, Part, RotationPose, Transform, Vec2,
 };
 
 fn id(n: i32) -> String {
@@ -149,4 +149,20 @@ fn test_hierarchical_transforms_and_warp() {
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
     let d2 = &frame.drawables[0];
     assert!(d2.visible);
+
+    // A PSD still needs the mesh's transformed pixels when its parent is
+    // disabled. The normal preview continues to leave that geometry empty.
+    let visible_positions = d2.positions.clone();
+    let mut disabled_root = doc.get_transform(&id(4)).unwrap().clone();
+    disabled_root.enabled = false;
+    assert!(doc.replace_transform(disabled_root).status.is_ok());
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    assert!(!frame.drawables[0].visible);
+    assert!(frame.drawables[0]
+        .positions
+        .iter()
+        .all(|point| *point == Vec2::default()));
+    assert!(evaluate_frame_including_hidden(&doc, &HashMap::new(), &mut frame).is_ok());
+    assert!(!frame.drawables[0].visible);
+    assert_eq!(frame.drawables[0].positions, visible_positions);
 }

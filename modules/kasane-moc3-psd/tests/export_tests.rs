@@ -1,3 +1,5 @@
+use ag_psd::psd::ReadOptions;
+use ag_psd::read_psd;
 use kasane_moc3_psd::{from_moc3_file, from_model3_file};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -15,21 +17,45 @@ fn u32be(bytes: &[u8], pos: usize) -> u32 {
 #[test]
 fn exports_real_model_with_layers_and_composite() {
     let (psd, report) = from_model3_file(&fixture("gpu/gpu-package/model.model3.json")).unwrap();
-    assert_eq!((report.width, report.height, report.layers), (640, 480, 10));
+    assert_eq!((report.width, report.height, report.layers), (640, 480, 19));
     assert!(report.warnings.iter().any(|w| w.contains("masks")));
+    assert!(psd.len() < 100_000, "PSD layers should be compressed");
     assert_eq!(&psd[..4], b"8BPS");
     assert_eq!(u32be(&psd, 14), 480);
     assert_eq!(u32be(&psd, 18), 640);
     let layer_section = 26 + 4 + 4;
     let layer_info = layer_section + 4;
     assert!(u32be(&psd, layer_section) > 0);
+    // A negative layer count signals that the merged preview has alpha.
     assert_eq!(
-        i16::from_be_bytes(psd[layer_info + 4..layer_info + 6].try_into().unwrap()),
-        10
+        i16::from_be_bytes(psd[layer_info + 4..layer_info + 6].try_into().unwrap()).abs(),
+        19
     );
+    let parsed = read_psd(
+        &psd,
+        &ReadOptions {
+            skip_composite_image_data: Some(true),
+            use_image_data: Some(true),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let children = parsed.children.unwrap();
+    let hidden: Vec<_> = children
+        .iter()
+        .filter(|layer| layer.hidden == Some(true))
+        .collect();
+    assert_eq!(hidden.len(), 9);
+    assert!(hidden.iter().all(|layer| layer
+        .image_data
+        .as_ref()
+        .unwrap()
+        .data
+        .chunks_exact(4)
+        .any(|pixel| pixel[3] != 0)));
     assert!(psd.windows(4).any(|bytes| bytes == b"luni"));
     let composite = layer_section + 4 + u32be(&psd, layer_section) as usize;
-    assert_eq!(&psd[composite..composite + 2], &[0, 0]);
+    assert_eq!(&psd[composite..composite + 2], &[0, 1]);
     assert!(psd[composite + 2..].iter().any(|&value| value != 0));
 }
 

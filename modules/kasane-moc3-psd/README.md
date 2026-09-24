@@ -1,6 +1,6 @@
 # MOC3 to PSD
 
-Exports the model's default parameter pose as an 8-bit RGB PSD with one raster layer per visible ArtMesh. Textures are required because `.moc3` files contain UV geometry, not image pixels.
+Exports the model's default parameter pose as an 8-bit RGB PSD with one raster layer per ArtMesh. ArtMeshes invisible in the default pose are exported as hidden PSD layers with usable pixels. Textures are required because `.moc3` files contain UV geometry, not image pixels. The PSD writer uses `ag-psd`: layer channels are ZIP compressed and the flattened preview is RLE compressed. A layered PSD still contains more pixels than the packed source texture, so its size need not match the texture PNG.
 
 ```sh
 cargo run -p kasane-moc3-psd -- model.model3.json model.psd

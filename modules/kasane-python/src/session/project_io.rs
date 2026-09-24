@@ -2,6 +2,53 @@ use super::*;
 
 #[pymethods]
 impl NativeSession {
+    #[pyo3(signature = (path, destination, expected_version=None))]
+    fn import_psd(
+        &self,
+        py: Python<'_>,
+        path: String,
+        destination: String,
+        expected_version: Option<VersionTuple>,
+    ) -> PyResult<(
+        VersionTuple,
+        String,
+        u32,
+        u32,
+        usize,
+        usize,
+        bool,
+        Vec<String>,
+    )> {
+        self.ensure_idle(py, "import_psd")?;
+        let active = self.active_edit.clone();
+        let session = self.inner.clone();
+        let result = py.detach(move || {
+            let mut session = session.lock().map_err(|_| ())?;
+            if active.load(Ordering::Acquire) {
+                return Ok(Err(active_edit_error("import_psd")));
+            }
+            Ok::<_, ()>(session.import_psd(
+                Path::new(&path),
+                Path::new(&destination),
+                expected_version.map(tuple_version),
+            ))
+        });
+        match result {
+            Ok(Ok(receipt)) => Ok((
+                version_tuple(receipt.after),
+                receipt.manifest.to_string_lossy().into_owned(),
+                receipt.report.width,
+                receipt.report.height,
+                receipt.report.raster_layers,
+                receipt.report.groups,
+                receipt.project.durable,
+                receipt.project.warnings,
+            )),
+            Ok(Err(error)) => Err(sdk_failure(py, error)),
+            Err(()) => Err(poisoned()),
+        }
+    }
+
     #[pyo3(signature = (path, expected_version=None))]
     fn import_model3(
         &self,

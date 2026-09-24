@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use crate::assets::{relocate_history_assets, validate_asset_root};
 use crate::session::AuthoringSession;
-use crate::types::{ImportReceipt, SaveReceipt, SdkError, Version};
+use crate::types::{ImportReceipt, PsdImportReceipt, SaveReceipt, SdkError, Version};
 use kasane_core::{Canvas, Document};
 use kasane_project::{ProjectResult, ResourceDiagnostic};
 
@@ -267,6 +267,54 @@ impl AuthoringSession {
             after: self.version(),
             project,
             report: report.expect("successful import has a report"),
+        })
+    }
+
+    /// Import layered PSD artwork into a new project directory and replace
+    /// this session only after the complete project has been published.
+    pub fn import_psd(
+        &mut self,
+        source: &Path,
+        destination: &Path,
+        expected: Option<Version>,
+    ) -> Result<PsdImportReceipt, SdkError> {
+        if !source.is_absolute() || !destination.is_absolute() {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "PSD and destination paths must be absolute",
+                "import_psd",
+            ));
+        }
+        let before = self.version();
+        if let Some(value) = expected.filter(|value| *value != before) {
+            let mut error =
+                SdkError::new("STALE_VERSION", "Document version changed", "import_psd");
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(before));
+            return Err(error);
+        }
+        let generation = self.generation.checked_add(1).ok_or_else(|| {
+            SdkError::new(
+                "GENERATION_EXHAUSTED",
+                "Document generation exhausted",
+                "import_psd",
+            )
+        })?;
+        let (project, report) = self.project.import_psd_authoring(source, destination);
+        if !project.status.is_ok() {
+            return Err(SdkError::from_status(
+                project.status,
+                "import_psd",
+                vec![source.display().to_string()],
+            ));
+        }
+        self.reset_after_open(generation);
+        Ok(PsdImportReceipt {
+            before,
+            after: self.version(),
+            project,
+            report: report.expect("successful PSD import has a report"),
+            manifest: self.project.manifest().to_path_buf(),
         })
     }
 

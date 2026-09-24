@@ -16,6 +16,7 @@ use kasane_sdk::{
 const DOCUMENT: &str = "00000000-0000-4000-8000-000000000001";
 const ASSET: &str = "00000000-0000-4000-8000-000000000002";
 const MESH: &str = "00000000-0000-4000-8000-000000000003";
+const LAYERED_PSD: &[u8] = include_bytes!("../../kasane-psd/tests/fixtures/layered.psd");
 static NEXT_TEMP: AtomicUsize = AtomicUsize::new(0);
 
 struct TempDir(PathBuf);
@@ -58,6 +59,121 @@ impl Drop for TempDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[test]
+fn psd_import_publishes_assets_and_replaces_session_only_on_success() {
+    let temp = TempDir::new();
+    let mut sdk = session(&temp.png("old.png", 10), true);
+    let before = sdk.version();
+    let source = temp.path("art.psd");
+    let destination = temp.path("art-project");
+    fs::write(&source, LAYERED_PSD).unwrap();
+
+    assert_eq!(
+        sdk.import_psd(
+            &source,
+            &destination,
+            Some(kasane_sdk::Version {
+                revision: before.revision + 1,
+                ..before
+            })
+        )
+        .unwrap_err()
+        .code
+        .as_ref(),
+        "STALE_VERSION"
+    );
+    assert!(!destination.exists());
+    fs::write(&source, b"bad").unwrap();
+    assert_eq!(
+        sdk.import_psd(&source, &destination, None)
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "INVALID_PSD"
+    );
+    assert_eq!(sdk.version(), before);
+    assert!(sdk.mesh(MESH).is_some());
+    assert!(!destination.exists());
+
+    fs::write(&source, LAYERED_PSD).unwrap();
+    let receipt = sdk.import_psd(&source, &destination, Some(before)).unwrap();
+    assert_eq!(receipt.before, before);
+    assert_eq!(receipt.after.generation, before.generation + 1);
+    assert_eq!((receipt.report.width, receipt.report.height), (8, 8));
+    assert_eq!(receipt.report.raster_layers, 1);
+    assert!(receipt.project.durable);
+    assert_eq!(receipt.manifest, destination.join("project.kasane.json"));
+    assert!(!sdk.modified());
+    assert_eq!(sdk.history_lengths(), (0, 0));
+    assert!(sdk.mesh(MESH).is_none());
+    assert!(sdk.diagnose_resources().is_empty());
+    let asset = sdk.asset(&sdk.asset_ids()[0]).unwrap();
+    assert!(destination.join(&asset.source).exists());
+    assert_eq!(sdk.mesh(&sdk.mesh_ids()[0]).unwrap().name, "face");
+
+    let mut reopened =
+        AuthoringSession::new(DOCUMENT, Canvas::new(1.0, 1.0, Vec2::new(0.0, 0.0), 1.0)).unwrap();
+    reopened.open_project(&receipt.manifest, None).unwrap();
+    assert_eq!(reopened.mesh_ids(), sdk.mesh_ids());
+    assert!(reopened.diagnose_resources().is_empty());
+
+    assert_eq!(
+        sdk.import_psd(&source, &destination, None)
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "DESTINATION_EXISTS"
+    );
+    assert_eq!(sdk.version(), receipt.after);
+}
+
+struct FailPsdPublish;
+
+impl FileSystem for FailPsdPublish {
+    fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
+        NativeFileSystem.write_new(path, bytes)
+    }
+
+    fn sync_directory(&self, path: &Path) -> io::Result<()> {
+        NativeFileSystem.sync_directory(path)
+    }
+
+    fn rename(&self, _from: &Path, _to: &Path) -> io::Result<()> {
+        Err(io::Error::other("injected project publication failure"))
+    }
+}
+
+#[test]
+fn psd_import_publish_failure_preserves_session_and_destination() {
+    let temp = TempDir::new();
+    let source = temp.path("art.psd");
+    let destination = temp.path("art-project");
+    fs::write(&source, LAYERED_PSD).unwrap();
+    let mut sdk = AuthoringSession::with_filesystem(
+        DOCUMENT,
+        Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
+        Arc::new(FailPsdPublish),
+    )
+    .unwrap();
+    let before = sdk.version();
+    assert_eq!(
+        sdk.import_psd(&source, &destination, None)
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "PROJECT_IO"
+    );
+    assert_eq!(sdk.version(), before);
+    assert!(!destination.exists());
+    assert!(!fs::read_dir(&temp.0).unwrap().any(|entry| {
+        entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .starts_with(".kasane-stage-")
+    }));
 }
 
 fn session(texture: &Path, with_mesh: bool) -> AuthoringSession {

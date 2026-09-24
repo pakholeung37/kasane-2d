@@ -41,7 +41,9 @@ For installation and runnable recipes, start with the [SDK README](README.md).
 | `SaveResult` | `manifest: Path` is the **actual** manifest path; `durable: bool`, `warnings: list[str]`, `history_warnings: list[str]` describe publication. |
 | `Session.import_model3(absolute_path, expected_version=None)` | Replace the current project from a model3 JSON file; return `ImportResult`. |
 | `Session.import_bare_moc3(absolute_path, texture_map, expected_version=None)` | Replace the current project from a MOC3 file. `texture_map` maps integer texture slots to absolute PNG paths. |
+| `Session.import_psd(absolute_path, destination, expected_version=None)` | Publish a layered 8-bit RGB PSD as a new project directory and replace the current session after publication. Both paths are absolute; `destination` must not exist. |
 | `ImportResult` | `version`, `moc_version`, `diagnostics: list[ResourceIssue]`, `warnings`. Imported content has no saved `project_path` until saved. |
+| `PsdImportResult` | `version`, `manifest`, `width`, `height`, `raster_layers`, `groups`, `durable`, `warnings`. The new project is already saved. |
 | `Session.export_package(absolute_path, expected_version=None)` | Publish a MOC3/model3/texture directory; return `ExportResult(published, durable, warnings)`. |
 | `Session.new_project(document_id, width, height, origin, pixels_per_unit, expected_version=None)` | Replace the current in-memory project and return its new `Version`. |
 

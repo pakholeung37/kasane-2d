@@ -4,6 +4,8 @@ Kasane 2D provides a Rust authoring SDK, Python bindings, and a WGPU renderer
 for editable 2D models. The Python workflow creates or imports a project with
 `kasane.Session`, edits and exports it, and can render frames with
 `kasane.Observer` when the optional GPU feature is built.
+Layered 8-bit RGB PSD artwork can be imported into a new project with
+`Session.import_psd(source, destination)`.
 
 Start with the [Python SDK README](modules/kasane-python/README.md) and
 [Python API reference](modules/kasane-python/API.md). See

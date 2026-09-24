@@ -115,7 +115,7 @@ pub(super) fn evaluate(
                 state.transforms[prepared.transform_slots[t.parent()]].enabled;
         }
 
-        if transform_state.enabled {
+        if transform_state.enabled || state.include_hidden_geometry {
             if let Some(b_ref) = b {
                 let sel = selection.as_ref().unwrap();
                 transform_state.appearance =

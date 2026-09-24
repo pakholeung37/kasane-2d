@@ -128,6 +128,19 @@ an absolute PNG path for each texture slot. Import replaces the session's
 current project. Inspect `ImportResult.diagnostics` and
 `session.diagnose_resources()` for missing or damaged textures.
 
+For layered 8-bit RGB PSD artwork, import into a new project directory:
+
+```python
+result = session.import_psd(
+    Path("/absolute/art.psd"), Path("/absolute/output/art-project")
+)
+print(result.manifest, result.raster_layers, result.warnings)
+```
+
+The import publishes the project manifest and cropped PNG assets together, then
+replaces the session. The destination must not already exist. Unsupported PSD
+features fail the import without changing the current session.
+
 ## GPU observation
 
 With an `observe` wheel and `gpu_observation` capability, a saved project can

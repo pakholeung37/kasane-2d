@@ -6,7 +6,7 @@
 mod psd;
 mod raster;
 
-use kasane_core::evaluation::{evaluate_frame, DrawableFrame, PreviewValues};
+use kasane_core::evaluation::{evaluate_frame_including_hidden, DrawableFrame, PreviewValues};
 use kasane_core::image::{decode_png, DecodedImage};
 use kasane_moc3::{import_from_bare_moc3_file, import_from_model3_file, ImportResult};
 use std::collections::HashMap;
@@ -114,7 +114,8 @@ fn convert(imported: ImportResult) -> Result<(Vec<u8>, ExportReport), Error> {
     }
 
     let mut frame = DrawableFrame::default();
-    let status = evaluate_frame(&imported.document, &PreviewValues::new(), &mut frame);
+    let status =
+        evaluate_frame_including_hidden(&imported.document, &PreviewValues::new(), &mut frame);
     if !status.is_ok() {
         return Err(Error::Model(status.message));
     }
@@ -140,7 +141,7 @@ fn convert(imported: ImportResult) -> Result<(Vec<u8>, ExportReport), Error> {
         textures.insert(asset_id.clone(), image);
     }
 
-    let mut drawables: Vec<_> = frame.drawables.iter().filter(|d| d.visible).collect();
+    let mut drawables: Vec<_> = frame.drawables.iter().collect();
     drawables.sort_by_key(|d| d.render_order);
     if drawables.len() > i16::MAX as usize {
         return Err(Error::PsdLimit("too many PSD layers".into()));
@@ -160,11 +161,12 @@ fn convert(imported: ImportResult) -> Result<(Vec<u8>, ExportReport), Error> {
             raster::rasterize(d, textures.get(&d.texture_asset_id)?, canvas, width, height)
         })
         .collect();
-    let bytes = psd::encode(width, height, &layers)?;
+    let layer_count = layers.len();
+    let bytes = psd::encode(width, height, layers)?;
     let report = ExportReport {
         width,
         height,
-        layers: layers.len(),
+        layers: layer_count,
         warnings,
     };
     Ok((bytes, report))

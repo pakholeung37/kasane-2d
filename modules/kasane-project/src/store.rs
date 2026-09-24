@@ -8,6 +8,7 @@ use crate::filesystem::{self as io, FileSystem, NativeFileSystem, Publication};
 use kasane_core::types::{ImageAsset, Status};
 use kasane_core::Document;
 use kasane_moc3::{import_from_bare_moc3, import_from_model3_json, ImportReport};
+use kasane_psd::{import_psd, ImportReport as PsdImportReport};
 
 use crate::codec::{decode_project, encode_project};
 use crate::package::{
@@ -389,6 +390,99 @@ impl DocumentStore {
 
         (project_result, Some(snapshot), Some(res.report))
     }
+
+    /// Publish a new project from a PSD. The destination becomes visible only
+    /// after its manifest and every extracted PNG have been written and synced.
+    pub fn import_psd(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> (
+        ProjectResult,
+        Option<DocumentSnapshot>,
+        Option<PsdImportReport>,
+    ) {
+        match self.import_psd_inner(source, destination) {
+            Ok((result, snapshot, report)) => (result, Some(snapshot), Some(report)),
+            Err(status) => (ProjectResult::from_status(status), None, None),
+        }
+    }
+
+    fn import_psd_inner(
+        &self,
+        source: &Path,
+        destination: &Path,
+    ) -> Result<(ProjectResult, DocumentSnapshot, PsdImportReport), Status> {
+        let size = fs::metadata(source).map_err(io::io_error)?.len();
+        if size > 512 * 1024 * 1024 {
+            return Err(Status::error("PSD_LIMIT", "PSD exceeds 512 MiB"));
+        }
+        let bytes = fs::read(source).map_err(io::io_error)?;
+        let bundle =
+            import_psd(&bytes).map_err(|error| Status::error(error.code, error.message))?;
+        if let Some(issue) = bundle.document.validate_structure().into_iter().next() {
+            return Err(issue.status);
+        }
+        let manifest_text = encode_project(&bundle.document)?;
+        io::reject_symlink(destination)?;
+        let destination = io::local_path(destination)?;
+        let parent = destination
+            .parent()
+            .filter(|_| destination.file_name().is_some())
+            .ok_or_else(|| {
+                Status::error(
+                    "INVALID_DESTINATION",
+                    "Cannot create a project at a filesystem root",
+                )
+            })?;
+        fs::create_dir_all(parent).map_err(io::io_error)?;
+        let _lock = io::lock(parent)?;
+        io::reject_symlink(&destination)?;
+        if destination.exists() {
+            return Err(Status::error(
+                "DESTINATION_EXISTS",
+                "PSD project destination already exists",
+            ));
+        }
+        let stage = io::Stage::new(parent)?;
+        let assets_dir = stage.0.join("assets");
+        fs::create_dir(&assets_dir).map_err(io::io_error)?;
+        let files = self.filesystem.as_ref();
+        for asset in &bundle.assets {
+            files
+                .write_new(&stage.0.join(&asset.source), &asset.bytes)
+                .map_err(io::io_error)?;
+        }
+        files
+            .write_new(
+                &stage.0.join("project.kasane.json"),
+                manifest_text.as_bytes(),
+            )
+            .map_err(io::io_error)?;
+        files.sync_directory(&assets_dir).map_err(io::io_error)?;
+        files.sync_directory(&stage.0).map_err(io::io_error)?;
+        io::reject_symlink(&destination)?;
+        if destination.exists() {
+            return Err(Status::error(
+                "DESTINATION_EXISTS",
+                "PSD project destination already exists",
+            ));
+        }
+        let manifest = destination.join("project.kasane.json");
+        let mut document = bundle.document;
+        document.mark_saved();
+        let snapshot = DocumentSnapshot {
+            document,
+            manifest,
+            manifest_sha256: content_sha256(manifest_text.as_bytes()),
+        };
+        files.rename(&stage.0, &destination).map_err(io::io_error)?;
+        let mut result = publication_result(Publication::finish(files, parent));
+        result
+            .warnings
+            .extend(bundle.report.warnings.iter().cloned());
+        Ok((result, snapshot, bundle.report))
+    }
 }
 
 pub struct DocumentSession {
@@ -684,6 +778,31 @@ impl DocumentSession {
         if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
             return (ProjectResult::from_status(issue.status), None);
         }
+        self.document = snapshot.document;
+        self.history.clear(self.document.revision(), None);
+        self.manifest = snapshot.manifest;
+        self.manifest_sha256 = snapshot.manifest_sha256;
+        (result, report)
+    }
+
+    /// Import a PSD into a newly published project before replacing the
+    /// current authoring document. Failures leave the session intact.
+    pub fn import_psd_authoring(
+        &mut self,
+        source: &Path,
+        destination: &Path,
+    ) -> (ProjectResult, Option<PsdImportReport>) {
+        if self.history.active() || self.document.transaction_active() {
+            return (
+                ProjectResult::failed("EDIT_ACTIVE", "Finish the active edit first"),
+                None,
+            );
+        }
+        let (result, snapshot, report) = self.store.import_psd(source, destination);
+        if !result.status.is_ok() {
+            return (result, None);
+        }
+        let snapshot = snapshot.expect("successful PSD import has a snapshot");
         self.document = snapshot.document;
         self.history.clear(self.document.revision(), None);
         self.manifest = snapshot.manifest;

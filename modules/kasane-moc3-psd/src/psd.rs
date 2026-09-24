@@ -1,95 +1,16 @@
 use crate::{Error, Layer};
+use ag_psd::psd::{BlendMode as PsdBlendMode, Layer as PsdLayer, Psd, WriteOptions};
+use ag_psd::{write_psd, PixelData};
 use kasane_core::types::BlendMode;
 
-fn u16be(out: &mut Vec<u8>, value: u16) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-fn i16be(out: &mut Vec<u8>, value: i16) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-fn u32be(out: &mut Vec<u8>, value: u32) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-fn i32be(out: &mut Vec<u8>, value: i32) {
-    out.extend_from_slice(&value.to_be_bytes());
-}
-fn checked_len(len: usize) -> Result<u32, Error> {
-    u32::try_from(len).map_err(|_| Error::PsdLimit("PSD exceeds the 4 GiB section limit".into()))
-}
-
-pub fn encode(width: u32, height: u32, layers: &[Layer]) -> Result<Vec<u8>, Error> {
-    let mut records = Vec::new();
-    let mut pixels = Vec::new();
-    i16be(&mut records, layers.len() as i16);
-    // PSD layer records run from top to bottom; input layers are bottom to top.
-    for layer in layers.iter().rev() {
-        let bottom = layer.top + layer.height;
-        let right = layer.left + layer.width;
-        i32be(&mut records, layer.top as i32);
-        i32be(&mut records, layer.left as i32);
-        i32be(&mut records, bottom as i32);
-        i32be(&mut records, right as i32);
-        u16be(&mut records, 4);
-        let count = layer.width as usize * layer.height as usize;
-        for channel in [0i16, 1, 2, -1] {
-            i16be(&mut records, channel);
-            u32be(&mut records, checked_len(count + 2)?);
-            u16be(&mut pixels, 0); // raw compression
-            for texel in layer.rgba.as_chunks::<4>().0 {
-                pixels.push(texel[if channel == -1 { 3 } else { channel as usize }]);
-            }
-        }
-        records.extend_from_slice(b"8BIM");
-        records.extend_from_slice(match layer.blend_mode {
-            BlendMode::Normal => b"norm",
-            BlendMode::Multiplicative => b"mul ",
-            BlendMode::Additive => b"lddg",
-        });
-        records.extend_from_slice(&[255, 0, 0, 0]); // opacity, clipping, flags, filler
-        let mut extra = Vec::new();
-        u32be(&mut extra, 0); // layer mask
-        u32be(&mut extra, 0); // blending ranges
-                              // Pascal name, padded to a four-byte boundary.
-        let ascii: Vec<u8> = layer
-            .name
-            .bytes()
-            .filter(|c| c.is_ascii())
-            .take(255)
-            .collect();
-        extra.push(ascii.len() as u8);
-        extra.extend_from_slice(&ascii);
-        while extra.len() % 4 != 0 {
-            extra.push(0);
-        }
-        // Unicode layer name preserves the original MOC3 ArtMesh ID.
-        let mut unicode = Vec::new();
-        let chars: Vec<u16> = layer.name.encode_utf16().collect();
-        u32be(&mut unicode, checked_len(chars.len())?);
-        for unit in chars {
-            u16be(&mut unicode, unit);
-        }
-        extra.extend_from_slice(b"8BIMluni");
-        u32be(&mut extra, checked_len(unicode.len())?);
-        extra.extend_from_slice(&unicode);
-        while extra.len() % 4 != 0 {
-            extra.push(0);
-        }
-        u32be(&mut records, checked_len(extra.len())?);
-        records.extend_from_slice(&extra);
-    }
-    let mut layer_info = records;
-    layer_info.extend_from_slice(&pixels);
-    if layer_info.len() % 2 != 0 {
-        layer_info.push(0);
-    }
-    let mut layer_mask = Vec::new();
-    u32be(&mut layer_mask, checked_len(layer_info.len())?);
-    layer_mask.extend_from_slice(&layer_info);
-    u32be(&mut layer_mask, 0); // global layer mask
-
-    // A flattened composite is required by PSD readers that do not parse layers.
+pub fn encode(width: u32, height: u32, layers: Vec<Layer>) -> Result<Vec<u8>, Error> {
+    // PSD readers without layer support need a merged preview. The pixels
+    // remain separate in `children`, where ag-psd applies ZIP compression.
     let mut composite = vec![0u8; width as usize * height as usize * 4];
-    for layer in layers {
+    for layer in &layers {
+        if layer.hidden {
+            continue;
+        }
         for y in 0..layer.height {
             for x in 0..layer.width {
                 let src = ((y * layer.width + x) * 4) as usize;
@@ -103,26 +24,54 @@ pub fn encode(width: u32, height: u32, layers: &[Layer]) -> Result<Vec<u8>, Erro
         }
     }
 
-    let mut out = Vec::new();
-    out.extend_from_slice(b"8BPS");
-    u16be(&mut out, 1);
-    out.extend_from_slice(&[0; 6]);
-    u16be(&mut out, 4); // RGBA channels
-    u32be(&mut out, height);
-    u32be(&mut out, width);
-    u16be(&mut out, 8);
-    u16be(&mut out, 3); // RGB color mode
-    u32be(&mut out, 0); // color mode data
-    u32be(&mut out, 0); // image resources
-    u32be(&mut out, checked_len(layer_mask.len())?);
-    out.extend_from_slice(&layer_mask);
-    u16be(&mut out, 0); // raw composite
-    for channel in 0..4 {
-        for texel in composite.as_chunks::<4>().0 {
-            out.push(texel[channel]);
-        }
-    }
-    Ok(out)
+    // Affinity stacks the last PSD layer record on top. Keep Kasane's
+    // back-to-front draw order so its layer composite matches the preview.
+    // Moving the buffers also avoids a second copy before encoding.
+    let children = layers
+        .into_iter()
+        .map(|layer| {
+            let blend_mode = match layer.blend_mode {
+                BlendMode::Normal => PsdBlendMode::Normal,
+                BlendMode::Multiplicative => PsdBlendMode::Multiply,
+                BlendMode::Additive => PsdBlendMode::LinearDodge,
+            };
+            PsdLayer {
+                additional_info: ag_psd::psd::LayerAdditionalInfo {
+                    name: Some(layer.name),
+                    ..Default::default()
+                },
+                top: Some(f64::from(layer.top)),
+                left: Some(f64::from(layer.left)),
+                blend_mode: Some(blend_mode),
+                hidden: Some(layer.hidden),
+                image_data: Some(PixelData {
+                    width: layer.width,
+                    height: layer.height,
+                    data: layer.rgba,
+                }),
+                ..Default::default()
+            }
+        })
+        .collect();
+
+    let psd = Psd {
+        width: f64::from(width),
+        height: f64::from(height),
+        image_data: Some(PixelData {
+            width,
+            height,
+            data: composite,
+        }),
+        children: Some(children),
+        ..Default::default()
+    };
+    let options = WriteOptions {
+        compress: Some(true),
+        no_background: Some(true),
+        ..Default::default()
+    };
+    std::panic::catch_unwind(|| write_psd(&psd, &options))
+        .map_err(|_| Error::PsdLimit("ag-psd could not encode the PSD".into()))
 }
 
 fn blend(dst: &mut [u8], src: &[u8], mode: BlendMode) {
@@ -144,4 +93,40 @@ fn blend(dst: &mut [u8], src: &[u8], mode: BlendMode) {
         dst[c] = (value * 255.0).round() as u8;
     }
     dst[3] = (out_a * 255.0).round() as u8;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{encode, Layer};
+    use kasane_core::types::BlendMode;
+
+    #[test]
+    fn writes_back_layer_before_front_layer_for_affinity() {
+        let layer = |name: &str, color| Layer {
+            name: name.into(),
+            hidden: false,
+            left: 0,
+            top: 0,
+            width: 1,
+            height: 1,
+            rgba: color,
+            blend_mode: BlendMode::Normal,
+        };
+        let bytes = encode(
+            1,
+            1,
+            vec![
+                layer("KasaneRegressionBackLayer", vec![255, 0, 0, 255]),
+                layer("KasaneRegressionFrontLayer", vec![0, 0, 255, 255]),
+            ],
+        )
+        .unwrap();
+        let position = |name: &[u8]| {
+            bytes
+                .windows(name.len())
+                .position(|part| part == name)
+                .unwrap()
+        };
+        assert!(position(b"KasaneRegressionBackLayer") < position(b"KasaneRegressionFrontLayer"));
+    }
 }
