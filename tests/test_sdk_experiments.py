@@ -298,6 +298,39 @@ class WheelIntegrationTests(unittest.TestCase):
              str(packet / 'solution.py'), '--output', str(packet / 'output'))
         call('assess', '--trial', 'handoff')
 
+    def test_shirousagi_real_asset_controls(self):
+        source = os.environ.get('SDK_EXPERIMENT_SHIROUSAGI')
+        if not source:
+            self.skipTest('set SDK_EXPERIMENT_SHIROUSAGI for local real-asset controls')
+        capabilities = harness.read(self.root / 'host/lock.json')['runtime']['capabilities']
+        if not capabilities.get('gpu_observation') or not capabilities.get('psd_import'):
+            self.skipTest('observe wheel with PSD import required')
+        study = self.root.parent / 'shirousagi-experiment'
+
+        def call(action, *args):
+            result = subprocess.run([sys.executable, str(ROOT / 'tools/sdk_experiments.py'),
+                action, '--experiment', str(study), *args], capture_output=True, text=True)
+            if result.returncode:
+                raise AssertionError(f'{result.args}\n{result.stdout}\n{result.stderr}')
+
+        call('init', '--wheel', os.environ['SDK_EXPERIMENT_WHEEL'], '--shirousagi-root', source)
+        for variant in ('a', 'b', 'c'):
+            with self.subTest(variant=variant):
+                call('prepare', '--trial', 'real-' + variant, '--task', 'shirousagi-repair',
+                     '--variant', variant, '--model', 'fixture')
+                oracle = harness.read(study / 'host/trials' / ('real-' + variant) / 'oracle.json')
+                self.assertEqual(oracle['controls']['positive']['status'], 'passed')
+                self.assertTrue(all(row['status'] == 'failed' for name, row in oracle['controls'].items()
+                                    if name != 'positive'))
+        call('prepare', '--trial', 'real-blink', '--task', 'shirousagi-blink',
+             '--model', 'fixture', '--cohort', 'learning')
+        blink = harness.read(study / 'host/trials/real-blink/oracle.json')
+        self.assertEqual(len(blink['frames']), 7)
+        self.assertEqual(blink['controls']['positive']['status'], 'passed')
+        self.assertEqual(blink['controls']['extra_midpoint']['status'], 'passed')
+        self.assertTrue(all(row['status'] == 'failed' for name, row in blink['controls'].items()
+                            if name not in ('positive', 'extra_midpoint')))
+
     def test_input_tamper_cannot_pass_and_assessments_are_preserved(self):
         packet = self.prepare('tamper')
         self.run_solution('tamper', packet)

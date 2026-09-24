@@ -26,6 +26,7 @@ impl NativeSession {
         Ok(session.parameter(id).map(|parameter| {
             (
                 parameter.id,
+                parameter.runtime_id,
                 parameter.name,
                 parameter.minimum,
                 parameter.maximum,

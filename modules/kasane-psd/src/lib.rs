@@ -8,6 +8,7 @@ use ag_psd::{read_psd, PixelData};
 use kasane_core::types::{Appearance, BlendMode, Canvas, ImageAsset, Mesh, Part, Vec2};
 use kasane_core::Document;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::fmt;
 use std::io::Cursor;
 
@@ -114,6 +115,7 @@ pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
         fingerprint,
         next_id: 0,
         seen_layers: 0,
+        used_mesh_runtime_ids: HashSet::new(),
     };
     for layer in psd.children.as_deref().unwrap_or_default() {
         builder.visit(layer, "")?;
@@ -222,6 +224,7 @@ struct Builder {
     fingerprint: [u8; 32],
     next_id: usize,
     seen_layers: usize,
+    used_mesh_runtime_ids: HashSet<String>,
 }
 
 impl Builder {
@@ -229,6 +232,24 @@ impl Builder {
         let id = stable_id(&self.fingerprint, kind, self.next_id);
         self.next_id += 1;
         id
+    }
+
+    fn mesh_runtime_id(&mut self, name: &str, mesh_id: &str) -> String {
+        let valid_name = name
+            .chars()
+            .next()
+            .is_some_and(|first| first.is_ascii_alphabetic() || first == '_')
+            && name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        if valid_name && self.used_mesh_runtime_ids.insert(name.to_owned()) {
+            return name.to_owned();
+        }
+        let mut fallback = format!("ArtMesh_{}", mesh_id.replace('-', ""));
+        while !self.used_mesh_runtime_ids.insert(fallback.clone()) {
+            fallback.push('_');
+        }
+        fallback
     }
 
     fn visit(&mut self, layer: &Layer, parent_id: &str) -> Result<(), ImportError> {
@@ -372,9 +393,10 @@ impl Builder {
         });
 
         let mesh_id = self.id("mesh");
+        let runtime_id = self.mesh_runtime_id(name, &mesh_id);
         let mesh = Mesh {
             id: mesh_id.clone(),
-            runtime_id: format!("ArtMesh_{}", mesh_id.replace('-', "")),
+            runtime_id,
             name: name.into(),
             texture_asset_id: asset_id,
             part_id: parent_id.into(),

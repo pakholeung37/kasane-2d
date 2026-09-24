@@ -36,6 +36,14 @@
     "handoff-revision": {
       "version": 1,
       "goal": "接手已交付的表情工程，减小左右标记位移幅度并保留嘴部行为。"
+    },
+    "shirousagi-repair": {
+      "version": 1,
+      "goal": "依据真实 Shirousagi 的分层 PSD 和组合姿态参考图，诊断并局部修复现有 rig，交付可搬迁模型包。"
+    },
+    "shirousagi-blink": {
+      "version": 1,
+      "goal": "从真实 Shirousagi 的 24 层 PSD 静态工程创作双眼独立眨眼，交付可编辑工程和可搬迁模型包。"
     }
   }
 }

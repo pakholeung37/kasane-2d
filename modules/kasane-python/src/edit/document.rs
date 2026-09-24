@@ -105,7 +105,7 @@ impl NativeEdit {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind=None))]
+    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind=None, runtime_id=None))]
     fn replace_parameter(
         &mut self,
         py: Python<'_>,
@@ -116,10 +116,11 @@ impl NativeEdit {
         default_value: f32,
         repeat: bool,
         kind: Option<&str>,
+        runtime_id: Option<String>,
     ) -> PyResult<()> {
         self.ensure_open(py, "replace_parameter")?;
         let mut parameter = Parameter {
-            runtime_id: id.clone(),
+            runtime_id: runtime_id.unwrap_or_default(),
             ..Parameter::default()
         };
         parameter.id = id;
@@ -157,7 +158,7 @@ impl NativeEdit {
     }
 
     #[allow(clippy::too_many_arguments)]
-    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind="normal"))]
+    #[pyo3(signature = (id, name, minimum, maximum, default_value, repeat=false, kind="normal", runtime_id=None))]
     fn create_parameter(
         &mut self,
         py: Python<'_>,
@@ -168,11 +169,13 @@ impl NativeEdit {
         default_value: f32,
         repeat: bool,
         kind: &str,
+        runtime_id: Option<String>,
     ) -> PyResult<()> {
         self.ensure_open(py, "create_parameter")?;
         self.commands
             .push(Command::CreateParameter(Parameter {
                 id,
+                runtime_id: runtime_id.unwrap_or_default(),
                 name,
                 minimum,
                 maximum,

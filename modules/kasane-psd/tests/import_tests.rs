@@ -80,6 +80,31 @@ fn imports_cropped_layers_as_a_valid_document_and_pngs() {
 }
 
 #[test]
+fn unique_identifier_layer_names_survive_as_runtime_ids() {
+    let bundle = import_psd(&psd(vec![
+        raster("ArtMesh15", 0.0, 0.0, [255, 0, 0, 255]),
+        raster("ArtMesh15", 2.0, 0.0, [0, 255, 0, 255]),
+        raster("目", 4.0, 0.0, [0, 0, 255, 255]),
+    ]))
+    .unwrap();
+    let ids = bundle.document.mesh_order();
+    let runtime_ids: Vec<_> = ids
+        .iter()
+        .map(|id| bundle.document.get_mesh(id).unwrap().runtime_id.as_str())
+        .collect();
+    assert_eq!(runtime_ids[0], "ArtMesh15");
+    assert!(runtime_ids[1].starts_with("ArtMesh_"));
+    assert!(runtime_ids[2].starts_with("ArtMesh_"));
+    assert_eq!(
+        runtime_ids.len(),
+        runtime_ids
+            .iter()
+            .collect::<std::collections::HashSet<_>>()
+            .len()
+    );
+}
+
+#[test]
 fn imports_groups_and_hidden_layers() {
     let mut group = Layer::default();
     group.additional_info.name = Some("头".into());

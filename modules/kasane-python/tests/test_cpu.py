@@ -264,10 +264,15 @@ class CpuWheelTests(unittest.TestCase):
             self.assertTrue(result.durable)
             self.assertEqual(model.project_path, result.manifest)
             self.assertEqual(model.mesh(model.mesh_ids()[0]).name, "face")
+            self.assertEqual(model.mesh_record(model.mesh_ids()[0]).runtime_id, "face")
             self.assertEqual(model.diagnose_resources(), [])
             reopened = kasane.open_project(result.manifest)
             self.assertEqual(reopened.mesh_ids(), model.mesh_ids())
             self.assertEqual(reopened.diagnose_resources(), [])
+            model.export_package(root / "model-package")
+            package = session()
+            package.import_model3(root / "model-package/model.model3.json")
+            self.assertEqual(package.mesh(package.mesh_ids()[0]).name, "face")
 
             with self.assertRaises(kasane.SdkFailure) as conflict:
                 model.import_psd(LAYERED_PSD, destination)
@@ -333,6 +338,41 @@ class CpuWheelTests(unittest.TestCase):
             model.save(destination)
             reopened = kasane.open_project(destination)
             self.assertEqual(reopened.evaluate({PARAMETER: 0.5}), middle)
+
+    def test_parameter_runtime_id_survives_package_export(self):
+        model = session()
+        with model.edit("create runtime parameter") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+            edit.create_parameter(
+                PARAMETER, "eye display name", 0, 1, 1,
+                runtime_id="ParamEyeLOpen",
+            )
+        base = model.mesh(MESH).positions
+        with model.edit("bind runtime parameter") as edit:
+            edit.create_mesh_binding(
+                BINDING, MESH, [kasane.Axis(PARAMETER, [0, 1])],
+                [kasane.MeshKeyform([0], [(x, y + 5) for x, y in base]),
+                 kasane.MeshKeyform([1], base)],
+            )
+        self.assertEqual(model.parameter(PARAMETER).runtime_id, "ParamEyeLOpen")
+        with TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            manifest = model.save(root / "project").manifest
+            self.assertEqual(kasane.open_project(manifest).parameter(PARAMETER).runtime_id,
+                             "ParamEyeLOpen")
+            model.export_package(root / "package")
+            imported = session()
+            imported.import_model3(root / "package/model.model3.json")
+            self.assertEqual(len(imported.parameter_ids()), 1)
+            self.assertEqual(imported.parameter(imported.parameter_ids()[0]).runtime_id,
+                             "ParamEyeLOpen")
+            self.assertEqual(imported.parameter(imported.parameter_ids()[0]).name,
+                             "ParamEyeLOpen")
+        with model.edit("rename runtime parameter") as edit:
+            edit.replace_parameter(PARAMETER, "eye display name", 0, 1, 1,
+                                   runtime_id="ParamEyeROpen")
+        self.assertEqual(model.parameter(PARAMETER).runtime_id, "ParamEyeROpen")
 
     def test_save_new_allocates_sibling_without_overwriting(self):
         first = session()
@@ -1063,6 +1103,15 @@ class CpuWheelTests(unittest.TestCase):
                 ]
             )
         self.assertEqual(model.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 45)
+        snapshot = model.scene_binding(SCENE_ROTATION)
+        with model.edit("replace scene from snapshot") as edit:
+            edit.replace_scene_binding(snapshot._replace(keyforms=[
+                snapshot.keyforms[0],
+                snapshot.keyforms[1]._replace(
+                    rotation=kasane.RotationPose((0, 0), angle=60)
+                ),
+            ]))
+        self.assertEqual(model.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 60)
         before = model.version
         with self.assertRaises(TypeError):
             with model.edit("wrong scene form") as edit:
@@ -1072,7 +1121,7 @@ class CpuWheelTests(unittest.TestCase):
             destination = Path(directory).resolve() / "project"
             model.save(destination)
             reopened = kasane.open_project(destination)
-            self.assertEqual(reopened.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 45)
+            self.assertEqual(reopened.scene_binding(SCENE_ROTATION).keyforms[1].rotation.angle, 60)
             self.assertEqual(reopened.scene_binding(SCENE_WARP).keyforms[1].positions[0], (1, 0))
 
     def test_mesh_binding_preserves_appearance_and_replaces_forms(self):

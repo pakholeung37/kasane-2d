@@ -2,7 +2,17 @@ use super::*;
 
 pub(crate) type VersionTuple = (u64, u64, u64);
 pub(crate) type PointTuple = (f32, f32);
-pub(crate) type ParameterTuple = (String, String, f32, f32, f32, bool, String, VersionTuple);
+pub(crate) type ParameterTuple = (
+    String,
+    String,
+    String,
+    f32,
+    f32,
+    f32,
+    bool,
+    String,
+    VersionTuple,
+);
 pub(crate) type MeshTuple = (String, String, Vec<u32>, Vec<PointTuple>, VersionTuple);
 pub(crate) type AssetTuple = (String, String, String, u32, u32, String, VersionTuple);
 pub(crate) type EvaluationTuple = (

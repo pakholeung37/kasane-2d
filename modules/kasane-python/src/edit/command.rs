@@ -39,7 +39,9 @@ pub(super) fn apply_command(
         Command::EraseObject(id) => edit.erase_object(&id)?,
         Command::ReplaceParameter(mut parameter, kind) => {
             if let Some(previous) = edit.candidate_document().get_parameter(&parameter.id) {
-                parameter.runtime_id = previous.runtime_id.clone();
+                if parameter.runtime_id.is_empty() {
+                    parameter.runtime_id = previous.runtime_id.clone();
+                }
                 parameter.decimal_places = previous.decimal_places;
                 parameter.kind = previous.kind;
             }

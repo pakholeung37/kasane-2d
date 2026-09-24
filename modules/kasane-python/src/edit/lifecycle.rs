@@ -8,6 +8,7 @@ impl NativeEdit {
         Ok(workspace.candidate_document().get_parameter(id).map(|p| {
             (
                 p.id.clone(),
+                p.runtime_id.clone(),
                 p.name.clone(),
                 p.minimum,
                 p.maximum,

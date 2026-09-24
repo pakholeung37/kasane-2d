@@ -41,7 +41,7 @@ For installation and runnable recipes, start with the [SDK README](README.md).
 | `SaveResult` | `manifest: Path` is the **actual** manifest path; `durable: bool`, `warnings: list[str]`, `history_warnings: list[str]` describe publication. |
 | `Session.import_model3(absolute_path, expected_version=None)` | Replace the current project from a model3 JSON file; return `ImportResult`. |
 | `Session.import_bare_moc3(absolute_path, texture_map, expected_version=None)` | Replace the current project from a MOC3 file. `texture_map` maps integer texture slots to absolute PNG paths. |
-| `Session.import_psd(absolute_path, destination, expected_version=None)` | Publish a layered 8-bit RGB PSD as a new project directory and replace the current session after publication. Both paths are absolute; `destination` must not exist. |
+| `Session.import_psd(absolute_path, destination, expected_version=None)` | Publish a layered 8-bit RGB PSD as a new project directory and replace the current session after publication. Both paths are absolute; `destination` must not exist. Unique ASCII identifier layer names become mesh runtime IDs; duplicate or unsuitable names receive stable generated IDs. |
 | `ImportResult` | `version`, `moc_version`, `diagnostics: list[ResourceIssue]`, `warnings`. Imported content has no saved `project_path` until saved. |
 | `PsdImportResult` | `version`, `manifest`, `width`, `height`, `raster_layers`, `groups`, `durable`, `warnings`. The new project is already saved. |
 | `Session.export_package(absolute_path, expected_version=None)` | Publish a MOC3/model3/texture directory; return `ExportResult(published, durable, warnings)`. |
@@ -117,8 +117,8 @@ import/export, undo/redo, project reset, and nested edits are rejected with
 | `replace_topology(source, mesh, vertex_mapping, binding=None, blend_bindings=(), glues=())` | Replace mesh topology and affected bindings/glues atomically, using a `GeometrySnapshot` from the edit's starting version. |
 | `rename_mesh(mesh_id, name)`, `update_positions(mesh_id, vertex_ids, positions)` | Change a mesh name or source positions. |
 | `update_mesh_properties(mesh_id, MeshProperties)` | Replace drawing fields while preserving geometry. |
-| `create_parameter(id, name, minimum, maximum, default_value, repeat=False, kind="normal")` | Add a normal or `blend_shape` parameter. |
-| `replace_parameter(id, name, minimum, maximum, default_value, repeat=False, kind=None)` | Change a parameter; `kind=None` keeps its current kind. |
+| `create_parameter(id, name, minimum, maximum, default_value, repeat=False, kind="normal", runtime_id=None)` | Add a normal or `blend_shape` parameter. Supply `runtime_id` for the identifier used in an exported MOC3; omitted uses the internal UUID. |
+| `replace_parameter(id, name, minimum, maximum, default_value, repeat=False, kind=None, runtime_id=None)` | Change a parameter; `kind=None` and `runtime_id=None` keep their current values. |
 | `create_mesh_binding(id, mesh_id, axes, forms)`, `replace_mesh_binding(...)` | Set a complete mesh parameter grid. |
 | `set_mesh_keyform(binding_id, MeshKeyform)` | Update an existing key combination. |
 | `create_part(...)`, `replace_part(...)`, `set_organization_parent(part_id, parent_id)` | Manage the Part tree. |
@@ -126,7 +126,7 @@ import/export, undo/redo, project reset, and nested edits are rejected with
 | `update_rotation(transform_id, RotationData)`, `update_warp_points(transform_id, points)` | Update existing deformer data. |
 | `set_transform_parent(transform_id, parent_id)`, `set_transform_part(transform_id, part_id)` | Set a transform's deformer parent or owning Part. |
 | `set_deform_parent(mesh_id, transform_id)`, `set_mesh_part(mesh_id, part_id)` | Set a mesh's deformer parent or owning Part. |
-| `create_scene_binding(id, kind, target_id, axes, forms)`, `replace_scene_binding(...)`, `set_scene_keyform(binding_id, form)` | Manage Part, Rotation, and Warp parameter grids. |
+| `create_scene_binding(id, kind, target_id, axes, forms)`, `replace_scene_binding(snapshot)` or `replace_scene_binding(id, kind, target_id, axes, forms)`, `set_scene_keyform(binding_id, form)` | Manage Part, Rotation, and Warp parameter grids. To change one existing form, prefer `set_scene_keyform`. |
 | `create_offscreen(OffscreenSpec)`, `replace_offscreen(OffscreenSnapshot)` | Manage an offscreen composition layer. |
 | `replace_part_binding_with_offscreen(binding, offscreen)` | Change a Part binding and related offscreen keyform mapping together. |
 | `create_glue(GlueSpec)`, `replace_glue(GlueSnapshot)` | Manage paired mesh vertices and optional parameter binding. |
@@ -145,7 +145,7 @@ are typed in [`python/kasane/__init__.py`](python/kasane/__init__.py).
 
 | Record family | Key fields and use |
 | --- | --- |
-| `MeshGeometryData`, `MeshDrawingData`, `MeshRecordSpec`, `MeshRecordSnapshot` | Full mesh geometry, drawing state, Part/deformer relationships, and runtime identity. Use the `Spec` to create and a read snapshot to replace. |
+| `MeshGeometryData`, `MeshDrawingData`, `MeshRecordSpec`, `MeshRecordSnapshot` | Full mesh geometry, drawing state, Part/deformer relationships, and runtime identity. `MeshRecordSnapshot` has `part_id` and `deformer_id` (not `parent_id`). Use the `Spec` to create and a read snapshot to replace. |
 | `Appearance`, `MeshProperties`, `MeshPropertiesSnapshot` | Opacity, multiply/screen colors, texture, draw order, blend mode, masks, and visibility flags. |
 | `RotationPose`, `RotationData`, `WarpData`, `TransformSnapshot` | Rotation and warp deformer input and snapshots. |
 | `OffscreenKeyform`, `OffscreenSpec`, `OffscreenSnapshot` | Offscreen composition settings, masks, and Part keyform mapping. |

@@ -265,6 +265,7 @@ class ParameterSnapshot(NamedTuple):
     """Versioned parameter definition and its sampling range."""
 
     id: str
+    runtime_id: str
     name: str
     minimum: float
     maximum: float
@@ -995,11 +996,12 @@ class Edit:
         default_value: float,
         repeat: bool = False,
         kind: str | None = None,
+        runtime_id: str | None = None,
     ) -> None:
-        """Replace a parameter definition; kind=None keeps its current kind."""
+        """Replace a parameter; omitted kind and runtime ID keep their values."""
         self._call(
             lambda: self._native.replace_parameter(
-                parameter_id, name, minimum, maximum, default_value, repeat, kind
+                parameter_id, name, minimum, maximum, default_value, repeat, kind, runtime_id
             )
         )
 
@@ -1052,11 +1054,12 @@ class Edit:
         default_value: float,
         repeat: bool = False,
         kind: str = "normal",
+        runtime_id: str | None = None,
     ) -> None:
-        """Create a normal or blend_shape parameter over a numeric range."""
+        """Create a parameter; runtime ID defaults to the internal UUID."""
         self._call(
             lambda: self._native.create_parameter(
-                parameter_id, name, minimum, maximum, default_value, repeat, kind
+                parameter_id, name, minimum, maximum, default_value, repeat, kind, runtime_id
             )
         )
 
@@ -1120,10 +1123,19 @@ class Edit:
         ))
 
     def replace_scene_binding(
-        self, binding_id: str, kind: str, target_id: str,
-        axes: Sequence[Axis], forms: Sequence[SceneKeyform],
+        self, binding_id: str | SceneBindingSnapshot, kind: str | None = None,
+        target_id: str | None = None, axes: Sequence[Axis] | None = None,
+        forms: Sequence[SceneKeyform] | None = None,
     ) -> None:
-        """Replace a complete scene parameter binding."""
+        """Replace a complete scene binding, optionally from a snapshot."""
+        if isinstance(binding_id, SceneBindingSnapshot):
+            if any(value is not None for value in (kind, target_id, axes, forms)):
+                raise TypeError("snapshot cannot be combined with binding fields")
+            snapshot = binding_id
+            binding_id, kind, target_id = snapshot.id, snapshot.kind, snapshot.target_id
+            axes, forms = snapshot.axes, snapshot.keyforms
+        if kind is None or target_id is None or axes is None or forms is None:
+            raise TypeError("replace_scene_binding requires a snapshot or all binding fields")
         self._call(lambda: self._native.replace_scene_binding(
             binding_id, kind, target_id,
             [(axis.parameter_id, list(axis.keys)) for axis in axes],

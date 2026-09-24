@@ -6,6 +6,7 @@ SDK conformance is still the responsibility of the separate SDK test suite.
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import math
@@ -149,7 +150,7 @@ def creation_checks(session, task, texture_hash):
         checks["binding"] = False
         if len(session.parameter_ids()) == 1:
             p = session.parameter(session.parameter_ids()[0])
-            checks["parameter"] = close(plain(p), dict(id=p.id, name="Open", minimum=0,
+            checks["parameter"] = close(plain(p), dict(id=p.id, runtime_id=p.id, name="Open", minimum=0,
                 maximum=1, default_value=0, repeat=False, kind="normal"))
             binding = session.binding_for_mesh(mesh.id)
             if binding:
@@ -705,20 +706,466 @@ def prepare_handoff(packet, oracle_path):
     return {"status": "passed", "controls": controls}
 
 
+SHIROUSAGI_VARIANTS = {
+    "a": {"mesh": "ArtMesh26", "keys": [30, 30, 0], "shift": [80, 0], "eye": "ParamEyeLOpen"},
+    "b": {"mesh": "ArtMesh27", "keys": [-30, 30, 0], "shift": [-75, 0], "eye": "ParamEyeROpen"},
+    "c": {"mesh": "ArtMesh26", "keys": [30, -30, 0], "shift": [0, 80], "eye": "ParamEyeLOpen"},
+}
+
+
+def shirousagi_model():
+    source = Path(__file__).parent / "shirousagi/Shirousagi.model3.json"
+    session = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+    imported = session.import_model3(source)
+    if imported.warnings or imported.diagnostics or session.validate_structure() or session.diagnose_resources():
+        raise RuntimeError(f"Shirousagi source failed preflight: {imported}")
+    return session
+
+
+def shirousagi_binding(session, variant):
+    mesh = session.require_unique_mesh(variant["mesh"])
+    record = session.mesh_record(mesh.id)
+    binding = session.binding_for_scene(record.deformer_id)
+    if binding is None:
+        raise RuntimeError("fixture target has no scene binding")
+    form = next((form for form in binding.keyforms if form.keys == variant["keys"]), None)
+    if form is None:
+        raise RuntimeError("fixture target keyform is absent")
+    return binding, form
+
+
+def shirousagi_poses(variant):
+    x, y, eye = variant["keys"]
+    key = variant["eye"]
+    public = [
+        {"ParamAngleX": x, "ParamAngleY": y, key: eye},
+        {"ParamAngleX": x * 0.8, "ParamAngleY": y * 0.8, key: 0.25},
+        {"ParamAngleX": -x, "ParamAngleY": -y, key: eye},
+    ]
+    hidden = [
+        {}, {"ParamAngleX": x, "ParamAngleY": y, key: 0.5},
+        {"ParamAngleX": x * 0.6, "ParamAngleY": y * 0.7, key: 0.4},
+        {"ParamAngleX": x * 0.9, "ParamAngleY": y * 0.5, key: 0.1},
+        {"ParamAngleX": x, "ParamAngleY": y, key: 1},
+        {"ParamAngleX": -x, "ParamAngleY": y, key: 0},
+        {"ParamMouthOpenY": 1, "ParamAngleX": x, "ParamAngleY": y, key: 0.2},
+        {"ParamBreath": 1, "ParamAngleX": x * 0.75, "ParamAngleY": y * 0.75, key: 0.6},
+    ]
+    return public, hidden
+
+
+def shirousagi_change(session, variant, amount=-1):
+    binding, form = shirousagi_binding(session, variant)
+    dx, dy = variant["shift"]
+    with session.edit("Shirousagi scene keyform") as edit:
+        edit.set_scene_keyform(binding.id, form._replace(
+            positions=[(x + amount * dx, y + amount * dy) for x, y in form.positions]))
+
+
+def shirousagi_fixture(packet, oracle_path, variant_name):
+    if not kasane.capabilities()["gpu_observation"]:
+        raise RuntimeError("shirousagi-repair requires the observe wheel")
+    variant = SHIROUSAGI_VARIANTS[variant_name]
+    source = Path(__file__).parent / "shirousagi"
+    input_dir = packet / "input"
+    shutil.copy2(source / "Shirousagi.psd", input_dir / "Shirousagi.psd")
+    original = shirousagi_model()
+    with tempfile.TemporaryDirectory(dir=oracle_path.parent) as folder:
+        art = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+        imported = art.import_psd(input_dir / "Shirousagi.psd", Path(folder) / "psd-project")
+        model_names = {original.mesh(mid).name for mid in original.mesh_ids()}
+        art_names = {art.mesh(mid).name for mid in art.mesh_ids()}
+        if imported.warnings or imported.raster_layers != 24 or art_names != model_names:
+            raise RuntimeError("Shirousagi PSD no longer maps to all 24 model ArtMeshes")
+    public, hidden = shirousagi_poses(variant)
+    observer = {"width": 512, "height": 512, "fit_long_side": 512}
+    all_poses = public + hidden
+    hashes = []
+    with kasane.Observer(**observer) as renderer:
+        for index, pose in enumerate(all_poses):
+            frame = renderer.observe(original, pose)
+            if frame.rgba != renderer.observe(original, pose).rgba:
+                raise RuntimeError("Shirousagi reference render is not repeatable")
+            hashes.append(hashlib.sha256(frame.rgba).hexdigest())
+            if index < len(public):
+                frame.save_png(input_dir / f"reference-{index}.png")
+    (input_dir / "references.json").write_text(json.dumps({"observer": observer,
+        "samples": [{"values": pose, "image": f"reference-{index}.png"}
+                    for index, pose in enumerate(public)]}, indent=2) + "\n")
+    clean_state = state(original, "ParamAngleX", (-30, 0, 30))
+    binding, _ = shirousagi_binding(original, variant)
+    shirousagi_change(original, variant, amount=1)
+    original.save(input_dir / "project")
+    with kasane.Observer(**observer) as renderer:
+        broken = renderer.observe(original, public[0])
+        if hashlib.sha256(broken.rgba).hexdigest() == hashes[0]:
+            raise RuntimeError("Shirousagi injected fault is not visible")
+    return {"variant": variant, "target_binding_id": binding.id,
+            "expected": clean_state, "observer": observer,
+            "public_poses": public, "all_poses": all_poses, "rgba_sha256": hashes}
+
+
+def shirousagi_state_without_target_positions(snapshot, oracle):
+    value = json.loads(json.dumps(snapshot))
+    binding = value["scene_binding"][oracle["target_binding_id"]]
+    found = False
+    for form in binding["keyforms"]:
+        if form["keys"] == oracle["variant"]["keys"]:
+            form.pop("positions")
+            found = True
+    if not found:
+        raise ValueError("target keyform missing")
+    return value
+
+
+def shirousagi_render_checks(session, oracle, prefix):
+    checks = {}
+    with kasane.Observer(**oracle["observer"]) as renderer:
+        for index, pose in enumerate(oracle["all_poses"]):
+            frame = renderer.observe(session, pose)
+            checks[f"{prefix}_pose_{index}"] = hashlib.sha256(frame.rgba).hexdigest() == oracle["rgba_sha256"][index]
+    return checks
+
+
+def shirousagi_checks(manifest, package, oracle):
+    session = kasane.open_project(manifest)
+    actual = state(session, "ParamAngleX", (-30, 0, 30))
+    checks = {"structure": not session.validate_structure(),
+              "resources": not session.diagnose_resources(),
+              "non_target_state": close(shirousagi_state_without_target_positions(actual, oracle),
+                                        shirousagi_state_without_target_positions(oracle["expected"], oracle))}
+    checks.update(shirousagi_render_checks(session, oracle, "project"))
+    package_dir = package.parent
+    checks["package_path"] = package.name == "model.model3.json" and package.is_file()
+    try:
+        references = json.loads(package.read_text())["FileReferences"]
+        paths = [references["Moc"], *references["Textures"]]
+        checks["package_refs"] = all(not Path(p).is_absolute() and ".." not in Path(p).parts
+                                     and (package_dir / p).is_file() for p in paths)
+    except (OSError, KeyError, TypeError, ValueError):
+        checks["package_refs"] = False
+    with tempfile.TemporaryDirectory() as folder:
+        receiver = Path(folder)
+        shutil.copytree(manifest.parent, receiver / "project")
+        shutil.copytree(package_dir, receiver / "package")
+        moved = kasane.open_project(receiver / "project" / manifest.name)
+        checks["moved_project_resources"] = not moved.diagnose_resources()
+        checks.update(shirousagi_render_checks(moved, oracle, "moved_project"))
+        imported = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+        result = imported.import_model3(receiver / "package/model.model3.json")
+        checks["moved_package_resources"] = not result.diagnostics and not imported.diagnose_resources()
+        checks["moved_package_structure"] = not imported.validate_structure()
+        checks["moved_package_counts"] = all(
+            len(getattr(imported, group + "_ids")()) == len(oracle["expected"][group])
+            for group in GROUPS)
+        checks["moved_package_meshes"] = (
+            {imported.mesh_record(mid).runtime_id for mid in imported.mesh_ids()}
+            == {record["runtime_id"] for record in oracle["expected"]["mesh"].values()})
+        checks["moved_package_parameters"] = sorted(
+            (imported.parameter(pid).name, imported.parameter(pid).minimum,
+             imported.parameter(pid).maximum, imported.parameter(pid).default_value)
+            for pid in imported.parameter_ids()) == sorted(
+            (record["name"], record["minimum"], record["maximum"], record["default_value"])
+            for record in oracle["expected"]["parameter"].values())
+        checks.update(shirousagi_render_checks(imported, oracle, "moved_package"))
+    return {"status": "passed" if all(checks.values()) else "failed", "checks": checks}
+
+
+def safe_shirousagi_grade(manifest, package, oracle):
+    try:
+        return shirousagi_checks(manifest, package, oracle)
+    except Exception as exc:
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def prepare_shirousagi(packet, oracle_path, variant_name):
+    oracle = shirousagi_fixture(packet, oracle_path, variant_name)
+    controls = {}
+    with tempfile.TemporaryDirectory(dir=oracle_path.parent) as folder:
+        root = Path(folder)
+        for name in ("positive", "no_edit", "wrong_amount", "wrong_keyform"):
+            session = kasane.open_project(packet / "input/project")
+            variant = dict(oracle["variant"])
+            if name == "wrong_keyform":
+                variant["keys"] = [-variant["keys"][0], variant["keys"][1], variant["keys"][2]]
+            if name != "no_edit":
+                shirousagi_change(session, variant, amount=-1 if name != "wrong_amount" else -0.9)
+            manifest = session.save(root / name / "project").manifest
+            exported = session.export_package(root / name / "package")
+            if not exported.published or exported.warnings:
+                raise RuntimeError(f"Shirousagi control export failed: {exported}")
+            controls[name] = safe_shirousagi_grade(manifest, root / name / "package/model.model3.json", oracle)
+    oracle["controls"] = controls
+    oracle_path.write_text(json.dumps(oracle, indent=2, allow_nan=False) + "\n")
+    if controls["positive"]["status"] != "passed" or any(
+            row["status"] != "failed" for name, row in controls.items() if name != "positive"):
+        raise RuntimeError(f"Shirousagi controls failed: {controls}")
+    return {"status": "passed", "controls": controls}
+
+
+BLINK_BOXES = {"ParamEyeLOpen": (390, 335, 470, 385),
+               "ParamEyeROpen": (230, 335, 310, 385)}
+BLINK_MESHES = {"ParamEyeLOpen": "ArtMesh15", "ParamEyeROpen": "ArtMesh14"}
+
+
+def blink_crop(rgba, width, box):
+    x0, y0, x1, y1 = box
+    result = bytearray()
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            offset = (y * width + x) * 4
+            result.extend(rgba[offset:offset + 3])
+    return bytes(result)
+
+
+def blink_outside_hash(rgba, width, boxes):
+    data = bytearray(rgba)
+    for x0, y0, x1, y1 in boxes:
+        for y in range(y0, y1):
+            start = (y * width + x0) * 4
+            end = (y * width + x1) * 4
+            data[start:end] = bytes(end - start)
+    return hashlib.sha256(data).hexdigest()
+
+
+def blink_mae(left, right):
+    if len(left) != len(right):
+        raise ValueError("eye crop dimensions differ")
+    return sum(abs(a - b) for a, b in zip(left, right)) / len(left)
+
+
+def blink_pack(data):
+    return base64.b64encode(zlib.compress(data)).decode("ascii")
+
+
+def blink_unpack(data):
+    return zlib.decompress(base64.b64decode(data))
+
+
+def blink_source_state(session):
+    value = state(session, "ParamEyeLOpen", (1,)) if session.parameter_ids() else state(session)
+    for key in ("parameter", "binding", "samples"):
+        value.pop(key)
+    return value
+
+
+def blink_author(session, mode="positive"):
+    with session.edit("independent eye blink") as edit:
+        for param, mesh_name, scale in (("ParamEyeLOpen", "ArtMesh15", 1.4),
+                                         ("ParamEyeROpen", "ArtMesh14", 1.6)):
+            if mode == "one_eye" and param == "ParamEyeROpen":
+                continue
+            mesh = session.require_unique_mesh(mesh_name)
+            base = mesh.positions
+            cx = sum(x for x, _ in base) / len(base)
+            cy = sum(y for _, y in base) / len(base)
+            closed = (base if mode == "wrong_shape" else
+                      [(cx + scale * (x - cx), cy + 12 + 0.2 * (y - cy)) for x, y in base])
+            pid = str(uuid4())
+            edit.create_parameter(pid, param, 0, 1, 1,
+                                  runtime_id=None if mode == "wrong_runtime" else param)
+            keys = [0, 0.5, 1] if mode == "extra_midpoint" else [0, 1]
+            forms = [kasane.MeshKeyform([0], closed)]
+            if mode == "extra_midpoint":
+                midpoint = [((a + c) / 2, (b + d) / 2)
+                            for (a, b), (c, d) in zip(closed, base)]
+                forms.append(kasane.MeshKeyform([0.5], midpoint))
+            forms.append(kasane.MeshKeyform([1], base))
+            edit.create_mesh_binding(str(uuid4()), mesh.id, [kasane.Axis(pid, keys)], forms)
+
+
+def blink_fixture(packet, oracle_path):
+    if not kasane.capabilities()["gpu_observation"]:
+        raise RuntimeError("shirousagi-blink requires the observe wheel")
+    source = Path(__file__).parent / "shirousagi"
+    input_dir = packet / "input"
+    shutil.copy2(source / "Shirousagi.psd", input_dir / "Shirousagi.psd")
+    art = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+    imported = art.import_psd(input_dir / "Shirousagi.psd", input_dir / "project")
+    model = shirousagi_model()
+    names = {art.mesh(mid).name for mid in art.mesh_ids()}
+    model_names = {model.mesh(mid).name for mid in model.mesh_ids()}
+    if imported.warnings or imported.raster_layers != 24 or names != model_names:
+        raise RuntimeError("Shirousagi PSD must import all 24 named ArtMeshes")
+    public = [(1, 1), (0, 1), (1, 0), (0, 0)]
+    hidden = [(0.5, 0.5), (0.25, 0.75), (0.75, 0.25)]
+    poses = [{"ParamEyeLOpen": left, "ParamEyeROpen": right}
+             for left, right in public + hidden]
+    observer = {"width": 700, "height": 700, "fit_long_side": 700}
+    frames = []
+    with kasane.Observer(**observer) as renderer:
+        static_frame = renderer.observe(art, {})
+        static_crops = {name: blink_crop(static_frame.rgba, 700, box)
+                        for name, box in BLINK_BOXES.items()}
+        for index, pose in enumerate(poses):
+            reference = renderer.observe(model, pose)
+            if index < len(public):
+                reference.save_png(input_dir / f"reference-{index}.png")
+            ref_crops = {name: blink_crop(reference.rgba, 700, box)
+                         for name, box in BLINK_BOXES.items()}
+            frames.append({"pose": pose,
+                           "references": {name: blink_pack(crop) for name, crop in ref_crops.items()},
+                           "baseline_mae": {name: blink_mae(static_crops[name], crop)
+                                            for name, crop in ref_crops.items()}})
+    (input_dir / "references.json").write_text(json.dumps({
+        "observer": observer,
+        "samples": [{"values": pose, "image": f"reference-{index}.png"}
+                    for index, pose in enumerate(poses[:len(public)])]}, indent=2) + "\n")
+    return {"expected": blink_source_state(art), "frames": frames, "observer": observer,
+            "static_rgba_sha256": hashlib.sha256(static_frame.rgba).hexdigest(),
+            "static_outside_sha256": blink_outside_hash(static_frame.rgba, 700, BLINK_BOXES.values()),
+            "static_crops": {name: blink_pack(crop) for name, crop in static_crops.items()},
+            "boxes": BLINK_BOXES}
+
+
+def blink_structure_checks(session, oracle):
+    checks = {"structure": not session.validate_structure(),
+              "resources": not session.diagnose_resources(),
+              "source_state": close(blink_source_state(session), oracle["expected"])}
+    params = [session.parameter(pid) for pid in session.parameter_ids()]
+    by_name = {p.name: p for p in params}
+    checks["parameters"] = (len(params) == 2 and set(by_name) == set(BLINK_MESHES)
+                            and all(p.runtime_id == name and p.minimum == 0
+                                    and p.maximum == 1 and p.default_value == 1
+                                    and not p.repeat and p.kind == "normal"
+                                    for name, p in by_name.items()))
+    bindings = [session.binding(bid) for bid in session.binding_ids()]
+    by_mesh = {b.mesh_id: b for b in bindings}
+    valid = len(bindings) == len(by_mesh) == 2 and checks["parameters"]
+    if valid:
+        for param, mesh_name in BLINK_MESHES.items():
+            mesh = session.require_unique_mesh(mesh_name)
+            binding = by_mesh.get(mesh.id)
+            forms = {tuple(form.keys): form for form in binding.keyforms} if binding else {}
+            axis_keys = list(binding.axes[0].keys) if binding and len(binding.axes) == 1 else []
+            complete_axis = (len(axis_keys) >= 2 and axis_keys[0] == 0
+                             and axis_keys[-1] == 1
+                             and all(math.isfinite(key) and 0 <= key <= 1
+                                     for key in axis_keys)
+                             and all(left < right for left, right in zip(axis_keys, axis_keys[1:]))
+                             and len(binding.keyforms) == len(axis_keys)
+                             and set(forms) == {(key,) for key in axis_keys})
+            valid = (binding is not None and len(binding.axes) == 1
+                     and binding.axes[0].parameter_id == by_name[param].id
+                     and complete_axis
+                     and close(plain(forms[(1,)].positions), plain(mesh.positions))
+                     and not close(plain(forms[(0,)].positions), plain(mesh.positions)))
+            if not valid:
+                break
+    checks["bindings"] = valid
+    return checks
+
+
+def blink_render_checks(session, oracle, prefix):
+    checks = {}
+    with kasane.Observer(**oracle["observer"]) as renderer:
+        for index, spec in enumerate(oracle["frames"]):
+            pose = spec["pose"]
+            frame = renderer.observe(session, pose)
+            checks[f"{prefix}_outside_{index}"] = (
+                blink_outside_hash(frame.rgba, 700, oracle["boxes"].values())
+                == oracle["static_outside_sha256"])
+            if index == 0:
+                checks[f"{prefix}_default"] = (
+                    hashlib.sha256(frame.rgba).hexdigest() == oracle["static_rgba_sha256"])
+            for name, box in oracle["boxes"].items():
+                got = blink_crop(frame.rgba, 700, box)
+                if pose[name] == 1:
+                    accepted = got == blink_unpack(oracle["static_crops"][name])
+                else:
+                    reference = blink_unpack(spec["references"][name])
+                    accepted = blink_mae(got, reference) <= spec["baseline_mae"][name] * 0.5
+                checks[f"{prefix}_{name}_{index}"] = accepted
+    return checks
+
+
+def blink_checks(manifest, package, oracle):
+    session = kasane.open_project(manifest)
+    checks = blink_structure_checks(session, oracle)
+    checks.update(blink_render_checks(session, oracle, "project"))
+    package_dir = package.parent
+    checks["package_path"] = package.name == "model.model3.json" and package.is_file()
+    try:
+        refs = json.loads(package.read_text())["FileReferences"]
+        paths = [refs["Moc"], *refs["Textures"]]
+        checks["package_refs"] = all(not Path(p).is_absolute() and ".." not in Path(p).parts
+                                     and (package_dir / p).is_file() for p in paths)
+    except (OSError, KeyError, TypeError, ValueError):
+        checks["package_refs"] = False
+    with tempfile.TemporaryDirectory() as folder:
+        receiver = Path(folder)
+        shutil.copytree(manifest.parent, receiver / "project")
+        shutil.copytree(package_dir, receiver / "package")
+        moved = kasane.open_project(receiver / "project" / manifest.name)
+        checks.update({f"moved_{key}": value
+                       for key, value in blink_structure_checks(moved, oracle).items()})
+        checks.update(blink_render_checks(moved, oracle, "moved_project"))
+        imported = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
+        result = imported.import_model3(receiver / "package/model.model3.json")
+        checks["package_import"] = not result.warnings and not result.diagnostics
+        checks["package_structure"] = not imported.validate_structure()
+        checks["package_resources"] = not imported.diagnose_resources()
+        checks["package_mesh_names"] = (
+            {imported.mesh(mid).name for mid in imported.mesh_ids()}
+            == {record["name"] for record in oracle["expected"]["mesh"].values()})
+        checks["package_parameter_runtime_ids"] = (
+            {imported.parameter(pid).runtime_id for pid in imported.parameter_ids()}
+            == set(BLINK_MESHES))
+        checks["package_binding_count"] = len(imported.binding_ids()) == 2
+        checks.update(blink_render_checks(imported, oracle, "moved_package"))
+    return {"status": "passed" if all(checks.values()) else "failed", "checks": checks}
+
+
+def safe_blink_grade(manifest, package, oracle):
+    try:
+        return blink_checks(manifest, package, oracle)
+    except Exception as exc:
+        return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
+
+
+def prepare_blink(packet, oracle_path):
+    oracle = blink_fixture(packet, oracle_path)
+    controls = {}
+    with tempfile.TemporaryDirectory(dir=oracle_path.parent) as folder:
+        root = Path(folder)
+        for mode in ("positive", "extra_midpoint", "no_edit", "one_eye",
+                     "wrong_runtime", "wrong_shape"):
+            session = kasane.open_project(packet / "input/project")
+            if mode != "no_edit":
+                blink_author(session, mode)
+            manifest = session.save(root / mode / "project").manifest
+            exported = session.export_package(root / mode / "package")
+            if not exported.published or exported.warnings:
+                raise RuntimeError(f"blink control export failed: {exported}")
+            controls[mode] = safe_blink_grade(manifest, root / mode / "package/model.model3.json", oracle)
+    oracle["controls"] = controls
+    oracle_path.write_text(json.dumps(oracle, indent=2, allow_nan=False) + "\n")
+    if any(controls[name]["status"] != "passed" for name in ("positive", "extra_midpoint")) or any(
+            row["status"] != "failed" for name, row in controls.items()
+            if name not in ("positive", "extra_midpoint")):
+        raise RuntimeError(f"Shirousagi blink controls failed: {controls}")
+    return {"status": "passed", "controls": controls}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("operation", choices=["prepare", "grade"])
-    parser.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"], required=True)
+    parser.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision", "shirousagi-repair", "shirousagi-blink"], required=True)
     parser.add_argument("--packet", type=Path, required=True)
     parser.add_argument("--oracle", type=Path, required=True)
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--package", type=Path)
     parser.add_argument("--result", type=Path)
+    parser.add_argument("--variant", choices=["a", "b", "c"], default="a")
     args = parser.parse_args()
     if args.operation == "grade":
         try:
             oracle = json.loads(args.oracle.read_text())
-            result = (safe_visual_grade(args.manifest, args.result, oracle)
+            result = (safe_blink_grade(args.manifest, args.package, oracle)
+                      if args.task == "shirousagi-blink" else
+                      safe_shirousagi_grade(args.manifest, args.package, oracle)
+                      if args.task == "shirousagi-repair" else
+                      safe_visual_grade(args.manifest, args.result, oracle)
                       if args.task in ("visual-locate", "visual-parent", "compose-expression", "handoff-revision") else
                       safe_advanced_grade(args.task, args.manifest, args.package, oracle)
                       if args.task in ("delivery-transfer", "resource-recovery")
@@ -738,6 +1185,12 @@ def main():
         return
     if args.task == "handoff-revision":
         print(json.dumps(prepare_handoff(args.packet, args.oracle), allow_nan=False))
+        return
+    if args.task == "shirousagi-repair":
+        print(json.dumps(prepare_shirousagi(args.packet, args.oracle, args.variant), allow_nan=False))
+        return
+    if args.task == "shirousagi-blink":
+        print(json.dumps(prepare_blink(args.packet, args.oracle), allow_nan=False))
         return
     import hashlib
     import tempfile

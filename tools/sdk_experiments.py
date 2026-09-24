@@ -144,7 +144,7 @@ def initialize(args):
     shutil.copy2(Path(__file__), frozen / "sdk_experiments.py")
     for name in ("README.md", "API.md"):
         shutil.copy2(ROOT / "modules/kasane-python" / name, frozen / name)
-    for name in ("delivery-transfer.md", "resource-recovery.md", "visual-locate.md", "visual-parent.md", "compose-expression.md", "handoff-revision.md"):
+    for name in ("delivery-transfer.md", "resource-recovery.md", "visual-locate.md", "visual-parent.md", "compose-expression.md", "handoff-revision.md", "shirousagi-repair.md", "shirousagi-blink.md"):
         shutil.copy2(ROOT / "docs/experiments/tasks" / name, frozen / name)
     if args.handoff_project is not None:
         project = args.handoff_project.resolve(strict=True)
@@ -152,6 +152,14 @@ def initialize(args):
             raise ValueError("--handoff-project must contain project.kasane.json")
         hashes(project)
         shutil.copytree(project, frozen / "handoff-project")
+    if args.shirousagi_root is not None:
+        source = args.shirousagi_root.resolve(strict=True)
+        required = ("Shirousagi.model3.json", "Shirousagi.moc3", "Shirousagi.psd",
+                    "textures/texture_00.png")
+        if not source.is_dir() or any(not (source / name).is_file() for name in required):
+            raise ValueError("--shirousagi-root must contain model3, MOC3, PSD and texture")
+        hashes(source)
+        shutil.copytree(source, frozen / "shirousagi", ignore=shutil.ignore_patterns(".DS_Store"))
     shutil.copy2(ROOT / "modules/kasane-python/tests/fixtures/asymmetric-2x2.png", frozen / "texture.png")
     uv = shutil.which(args.uv)
     if not uv:
@@ -196,11 +204,13 @@ def trial_paths(args):
     return root, lock, root / "host/trials" / args.trial, root / "packets" / args.trial
 
 
-def worker(root, lock, task, packet, oracle, operation, log, manifest=None):
+def worker(root, lock, task, packet, oracle, operation, log, manifest=None, variant=None):
     argv = [lock["python"], "-I", str(root / "host/frozen/worker.py"), operation,
             "--task", task, "--packet", str(packet), "--oracle", str(oracle)]
     if manifest is not None:
         argv += ["--manifest", str(manifest)]
+    if variant is not None:
+        argv += ["--variant", variant]
     return json.loads(checked(argv, root, log))
 
 
@@ -224,14 +234,16 @@ def prepare(args):
         if not (frozen / "handoff-project").is_dir():
             raise ValueError("handoff-revision requires an experiment initialized with --handoff-project")
         shutil.copytree(frozen / "handoff-project", packet / "input/project")
+    if args.task in ("shirousagi-repair", "shirousagi-blink") and not (frozen / "shirousagi").is_dir():
+        raise ValueError(f"{args.task} requires --shirousagi-root at init")
     tasks = read(frozen / "tasks.json")["tasks"]
     task = tasks[args.task]
     goal = task["goal"]
     if args.task == "parameter":
         goal = tasks["create"]["goal"].replace("不要添加参数或其他场景对象。", "") + "\n\n" + goal
     # Preparation must pass positive and negative controls before publishing trial.json.
-    controls = worker(root, lock, args.task, packet, host / "oracle.json", "prepare", host / "logs/prepare")
-    if args.task in ("delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"):
+    controls = worker(root, lock, args.task, packet, host / "oracle.json", "prepare", host / "logs/prepare", variant=args.variant)
+    if args.task in ("delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision", "shirousagi-repair", "shirousagi-blink"):
         template = frozen / f"{args.task}.md"
         instructions = template.read_text(encoding="utf-8")
         instructions += (f"\n## 本轮环境\n\n任务目录：`{packet}`；共享 Python：`{lock['python']}`；"
@@ -272,6 +284,7 @@ def prepare(args):
         raise ValueError("model-config must be a JSON object")
     record = {"schema_version": 2, "trial": args.trial, "task": args.task,
               "task_version": task["version"], "model": args.model, "model_config": config,
+              "variant": args.variant,
               "cohort": args.cohort, "budget_seconds": args.budget, "created_at": stamp(),
               "protected": protected_hashes(packet), "oracle_sha256": digest(host / "oracle.json"),
               "controls": controls, "lock_sha256": digest(root / "host/lock.json")}
@@ -314,7 +327,7 @@ def run_agent(args):
 
 def result_file(output, task):
     direct = output / "result.json"
-    if task not in ("delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"):
+    if task not in ("delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision", "shirousagi-repair", "shirousagi-blink"):
         return direct
     candidates = list(output.rglob("result.json"))
     if not candidates:
@@ -342,7 +355,7 @@ def inspect_output(root, lock, record, packet, host, output, log):
             grade = json.loads(checked(argv, root, log))
             grade["result_file"] = str(result_path)
             return grade
-        if record["task"] in ("delivery-transfer", "resource-recovery"):
+        if record["task"] in ("delivery-transfer", "resource-recovery", "shirousagi-repair", "shirousagi-blink"):
             package_raw = Path(result["package_model3"])
             if not package_raw.is_absolute():
                 raise ValueError("package_model3 must be absolute")
@@ -490,10 +503,12 @@ def main():
         if name == "init":
             item.add_argument("--wheel", type=Path, required=True)
             item.add_argument("--handoff-project", type=Path)
+            item.add_argument("--shirousagi-root", type=Path)
             item.add_argument("--python", default="3.14", help="uv Python version or interpreter path")
             item.add_argument("--uv", default="uv")
         elif name == "prepare":
-            item.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision"], required=True)
+            item.add_argument("--task", choices=["create", "parameter", "edit", "delivery-transfer", "resource-recovery", "visual-locate", "visual-parent", "compose-expression", "handoff-revision", "shirousagi-repair", "shirousagi-blink"], required=True)
+            item.add_argument("--variant", choices=["a", "b", "c"], default="a")
             item.add_argument("--model", required=True, help="Exact model identifier, not a nickname")
             item.add_argument("--model-config", default="{}", help="JSON: reasoning, sampling, harness version, etc.")
             item.add_argument("--cohort", choices=["fresh", "learning"], default="fresh")
