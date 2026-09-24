@@ -1,5 +1,5 @@
 //! Compatibility lowering for consumers of the original pass-stream API.
-//! Logical interpretation is shared with ScenePlan; Godot uses ScenePlan directly.
+//! Logical interpretation is shared with ScenePlan.
 use crate::{
     surface_layout, Affine2, DrawItem, MaskKey, PreparedFrame, RenderPass, ScenePlan, Size2,
     TargetId, TargetItem, TextureCatalog, ViewportConfig, OFFSCREEN_BUDGET_BYTES,

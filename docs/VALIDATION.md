@@ -1,71 +1,38 @@
-# 编辑器工程统一验收规则
+# 当前验证入口
 
-本文是 M1–M6 的共同要求。阈值是新工作的通过标准，不是对当前实现精度的声明。
-
-## 1. 可复现产物
-
-每个里程碑交付一个可从仓库根目录调用的验收入口及说明。入口由该里程碑实现，不将不存在的命令写成已可运行。报告必须包含：
-
-- Git 与子模块 revision、构建配置、Godot / Core 版本、平台。
-- 输入文件路径、SHA-256、MOC3 文件版本、素材清单、用例名。
-- 参数采样值、坐标单位、相机、画布与图片尺寸。
-- 每项 expected / actual、最大误差、失败对象 ID、相关文件路径。
-- `passed`、`failed`、`not_run`；必需项未执行或失败，里程碑均不通过。
-
-入口失败返回非零退出码。导出文件、数据快照、参考截图、实际截图与差异图随报告保留。
-
-## 2. 三条数值对照
-
-| 路径 | 对照对象 |
-|---|---|
-| 新建模型导出 | Document 内存求值、导出 MOC3 在 PurismCore 中求值、同一文件在官方 Core 中求值 |
-| 外部模型导入 | 原 MOC3 运行结果、导入 Document 内存求值、重新导出 MOC3 运行结果 |
-| 工程保存读取 | 保存前与重开后的持久化字段、求值结果、导出文件的运行结果 |
-
-外部模型不能由本仓库导出器生成。重开允许内存索引、缓存和 revision 改变，对象身份与模型语义不能改变。
-
-比较对象/ drawable ID、参数范围与默认值、关系、UV、拓扑、遮罩、最终位置、透明度、颜色、绘制顺序和可见性。离散字段精确一致；数组顺序不同时按稳定 ID 对齐。
-
-浮点值要求 `abs(actual - expected) <= 1e-5 + 1e-5 * max(abs(actual), abs(expected))`。位置额外转换到原画像素单位，最大偏差不得超过 0.05 像素。所有数值必须有限。调整阈值必须记录理由和基线，不能为通过测试静默放宽。
-
-## 3. 参数与变形采样
-
-- 全部默认值。
-- 每个参数的最小值、最大值、全部绑定关键值、相邻关键值的中点；其他参数保持默认。
-- 两参数绑定：关键值和中点的笛卡尔积，至少一个非对称 3×3 Keyform 用例。
-- 三参数绑定：至少一个 2×2×2 Keyform 用例，检查全部端点和中心。
-- Rotation → Warp 和 Warp → Rotation 两种嵌套顺序，包含非零原点、缩放和反射。
-- 预览参数超出范围时钳制并报告实际值，运行对照使用同一实际值。Warp 几何边界外坐标单独测试，不能以参数钳制替代变形外推检查。
-
-全模型不要求穷举所有组合，但必须保存实际采样集合，不能仅验证默认姿势。
-
-## 4. GPU 图像对照
-
-使用同一 Godot 版本、渲染后端、分辨率、纹理过滤、背景、相机和参数。渲染状态稳定后取图；Headless 逻辑测试不替代图像验收。
-
-- 构造用例分别检查纹理方向、前后顺序、透明度、普通/反向遮罩及混合；排除边缘的确定采样区域 RGBA 各通道误差不超过 `2/255`。
-- 全图归一化 RGBA 平均绝对误差不超过 `0.005`；任一通道误差大于 `0.05` 的像素不超过总数的 `1%`。
-- 关键对象另作相同阈值的局部裁剪比较，避免小部件错误被大片透明背景稀释。
-- 动态遮罩至少连续两次改变几何和相机，验证每次稳定后的画面。
-- 干净模型截图不包含高亮覆盖层；需要定位证据时另行输出。
-
-## 5. 失败与现有回归
-
-必需失败用例：未知版本、截断文件、越界 offset/count/index、重复 ID、悬空引用、关系环、缺失 Keyform、非有限值、缺失纹理、写入失败。
-
-检查失败后当前 Document 未被部分替换，既有工程和导出产物完整。直接脚本错误前已完成的写入按脚本契约保留，与文件操作的原子性分别测试。
-
-MOC3 导出兼容验收同时要求 PurismCore 与官方 Core 加载、驱动通过。外部资产按现有方式在本地提供，报告记录校验和，不提交不可分发素材。缺少 SDK、外部模型或 GPU 时保留未验收项，不能把跳过当作通过。
-
-## M3C 证据报告
-
-M3C S0–S6 报告采用 `checks` 明细和 `acceptance_evidence.finalize` 计算状态，不能直接手写阶段通过。每个必需项应记录类型、状态、未执行原因、证据文件和 SHA-256。复用报告前还需校验源码 revision、工作区内容指纹和子模块状态。真实模型、构造 fixture、数值和 GPU 证据不能互相替代。
-
-新增回归入口：
+## 自动化回归
 
 ```sh
-python3 -m unittest discover -s tools -p test_validate_m3c.py
+cargo fmt --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test --workspace --locked
 KASANE_MOC3_DISABLE_CORE_VALIDATION=1 cargo test -p kasane-moc3 --no-default-features --test safety_tests --locked
+python3 -m unittest discover -s tests -p test_acceptance_validators.py -v
 ```
 
-详情见 [M3C-optimization.md](M3C-optimization.md)。
+Rust SDK 测试覆盖隔离编辑、句柄、history、导入、工程保存和导出；WGPU 测试检查实际像素、遮罩、混合、离屏组合与 resize。`tests/test_acceptance_validators.py` 检查验收门禁能拒绝损坏的输入和参考图。`tests/fixtures/` 是这些测试及 Python wheel 共同使用的输入，不依赖 Godot 工程。
+
+## 仓库外 wheel 集成测试
+
+```sh
+RUSTFLAGS='-C strip=none' python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
+python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
+```
+
+门禁在临时虚拟环境安装 wheel，从仓库外运行 Python CPU 测试、两素材创作/保存/导出与外部 model3 导入编辑；保留输入哈希、命令日志与结果。CPU wheel 无 GPU 功能时报告 `partial`，不是完整验收。
+
+在有 GPU 和本地 Core 探针的环境，使用带 `observe` feature 的 wheel：
+
+```sh
+python3.14 tools/validate_sdk.py --full \
+  --wheel /absolute/path/to/observe-wheel.whl \
+  --official-probe /absolute/path/to/kasane_document_official_probe \
+  --purism-probe /absolute/path/to/kasane_document_purism_probe
+python3 tools/compare_wgpu_blends.py
+```
+
+`--full` 要求 10 项检查均实际通过：CPU、两条创作/导入流程、GPU、第二脚本修正、两套 Core 对新建与导入模型的数值对照、固定外部 GPU 图像参考。输入或参考图哈希不一致、焦点裁剪误差超限、任一必需项缺席均失败。参考图来源与生成时的输入、视图和纹理配置见 `tests/fixtures/render_reference/`；更新参考图须重新记录来源并运行负控制。
+
+CI 运行 Rust 回归、验证器负控制和 CPU wheel 集成测试；macOS runner 另外运行 WGPU 混合矩阵。真实 GPU 观察与双 Core 的完整门禁按有相应资源的环境运行，报告不把 `not_run` 计作通过。
+
+历史 Godot 里程碑与门槛记录仍可从 Git 历史及 `docs/archive/` 查阅。

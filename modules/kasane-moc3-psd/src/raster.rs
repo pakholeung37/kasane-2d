@@ -59,7 +59,7 @@ pub fn rasterize(
     let layer_width = right - left;
     let layer_height = bottom - top;
     let mut rgba = vec![0; layer_width as usize * layer_height as usize * 4];
-    for triangle in d.indices.chunks_exact(3) {
+    for triangle in d.indices.as_chunks::<3>().0 {
         let [a, b, c] = [
             triangle[0] as usize,
             triangle[1] as usize,

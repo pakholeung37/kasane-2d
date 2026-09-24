@@ -2,7 +2,7 @@
 """Validate the shipped SDK wheel outside the source tree and retain evidence.
 
 The gate covers S3/S4, all three S5 recipes, optional dual-Core numerical
-parity, and an optional independent Godot GPU image comparison.
+parity, and an optional comparison with a pinned external GPU reference.
 """
 
 from __future__ import annotations
@@ -29,8 +29,9 @@ IMPORT_EDIT_RECIPE = ROOT / "examples/sdk/python_import_edit_recipe.py"
 AGENT_DRAFT = ROOT / "examples/sdk/python_agent_draft.py"
 AGENT_REPAIR = ROOT / "examples/sdk/python_agent_repair.py"
 REFERENCE_CAPTURE = ROOT / "examples/sdk/python_reference_capture.py"
-IMAGE_REFERENCE_TOOL = ROOT / "tools/compare_wgpu_real_model.py"
 IMAGE_COMPARATOR = ROOT / "tools/compare_sdk_image.py"
+IMAGE_REFERENCE = ROOT / "tests/fixtures/render_reference/external_v50_default.png"
+IMAGE_REFERENCE_METADATA = IMAGE_REFERENCE.with_suffix(".json")
 TEXTURE = ROOT / "examples/sdk/asymmetric-2x2.png"
 SECOND_TEXTURE = ROOT / "tests/fixtures/external_v50/texture_00.png"
 EXTERNAL_MODEL3 = ROOT / "tests/fixtures/external_v50/model.model3.json"
@@ -307,27 +308,26 @@ def validate_official_import_edit(
     }
 
 
+def load_image_reference() -> dict:
+    reference = json.loads(IMAGE_REFERENCE_METADATA.read_text(encoding="utf-8"))
+    expected = {
+        "model3_sha256": sha256(EXTERNAL_MODEL3),
+        "moc_sha256": sha256(EXTERNAL_MOC3),
+        "texture_sha256": sha256(SECOND_TEXTURE),
+        "png_sha256": sha256(IMAGE_REFERENCE),
+    }
+    if any(reference.get(key) != value for key, value in expected.items()):
+        raise RuntimeError("Pinned image reference or model inputs changed")
+    if reference.get("texture_profile") != "linear_no_mipmap":
+        raise RuntimeError("Pinned image reference has an unexpected texture profile")
+    return reference
+
+
 def validate_image_reference(
-    godot: Path, installed: Path, run: Path, outside: Path,
+    installed: Path, run: Path, outside: Path,
     environment: dict[str, str], logs: Path,
 ) -> dict:
-    reference_dir = run / "godot-reference"
-    command(
-        "godot-reference",
-        [sys.executable, str(IMAGE_REFERENCE_TOOL),
-         "--model3", str(EXTERNAL_MODEL3), "--output-dir", str(reference_dir),
-         "--godot", str(godot), "--width", "256", "--height", "256",
-         "--fit-long-side", "256", "--texture-profile", "linear_no_mipmap"],
-        cwd=outside, env=environment, logs=logs, timeout=600,
-    )
-    reference_report_path = reference_dir / "report.json"
-    reference = json.loads(reference_report_path.read_text(encoding="utf-8"))
-    if reference["status"] != "passed":
-        raise RuntimeError("Godot versus wgpu reference validation failed")
-    if reference["inputs"]["model3_sha256"] != sha256(EXTERNAL_MODEL3):
-        raise RuntimeError("Godot reference model3 hash mismatch")
-    if reference["texture_profile"] != "linear_no_mipmap":
-        raise RuntimeError("Godot reference texture profile mismatch")
+    reference = load_image_reference()
     observation_output = command(
         "sdk-reference-capture",
         [str(installed), str(REFERENCE_CAPTURE), str(EXTERNAL_MODEL3),
@@ -341,37 +341,37 @@ def validate_image_reference(
     if observation["status"] != "frames_complete" or len(observation["frames"]) != 1:
         raise RuntimeError("SDK reference capture is incomplete")
     frame = observation["frames"][0]
-    if len(frame["crops"]) != 1 or frame["view"]["width"] != 256:
+    view = reference["view"]
+    if len(frame["crops"]) != 1 or any(
+        frame["view"][key] != view[key] for key in ("width", "height")
+    ):
         raise RuntimeError("SDK reference focus/view is incomplete")
     actual = observation_report_path.parent / frame["path"]
     if sha256(actual) != frame["sha256"]:
         raise RuntimeError("SDK reference image hash mismatch")
-    wgpu = json.loads((reference_dir / "wgpu-report.json").read_text(encoding="utf-8"))
-    for key in ("scale",):
-        if abs(wgpu["view"][key] - frame["view"][key]) > 1e-5:
-            raise RuntimeError("SDK and reference view scale differ")
+    if abs(view["scale"] - frame["view"]["scale"]) > 1e-5:
+        raise RuntimeError("SDK and reference view scale differ")
     if any(abs(a - b) > 1e-3 for a, b in zip(
-        wgpu["view"]["offset"], frame["view"]["offset"], strict=True,
+        view["offset"], frame["view"]["offset"], strict=True,
     )):
         raise RuntimeError("SDK and reference view offsets differ")
-    reference_image = reference_dir / "godot.png"
     bounds = frame["crops"][0]["bounds"]
     comparison_output = command(
         "sdk-image-comparison",
-        [sys.executable, str(IMAGE_COMPARATOR), str(reference_image), str(actual),
+        [sys.executable, str(IMAGE_COMPARATOR), str(IMAGE_REFERENCE), str(actual),
          "--crop", *map(str, bounds), "--output", str(run / "sdk-image-comparison")],
         cwd=outside, env=environment, logs=logs,
     )
     comparison_path = Path(comparison_output.splitlines()[-1]).resolve(strict=True)
     comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
     if comparison["status"] != "passed":
-        raise RuntimeError("SDK image differs from the Godot reference")
+        raise RuntimeError("SDK image differs from the pinned external reference")
     return {
-        "status": "passed", "reference_report": str(reference_report_path.relative_to(run)),
+        "status": "passed", "reference": str(IMAGE_REFERENCE.relative_to(ROOT)),
+        "reference_sha256": reference["png_sha256"],
         "observation_report": str(observation_report_path.relative_to(run)),
         "comparison": str(comparison_path.relative_to(run)),
         "adapter": frame["adapter"],
-        "sdk_wgpu_png_sha_equal": sha256(actual) == sha256(reference_dir / "wgpu.png"),
         "checks": comparison["checks"],
     }
 
@@ -386,7 +386,6 @@ def main() -> int:
     parser.add_argument("--require-official-core", action="store_true")
     parser.add_argument("--purism-probe", type=Path)
     parser.add_argument("--require-purism-core", action="store_true")
-    parser.add_argument("--godot", type=Path)
     parser.add_argument("--require-image-reference", action="store_true")
     parser.add_argument("--full", action="store_true",
                         help="Require GPU, both Core probes, and image reference")
@@ -400,7 +399,6 @@ def main() -> int:
     python = args.python.resolve(strict=True)
     official_probe = args.official_probe.resolve(strict=True) if args.official_probe else None
     purism_probe = args.purism_probe.resolve(strict=True) if args.purism_probe else None
-    godot = args.godot.resolve(strict=True) if args.godot else None
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     run = output / uuid4().hex
@@ -420,7 +418,8 @@ def main() -> int:
             str(path.relative_to(ROOT)): sha256(path)
             for path in (CPU_TEST, GPU_TEST, RECIPE, TWO_ASSET_RECIPE,
                          IMPORT_EDIT_RECIPE, AGENT_DRAFT, AGENT_REPAIR,
-                         REFERENCE_CAPTURE, IMAGE_REFERENCE_TOOL, IMAGE_COMPARATOR,
+                         REFERENCE_CAPTURE, IMAGE_REFERENCE, IMAGE_REFERENCE_METADATA,
+                         IMAGE_COMPARATOR,
                          TEXTURE, SECOND_TEXTURE,
                          EXTERNAL_MODEL3, EXTERNAL_MOC3)
         },
@@ -433,7 +432,7 @@ def main() -> int:
             environment.pop("PYTHONPATH", None)
             command("venv", [str(python), "-m", "venv", str(outside / "venv")],
                     cwd=outside, env=environment, logs=logs)
-            installed = outside / "venv/bin/python"
+            installed = outside / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
             command("install", [str(installed), "-m", "pip", "install", "--no-index",
                                 "--no-deps", str(wheel)],
                     cwd=outside, env=environment, logs=logs)
@@ -516,16 +515,14 @@ def main() -> int:
                 )
                 repair_report = Path(repair_output.splitlines()[-1]).resolve(strict=True)
                 report["checks"]["agent_repair"] = validate_agent_repair(repair_report, run)
-                if godot:
+                if args.require_image_reference:
                     report["checks"]["image_reference"] = validate_image_reference(
-                        godot, installed, run, outside, environment, logs,
+                        installed, run, outside, environment, logs,
                     )
                 else:
                     report["checks"]["image_reference"] = {
-                        "status": "not_run", "reason": "Godot reference renderer not supplied",
+                        "status": "not_run", "reason": "Image reference comparison not requested",
                     }
-                    if args.require_image_reference:
-                        raise RuntimeError("Image reference is required but Godot was not supplied")
             else:
                 report["checks"]["gpu"] = {"status": "not_run", "reason": "GPU observation unavailable"}
                 report["checks"]["agent_repair"] = {

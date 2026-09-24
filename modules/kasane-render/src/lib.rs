@@ -1,7 +1,7 @@
 //! Backend-neutral render contracts and resource planning.
 //!
 //! This crate describes what a backend must render without owning any GPU or
-//! host-engine resource. Godot and future backends consume the same plan but
+//! host-engine resource. Backends consume the same plan but
 //! are free to choose different physical resource implementations.
 
 mod plan;
@@ -19,7 +19,7 @@ pub use scene::{
 };
 pub use validation::validate_frame;
 
-/// Default attachment budget for the compatibility planner and Godot adapter.
+/// Default attachment budget for render planning.
 pub const OFFSCREEN_BUDGET_BYTES: i64 = 512 * 1024 * 1024;
 
 /// A 2D affine transform in target-space coordinates.
@@ -168,7 +168,7 @@ pub struct PreparedFrame<'a> {
     pub mask_consumers: HashMap<String, String>,
     /// Logical nodes that read the current destination before compositing.
     ///
-    /// The name is deliberately backend-neutral: a Godot adapter may satisfy
+    /// The name is deliberately backend-neutral: a host adapter may satisfy
     /// this with `BackBufferCopy`, while a wgpu adapter may use a sampled
     /// destination attachment or an explicit copy.
     pub destination_reads: HashSet<&'a str>,

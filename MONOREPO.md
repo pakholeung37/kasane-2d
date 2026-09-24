@@ -1,19 +1,22 @@
 # Runtime monorepo
 
-## Layout
+## Active authoring and rendering
 
-- `apps/editor/` — standalone Godot Editor shell; modeling backends pending.
-- `apps/viewer/` — independent Godot Viewer shell; runtime integration pending.
+- `modules/kasane-core/` — editable document, deformation and evaluation.
+- `modules/kasane-project/` — project persistence, resource validation and package publication.
+- `modules/kasane-moc3/` — MOC3 import, export and safety checks.
+- `modules/kasane-render/` — renderer-independent scene plan.
+- `modules/kasane-render-wgpu/` — WGPU renderer.
+- `modules/kasane-preview/` — host-independent preview resource checks.
+- `modules/kasane-sdk/` — transactional Rust authoring API.
+- `modules/kasane-sdk-observe/` — immutable observation and GPU capture.
+- `modules/kasane-python/` — Python wheel and agent scripting interface.
+- `tests/` — acceptance-gate tests and shared model, texture and image-reference fixtures.
+- `tools/` — SDK, Core and WGPU acceptance commands.
 
-- `modules/purism-core/` — Cubism Core compatible implementation.
-- `modules/gd-cubism/` — `gd_cubism` Godot GDExtension, an alternate Cubism Godot implementation.
-- `modules/kasane-core/` — Rust core document model, deformers, geometry and evaluation.
-- `modules/kasane-godot/` — Rust GDExtension bindings for Godot and live preview.
-- `modules/kasane-moc3/` — Rust MOC3 binary encoder and purism verification.
-- `modules/kasane-project/` — Rust project persistence, resource validation, atomic locks and package publication.
-- `tests/` — repository-wide Godot integration tests, lifecycle boundary tests, full authoring workflow, and visual regression suites.
-- `demos/gd-cubism-demo/` — interactive Godot comparison and regression demo.
-- `benchmarks/cubism-matrix/` — reproducible benchmark matrix between official
-  Cubism Core and PurismCore.
-- `third_party/` — local, untracked third-party SDKs shared by modules and apps.
-- `tools/` — repository-wide development and staging utilities.
+## Separate comparison projects
+
+- `modules/purism-core/` — Cubism Core-compatible implementation.
+- `modules/gd-cubism/` and `demos/gd-cubism-demo/` — independent Godot comparison demo.
+- `benchmarks/cubism-matrix/` — official Cubism/Purism benchmark matrix.
+- `third_party/` — local, untracked SDKs and assets.

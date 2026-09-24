@@ -469,9 +469,34 @@ impl Drop for TestDirectory {
 
 #[test]
 fn published_format_preserves_cpp_transform_tags_and_omits_legacy_fields() {
-    let text = include_str!("../../../samples/m2-complete/project.kasane.json");
-    let doc = decode_project(text).unwrap();
-    let wire: serde_json::Value = serde_json::from_str(text).unwrap();
+    let mut doc = fixture_doc(&"0".repeat(64), &"0".repeat(64));
+    assert!(doc
+        .create_transform(Transform {
+            id: sid(3),
+            runtime_id: "Warp".into(),
+            name: "Warp".into(),
+            part_id: kasane_core::PartId::optional(sid(1)),
+            data: TransformData::Warp(WarpTransform {
+                rows: 1,
+                columns: 1,
+                quad: true,
+                points: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(1.0, 0.0),
+                    Vec2::new(0.0, 1.0),
+                    Vec2::new(1.0, 1.0),
+                ],
+            }),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let text = encode_project(&doc).unwrap();
+    let wire: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let tags = wire["document"]["transforms"].as_array().unwrap();
+    assert_eq!(tags.iter().find(|t| t["id"] == sid(2)).unwrap()["kind"], 1);
+    assert_eq!(tags.iter().find(|t| t["id"] == sid(3)).unwrap()["kind"], 0);
+    let doc = decode_project(&text).unwrap();
     for t in wire["document"]["transforms"].as_array().unwrap() {
         let expected = if t["kind"] == 0 {
             TransformKind::Warp

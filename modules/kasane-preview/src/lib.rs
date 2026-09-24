@@ -1,7 +1,7 @@
 //! Engine-independent preview resource orchestration.
 //!
 //! This crate owns the part of preview preparation that should remain shared
-//! by Godot, wgpu, and headless validation: deciding when project resources
+//! by WGPU and headless validation: deciding when project resources
 //! must be revalidated, loading the resources required by a frame through a
 //! host-provided adapter, and checking the loaded texture metadata against the
 //! document. Hosts provide a read-only [`PreviewAssetSource`] and implement

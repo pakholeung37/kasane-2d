@@ -9,7 +9,7 @@ The model and the proprietary Cubism Native SDK cannot be redistributed in
 this repository. Place them at these paths from the monorepo root:
 
 ```text
-demos/godot/assets/live2d/mao/
+demos/gd-cubism-demo/assets/live2d/mao/
 third_party/CubismSdkForNative-5-r.5/
 ```
 
@@ -23,16 +23,16 @@ modules/gd-cubism/.venv/bin/python -m pip install scons==4.7.0
 
 ## Run
 
-Open `demos/godot/project.godot` with Godot 4.7 or newer, or launch it from
+Open `demos/gd-cubism-demo/project.godot` with Godot 4.7 or newer, or launch it from
 the monorepo root. This project selects Purism Core by default through
 `gd_cubism_provider.txt` when its addon is staged:
 
 ```sh
 /Applications/Godot_mono.app/Contents/MacOS/Godot \
-  --path demos/godot
+  --path demos/gd-cubism-demo
 
 /Applications/Godot_mono.app/Contents/MacOS/Godot \
-  --headless --path demos/godot \
+  --headless --path demos/gd-cubism-demo \
   --script res://tests/smoke_test.gd
 ```
 
@@ -61,7 +61,7 @@ Provider-specific extension binaries remain together in the canonical addon's
 cd modules/gd-cubism
 .venv/bin/python -m SCons platform=macos arch=arm64 target=template_debug -j8
 cd ../..
-python3 tools/stage_godot_addon.py demos/godot
+python3 tools/stage_godot_addon.py demos/gd-cubism-demo
 ```
 
 Set `CUBISM_CORE_PROVIDER` together with `CUBISM_CORE_LIBRARY` when building an

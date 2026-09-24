@@ -7,8 +7,8 @@ target
 third_party/CubismNativeFramework/
 third_party/CubismSdkForNative*/
 third_party
-demos/godot/assets/live2d/
-demos/godot/artifacts/
+demos/gd-cubism-demo/assets/live2d/
+demos/gd-cubism-demo/artifacts/
 benchmarks/cubism-matrix/addons/
 benchmarks/cubism-matrix/assets/live2d/
 benchmarks/cubism-matrix/artifacts/
@@ -16,13 +16,5 @@ benchmarks/cubism-matrix/.godot/
 benchmarks/cubism-matrix/runners/native/build*/
 **/__pycache__/
 
-# Standalone Godot applications and tests.
-apps/**/.godot/
-apps/**/export_credentials.cfg
-tests/.godot/
-tests/*.uid
-
-
-# Generated dependencies for opening the editor source project in Godot.
-apps/editor/native/
-apps/editor/kasane.gdextension
+# Generated files in the independent Godot comparison demo.
+demos/gd-cubism-demo/.godot/

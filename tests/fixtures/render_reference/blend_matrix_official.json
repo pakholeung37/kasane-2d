@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "source": "Official Cubism Framework GPU probe captured during the 2026-09-23 blend-matrix validation",
+  "png_sha256": "d6dce6e6f8d29aa772599c4316c6061e39a8b5bd4d3789b98d71f276209a4447",
+  "width": 64,
+  "height": 720,
+  "color_modes": 18,
+  "alpha_modes": 5,
+  "samples_per_mode": 8,
+  "maximum_byte_error": 2,
+  "maximum_mean_absolute_error": 0.005,
+  "maximum_bad_pixel_fraction": 0.01
+}

@@ -1,5 +1,7 @@
 # SDK 阶段验收记录
 
+2026-09-24 清理旧宿主后的当前门禁见 [VALIDATION.md](VALIDATION.md)。完整本机复跑使用 release wheel、固定外部 v50 参考图及双 Core 探针，不再启动 Godot；报告位于 `target/sdk-acceptance/1027ef7b7b8d46e7b0b07a1f4928ca58/report.json`，10 项均为 `passed`。本机 macOS 27 的 Rust 1.98 release 链接需要 `RUSTFLAGS='-C strip=none'`，否则 wheel 的 Mach-O `LINKEDIT` string pool 对齐错误会导致 Python 无法导入扩展。以下保留迁移期间的验收过程与当时的运行环境。
+
 本文件记录已经实际运行的 SDK 验收；当前 CPython 3.14/macOS arm64 上的 CPU、真实 GPU、双 Core 数值与图像真值门禁均已通过。其它平台组合尚未验收。
 
 ## S2：工程与资源闭环（2026-09-23）

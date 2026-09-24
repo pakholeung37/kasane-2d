@@ -35,7 +35,7 @@ pub fn encode(width: u32, height: u32, layers: &[Layer]) -> Result<Vec<u8>, Erro
             i16be(&mut records, channel);
             u32be(&mut records, checked_len(count + 2)?);
             u16be(&mut pixels, 0); // raw compression
-            for texel in layer.rgba.chunks_exact(4) {
+            for texel in layer.rgba.as_chunks::<4>().0 {
                 pixels.push(texel[if channel == -1 { 3 } else { channel as usize }]);
             }
         }
@@ -118,7 +118,7 @@ pub fn encode(width: u32, height: u32, layers: &[Layer]) -> Result<Vec<u8>, Erro
     out.extend_from_slice(&layer_mask);
     u16be(&mut out, 0); // raw composite
     for channel in 0..4 {
-        for texel in composite.chunks_exact(4) {
+        for texel in composite.as_chunks::<4>().0 {
             out.push(texel[channel]);
         }
     }

@@ -1,27 +1,36 @@
 # Kasane 2D
 
-Kasane 2D is building a Godot-based, agent-first Live2D editor with an editable
-Document, project persistence, GDScript authoring, and MOC3 import and export.
-The repository already includes a PurismCore + gd-cubism runtime for loading,
-deforming, and displaying models. Editor delivery is tracked in the archived
-[engineering roadmap](docs/archive/ROADMAP.md) and its separate milestones.
-Native build and test commands are in [native validation](docs/archive/NATIVE-VALIDATION.md).
+Kasane 2D provides a Rust authoring SDK, Python bindings, and a WGPU renderer
+for editable 2D models. The current workflow creates or imports a project with
+`kasane.Session`, edits it in Python, observes rendered frames with
+`kasane.Observer`, and exports a MOC3 package.
 
-## Desktop application shells
+See [architecture](docs/ARCHITECTURE.md), [SDK API](docs/SDK-API.md), and
+[validation](docs/VALIDATION.md) for the current interfaces and checks.
 
-Standalone Editor and Viewer entry points are available under `apps/`.
-See [startup, checks and export instructions](apps/README.md). Model editing and
-runtime loading are not connected yet; these shells do not complete M5/M6.
+## Build and test
+
+```sh
+cargo test --workspace --locked
+RUSTFLAGS='-C strip=none' python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
+python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
+```
+
+The wheel validator installs the wheel into a temporary environment outside
+the source tree and tests project creation, import, editing, save, and export.
+An observe-enabled wheel can also run GPU and pinned image-reference checks;
+`--full` additionally requires official and Purism Core probes. See the
+[tool guide](tools/README.md) for the complete commands.
 
 ## Acknowledgements
 
-This project builds on the work of upstream open-source projects:
+This project builds on upstream open-source projects:
 
-- [GDCubism](https://github.com/MizunagiKB/gd_cubism) by MizunagiKB, which
-  provides the foundation of the Godot integration. GDCubism-derived portions
-  remain Copyright (c) 2023 MizunagiKB and are used under the MIT License.
+- [GDCubism](https://github.com/MizunagiKB/gd_cubism) by MizunagiKB remains in
+  the separate Godot comparison demo and benchmark. GDCubism-derived portions
+  remain Copyright (c) 2023 MizunagiKB under the MIT License.
 - [PurismCore](https://github.com/SakuraMotion/PurismCore) by the Sakura Motion
-  Project, included through a forked Git submodule as an alternative Cubism
+  Project is included through a forked Git submodule as an alternative Cubism
   Core-compatible provider under its MIT License.
 
 The maintainers and contributors of those projects are not responsible for,
@@ -35,15 +44,13 @@ submodule carries a different notice. Existing third-party copyright and
 license notices remain in force. In particular, the `godot-cpp` submodule and
 Live2D-derived benchmark sources are governed by their respective licenses;
 the repository MIT License does not relicense them. See
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the applicable scopes and
-notices.
+[third-party notices](THIRD_PARTY_NOTICES.md) for their scopes.
 
 Live2D, Cubism, the Live2D Cubism SDK, Cubism Core, Cubism Native Framework,
 and associated sample data are owned by or licensed through Live2D Inc. and/or
 their respective rightsholders. This project is independent and is not
 affiliated with, authorized by, endorsed by, or sponsored by Live2D Inc. The
-names “Live2D” and “Cubism” are used only to describe interoperability; no
-affiliation or endorsement is implied.
+names “Live2D” and “Cubism” describe interoperability only.
 
 This repository does not distribute the proprietary Cubism Core binary, a
 Cubism SDK package, or Live2D sample model assets. Users who obtain, build,

@@ -1,6 +1,6 @@
 # Document Bridge → SDK 覆盖清单
 
-状态：S0 清点完成；仅标为 `已实现` 的入口在新 SDK 中可运行。新契约测试位于 `modules/kasane-sdk/tests/`。每个后续入口仍需正常和失败契约测试。`session_mut`、`apply`、`evaluated_frame` 与内部发布机制是旧宿主实现细节，不作为同名 SDK API 迁移；generation 和 object epoch 由新 `Version`/`ObjectHandle` 表达。
+本表记录 Document Bridge 到 SDK 的能力映射；当前可运行入口以 [SDK-API.md](SDK-API.md) 和 `modules/kasane-sdk/tests/` 为准。`session_mut`、`apply`、`evaluated_frame` 与内部发布机制是旧宿主实现细节，不作为同名 SDK API 迁移；generation 和 object epoch 由新 `Version`/`ObjectHandle` 表达。
 
 | 旧公开入口 | 新 SDK 入口或方向 | 状态 / 测试 |
 | --- | --- | --- |

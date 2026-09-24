@@ -3,7 +3,7 @@ set -euo pipefail
 
 tools_dir=${0:A:h}
 repo_dir=${tools_dir:h}
-demo_dir=${repo_dir}/demos/godot
+demo_dir=${repo_dir}/demos/gd-cubism-demo
 gd_cubism_dir=${repo_dir}/modules/gd-cubism
 purism_dir=${repo_dir}/modules/purism-core
 purism_build=${repo_dir}/target/cubism-matrix/core/purism-v6

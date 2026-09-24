@@ -23,16 +23,21 @@ jobs:
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.14'
       - name: Acceptance validator negative controls
-        run: python -m unittest discover -s tools -p test_acceptance_validators.py -v
-      - name: M3C acceptance evidence controls
-        run: python -m unittest discover -s tools -p test_validate_m3c.py -v
+        run: python -m unittest discover -s tests -p test_acceptance_validators.py -v
       - name: Decoder safety without native Core
         env:
           KASANE_MOC3_DISABLE_CORE_VALIDATION: "1"
         run: cargo test -p kasane-moc3 --no-default-features --test safety_tests --locked
       - name: Regression tests
         run: cargo test --workspace --locked
-      - name: Build extension
-        run: cargo build --release -p kasane-godot --locked
+      - name: Build Python wheel
+        env:
+          RUSTFLAGS: -C strip=none
+        run: python -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
+      - name: SDK wheel integration
+        run: python -c "from pathlib import Path; import subprocess, sys; wheels = list(Path('target/wheels').glob('kasane-*.whl')); assert len(wheels) == 1, wheels; sys.exit(subprocess.call([sys.executable, 'tools/validate_sdk.py', '--wheel', str(wheels[0])]))"
+      - name: WGPU blend reference
+        if: runner.os == 'macOS'
+        run: python tools/compare_wgpu_blends.py

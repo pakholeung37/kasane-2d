@@ -1,6 +1,6 @@
 //! Standalone GPU matrix for the 18 color × 5 alpha extended blend modes.
 //! The companion script `tools/compare_wgpu_blends.py` compares its PNG with
-//! the existing Godot shader reference using identical sample colors.
+//! a pinned official Framework capture using identical sample colors.
 use std::collections::HashMap;
 use std::fs::File;
 use std::future::Future;
@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let instance = wgpu::Instance::default();
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))?;
     let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
-    // The Godot comparison fixture receives these as straight source colors
+    // The pinned external comparison fixture uses straight source colors
     // and premultiplied destination colors. The WGPU normal draw produces the
     // destination's premultiplied attachment value from straight input.
     let colors = [
