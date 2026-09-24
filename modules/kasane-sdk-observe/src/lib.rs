@@ -8,7 +8,6 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use kasane_core::{DrawableFrame, ImageAsset, PreviewValues};
-use kasane_preview::required_asset_ids;
 use kasane_project::{read_project_asset, AssetData};
 use kasane_sdk::{AuthoringSession, Version};
 
@@ -83,7 +82,11 @@ impl ObservationInput {
                 message: error.message.into(),
                 asset_id: error.object_ids.first().cloned(),
             })?;
-        let required: BTreeSet<_> = required_asset_ids(&frame).into_iter().collect();
+        let required: BTreeSet<_> = frame
+            .drawables
+            .iter()
+            .map(|drawable| drawable.texture_asset_id.as_str())
+            .collect();
         let mut assets = Vec::with_capacity(required.len());
         for id in required {
             let asset = session.asset(id).ok_or_else(|| ObservationError {

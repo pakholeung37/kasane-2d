@@ -3,14 +3,14 @@
 ```text
 Python wheel (kasane.Session) → kasane-sdk → kasane-core / kasane-project / kasane-moc3
              │                     │
-             └── kasane.Observer → kasane-sdk-observe → kasane-preview
+             └── kasane.Observer → kasane-sdk-observe → kasane-project
                                                         ↓
                                 DrawableFrame → kasane-render → kasane-render-wgpu
                                                                       │
                                                PNG / focus crop
 ```
 
-`kasane-sdk` 提供隔离编辑、版本检查、undo/redo、导入、工程保存和 MOC3 导出；Python wheel 暴露脚本入口。`kasane-sdk-observe` 从已发布或未发布的会话制作只读快照，复用 `kasane-preview` 的资源验证，并通过 `kasane-render-wgpu` 输出帧与诊断资料。
+`kasane-sdk` 提供隔离编辑、版本检查、undo/redo、导入、工程保存和 MOC3 导出；Python wheel 暴露脚本入口。`kasane-sdk-observe` 从已发布或未发布的会话制作只读快照，通过 `kasane-project` 读取并验证图像资源，再由 `kasane-render-wgpu` 输出帧与诊断资料。
 
 ## SDK 与 Python 包的职责
 

@@ -520,14 +520,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kasane-preview"
-version = "0.1.0"
-dependencies = [
- "kasane-core",
- "kasane-project",
-]
-
-[[package]]
 name = "kasane-project"
 version = "0.1.0"
 dependencies = [
@@ -596,7 +588,6 @@ name = "kasane-sdk-observe"
 version = "0.1.0"
 dependencies = [
  "kasane-core",
- "kasane-preview",
  "kasane-project",
  "kasane-render",
  "kasane-render-wgpu",
