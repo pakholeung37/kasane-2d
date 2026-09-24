@@ -56,8 +56,8 @@ ctest --test-dir target/cubism-matrix/core/purism-v6 --output-on-failure
 Validate the matrix alone, or include local prerequisites:
 
 ```sh
-python3 benchmarks/cubism-matrix/tools/matrix.py validate
-python3 benchmarks/cubism-matrix/tools/matrix.py validate --local
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py validate
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py validate --local
 ```
 
 For Native OpenGL builds, prepare the SDK's vendored GLEW and GLFW once:
@@ -74,11 +74,11 @@ uses the same instance count, grid, viewport, warmup, and sampling interval as
 Godot.
 
 ```sh
-python3 benchmarks/cubism-matrix/tools/matrix.py build-native cubism-native
-python3 benchmarks/cubism-matrix/tools/matrix.py run cubism-native
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py build-native cubism-native
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py run cubism-native
 
-python3 benchmarks/cubism-matrix/tools/matrix.py build-native purism-native
-python3 benchmarks/cubism-matrix/tools/matrix.py run purism-native
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py build-native purism-native
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py run purism-native
 ```
 
 The current Native runner uses OpenGL. A future Metal runner should report a
@@ -92,11 +92,11 @@ function and compatible providers may keep parsed state outside caller-owned
 in-place buffers. The 750 ms steady-state phases are the primary comparison.
 
 ```sh
-python3 benchmarks/cubism-matrix/tools/matrix.py build-core cubism-core
-python3 benchmarks/cubism-matrix/tools/matrix.py run cubism-core
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py build-core cubism-core
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py run cubism-core
 
-python3 benchmarks/cubism-matrix/tools/matrix.py build-core purism-core
-python3 benchmarks/cubism-matrix/tools/matrix.py run purism-core
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py build-core purism-core
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py run purism-core
 ```
 
 For a repeatable comparison, build both providers, run them three times in
@@ -104,16 +104,15 @@ alternating order, and write median data to
 `artifacts/results/latest-core-only.json`:
 
 ```sh
-python3 benchmarks/cubism-matrix/tools/matrix.py benchmark-core --repeats 3
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py benchmark-core --repeats 3
 ```
 
 ## Godot cases
 
-Create the extension build environment with SCons in `modules/gd-cubism/.venv`:
+Install the locked SCons dependency in the repository's uv environment:
 
 ```sh
-python3 -m venv modules/gd-cubism/.venv
-modules/gd-cubism/.venv/bin/python -m pip install scons==4.7.0
+uv sync --locked --group benchmark
 ```
 
 Building a case copies its complete addon into a case-specific artifact and
@@ -134,11 +133,11 @@ Building one provider no longer overwrites the other. The
 case-specific descriptor only selects the matching existing binary.
 
 ```sh
-python3 benchmarks/cubism-matrix/tools/matrix.py build-godot cubism-godot
-python3 benchmarks/cubism-matrix/tools/matrix.py run cubism-godot
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py build-godot cubism-godot
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py run cubism-godot
 
-python3 benchmarks/cubism-matrix/tools/matrix.py build-godot purism-godot
-python3 benchmarks/cubism-matrix/tools/matrix.py run purism-godot
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py build-godot purism-godot
+uv run --locked python benchmarks/cubism-matrix/tools/matrix.py run purism-godot
 ```
 
 Use `GODOT_BIN` or `--godot-bin` when Godot is installed elsewhere.

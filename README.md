@@ -13,11 +13,22 @@ local models used by tests and benchmarks.
 
 ## Build and test
 
+Python tools use uv (0.10.7 or newer) and CPython 3.14. The root
+`pyproject.toml` and `uv.lock` manage development tools; the SDK wheel remains
+an independently built package under `modules/kasane-python`.
+
 ```sh
+uv sync --locked
 cargo test --workspace --locked
-python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
-python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
+uv build --wheel --python 3.14 --out-dir target/python-wheels modules/kasane-python
+uv run --locked python tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
 ```
+
+Run Python tools with `uv run --locked ...`. Add development dependencies with
+`uv add --group dev <package>` and commit both `pyproject.toml` and `uv.lock`.
+The optional `benchmark` group provides SCons (`uv sync --locked --group benchmark`).
+Agent experiments share one uv-managed environment per experiment and allow
+participants to install dependencies; see the [experiment guide](docs/SDK-EXPERIMENTS.md).
 
 The wheel validator installs the wheel into a temporary environment outside
 the source tree and tests project creation, import, editing, save, and export.

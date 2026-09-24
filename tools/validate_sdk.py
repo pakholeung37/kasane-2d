@@ -380,6 +380,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--wheel", required=True, type=Path)
     parser.add_argument("--python", type=Path, default=Path(sys.executable))
+    parser.add_argument("--uv", default="uv", help="uv executable used to manage the isolated environment")
     parser.add_argument("--output", type=Path, default=ROOT / "target/sdk-acceptance")
     parser.add_argument("--require-gpu", action="store_true")
     parser.add_argument("--official-probe", type=Path)
@@ -430,10 +431,15 @@ def main() -> int:
             outside = Path(temporary)
             environment = os.environ.copy()
             environment.pop("PYTHONPATH", None)
-            command("venv", [str(python), "-m", "venv", str(outside / "venv")],
+            environment.pop("PYTHONHOME", None)
+            environment.pop("VIRTUAL_ENV", None)
+            environment.pop("UV_PROJECT_ENVIRONMENT", None)
+            report["uv_version"] = command("uv-version", [args.uv, "--version"],
+                    cwd=outside, env=environment, logs=logs)
+            command("venv", [args.uv, "venv", "--python", str(python), str(outside / "venv")],
                     cwd=outside, env=environment, logs=logs)
             installed = outside / "venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
-            command("install", [str(installed), "-m", "pip", "install", "--no-index",
+            command("install", [args.uv, "pip", "install", "--python", str(installed), "--no-index",
                                 "--no-deps", str(wheel)],
                     cwd=outside, env=environment, logs=logs)
             command("cpu-tests", [str(installed), str(CPU_TEST), "-q"],

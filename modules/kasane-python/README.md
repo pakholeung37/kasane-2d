@@ -16,11 +16,21 @@ on an index is this build.
 From the repository root:
 
 ```sh
-python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
-python3.14 -m pip install /absolute/path/to/kasane-wheel.whl
+uv sync --locked
+uv build --wheel --python 3.14 --out-dir target/python-wheels modules/kasane-python
+uv pip install --python .venv /absolute/path/to/kasane-wheel.whl
 ```
 
-Replace the wheel path with the actual file produced by the first command.
+Replace the wheel path with the actual file produced by the build command.
+Use `target/python-wheels` for final wheels: Maturin stages its build in
+`target/wheels`, so using that same path as `uv build --out-dir` causes a
+same-file copy error.
+The repository uses uv and the committed root `uv.lock` for Python tools.
+Outside the repository, create an environment with `uv venv --python 3.14`
+and install the wheel with `uv pip install --python .venv /absolute/path/to/kasane-wheel.whl`.
+After installing a wheel into the repository environment, `uv run --locked`
+retains it; an exact `uv sync --locked` removes packages not in the root lock,
+so reinstall the wheel if needed.
 The workspace release profile disables debug-info stripping only for
 `kasane-python`. This keeps the wheel loadable on macOS 27 with a Homebrew
 Rust build linked against an external `llvm@22` whose `llvm-objcopy` still
@@ -31,8 +41,7 @@ The default build supports CPU authoring and evaluation. For GPU observation,
 build with Maturin's `observe` feature and install that wheel instead:
 
 ```sh
-python3.14 -m pip install maturin==1.15.0
-python3.14 -m maturin build --manifest-path modules/kasane-python/Cargo.toml --release --features observe --out target/wheels
+uv run --locked maturin build --manifest-path modules/kasane-python/Cargo.toml --release --features observe --out target/python-wheels
 ```
 
 The GPU build still needs a working graphics device at runtime. Query
@@ -69,7 +78,7 @@ reopened = kasane.open_project(saved.manifest)
 print(reopened.mesh_ids())
 ```
 
-Run `python3.14 first_project.py /absolute/texture.png /absolute/output`.
+Run `uv run --locked python first_project.py /absolute/texture.png /absolute/output`.
 `Session.save()` does not overwrite an unrelated project. For a new numbered
 destination when one exists, pass `on_exists="new"` and use the returned
 `SaveResult.manifest`.
@@ -152,7 +161,7 @@ the block with an exception also rolls the edit back. GPU errors raise
 To run a script once and write a machine-readable result:
 
 ```sh
-python3.14 -m kasane run /absolute/script.py --report /absolute/report.json
+uv run --locked python -m kasane run /absolute/script.py --report /absolute/report.json
 ```
 
 The runner records output, exceptions, and session versions. It does not save

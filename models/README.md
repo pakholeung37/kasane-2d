@@ -9,7 +9,7 @@
 | Rice、Mark | 同一 SDK 的 `Samples/Resources/Rice/`、`Samples/Resources/Mark/` | 可选旧版本 MOC3 导入测试。 |
 | Ren | 同一 SDK 的 `Samples/Resources/Ren/` | 可选 MOC3 导入与导出测试。 |
 
-将 Mao 的完整模型包放到 `models/local/mao/`，保留 `runtime/` 内的相对路径。运行 `python3 benchmarks/cubism-matrix/tools/matrix.py prepare-godot` 或构建渲染 benchmark 时，工具会把模型复制到 benchmark 工程的已忽略 `assets/live2d/mao/`；该目录是生成副本，不作为模型源。Core-only benchmark 与 MOC3 测试直接读取 `models/local/mao/`。
+将 Mao 的完整模型包放到 `models/local/mao/`，保留 `runtime/` 内的相对路径。运行 `uv run --locked python benchmarks/cubism-matrix/tools/matrix.py prepare-godot` 或构建渲染 benchmark 时，工具会把模型复制到 benchmark 工程的已忽略 `assets/live2d/mao/`；该目录是生成副本，不作为模型源。Core-only benchmark 与 MOC3 测试直接读取 `models/local/mao/`。
 
 Cubism SDK 样本保留在 SDK 安装包原位，避免复制模型并破坏 SDK 自身的目录结构。缺少本地 SDK 或 Mao 时，相关可选测试会跳过；正式 benchmark 需要按 [`benchmarks/cubism-matrix/README.md`](../benchmarks/cubism-matrix/README.md) 安装依赖。
 

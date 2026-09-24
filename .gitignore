@@ -14,3 +14,4 @@ benchmarks/cubism-matrix/artifacts/
 benchmarks/cubism-matrix/.godot/
 benchmarks/cubism-matrix/runners/native/build*/
 **/__pycache__/
+.venv/

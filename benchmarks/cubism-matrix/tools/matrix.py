@@ -264,11 +264,6 @@ def build_godot(case_id: str, jobs: int, platform: str, arch: str) -> Path:
     if case["host"] != "gd-cubism":
         raise ValueError(f"{case_id} is not a Godot case")
     extension_root = REPO_ROOT / "modules/gd-cubism"
-    scons_python = extension_root / ".venv/bin/python"
-    if not scons_python.is_file():
-        raise FileNotFoundError(
-            f"SCons environment does not exist: {scons_python.parent}"
-        )
     environment = os.environ.copy()
     environment["CUBISM_SDK_ROOT"] = str(SDK_ROOT)
     environment["CUBISM_CORE_PROVIDER"] = case["core"]
@@ -278,7 +273,8 @@ def build_godot(case_id: str, jobs: int, platform: str, arch: str) -> Path:
         environment.pop("CUBISM_CORE_LIBRARY", None)
     run(
         [
-            str(scons_python), "-m", "SCons",
+            "uv", "run", "--locked", "--project", str(REPO_ROOT),
+            "--group", "benchmark", "python", "-m", "SCons",
             f"platform={platform}", f"arch={arch}",
             "target=template_release", f"-j{jobs}",
         ],

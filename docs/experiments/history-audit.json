@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "audited_on": "2026-09-24",
+  "repository_revision": "b9f46bbee2bb86c38147be8b00125505c89f5a0f",
+  "method": "Read archived narrative and eight local original/replay grade files; did not rerun old scripts or validate old wheel binaries.",
+  "narrative": "docs/archive/SDK-USABILITY-PROGRESSIVE-RESULTS.md",
+  "records": [
+    {
+      "path": "target/sdk-usability/progressive/host/s3-luna-a-grade.json",
+      "sha256": "8a49cb209f102c17ed66962cd45691a392775f2f7941a465b14f911506f904ab",
+      "status": "passed",
+      "checks": 66,
+      "passed_checks": 66
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s3-luna-a-replay-grade.json",
+      "sha256": "8a49cb209f102c17ed66962cd45691a392775f2f7941a465b14f911506f904ab",
+      "status": "passed",
+      "checks": 66,
+      "passed_checks": 66
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s3-luna-b-grade.json",
+      "sha256": "8a49cb209f102c17ed66962cd45691a392775f2f7941a465b14f911506f904ab",
+      "status": "passed",
+      "checks": 66,
+      "passed_checks": 66
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s3-luna-b-replay-grade.json",
+      "sha256": "8a49cb209f102c17ed66962cd45691a392775f2f7941a465b14f911506f904ab",
+      "status": "passed",
+      "checks": 66,
+      "passed_checks": 66
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s4-v5-luna-a-grade.json",
+      "sha256": "dce01c01c1335082f5caee05205c14b539e9ddbd3f1c61e63fc84b9ae1cf7bba",
+      "status": "passed",
+      "checks": 18,
+      "passed_checks": 18
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s4-v5-luna-a-replay-grade.json",
+      "sha256": "dce01c01c1335082f5caee05205c14b539e9ddbd3f1c61e63fc84b9ae1cf7bba",
+      "status": "passed",
+      "checks": 18,
+      "passed_checks": 18
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s4-v5-luna-b-grade.json",
+      "sha256": "dce01c01c1335082f5caee05205c14b539e9ddbd3f1c61e63fc84b9ae1cf7bba",
+      "status": "passed",
+      "checks": 18,
+      "passed_checks": 18
+    },
+    {
+      "path": "target/sdk-usability/progressive/host/s4-v5-luna-b-replay-grade.json",
+      "sha256": "dce01c01c1335082f5caee05205c14b539e9ddbd3f1c61e63fc84b9ae1cf7bba",
+      "status": "passed",
+      "checks": 18,
+      "passed_checks": 18
+    }
+  ],
+  "limits": [
+    "Historical artifacts under target are not version controlled.",
+    "Reported checks are not independent participant counts.",
+    "Historical conditions differ from the current SDK and shared dependency policy."
+  ]
+}
