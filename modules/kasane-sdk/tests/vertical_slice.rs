@@ -5,7 +5,7 @@ const DOCUMENT_ID: &str = "00000000-0000-4000-8000-000000000001";
 const ASSET_ID: &str = "00000000-0000-4000-8000-000000000002";
 const MESH_ID: &str = "00000000-0000-4000-8000-000000000003";
 fn fixture_png() -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/sdk/asymmetric-2x2.png")
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png")
 }
 
 fn session() -> AuthoringSession {
@@ -43,7 +43,7 @@ fn owned_workspace_isolated_until_publication_and_checks_source_version() {
 #[test]
 fn shared_authoring_contract_matches_expected_results() {
     let spec: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../examples/sdk/authoring-contract.json"
+        "fixtures/authoring-contract.json"
     ))
     .unwrap();
     let text = |field: &str| spec[field].as_str().unwrap();

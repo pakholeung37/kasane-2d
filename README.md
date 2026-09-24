@@ -1,20 +1,21 @@
 # Kasane 2D
 
 Kasane 2D provides a Rust authoring SDK, Python bindings, and a WGPU renderer
-for editable 2D models. The current workflow creates or imports a project with
-`kasane.Session`, edits it in Python, observes rendered frames with
-`kasane.Observer`, and exports a MOC3 package.
+for editable 2D models. The Python workflow creates or imports a project with
+`kasane.Session`, edits and exports it, and can render frames with
+`kasane.Observer` when the optional GPU feature is built.
 
-See [architecture](docs/ARCHITECTURE.md), [SDK API](docs/SDK-API.md), and
-[validation](docs/VALIDATION.md) for the current interfaces and checks. The
-[model inventory](models/README.md) records local and SDK sample models used by
-tests and benchmarks.
+Start with the [Python SDK README](modules/kasane-python/README.md) and
+[Python API reference](modules/kasane-python/API.md). See
+[architecture](docs/ARCHITECTURE.md) and [validation](docs/VALIDATION.md) for
+the implementation and checks. The [model inventory](models/README.md) records
+local models used by tests and benchmarks.
 
 ## Build and test
 
 ```sh
 cargo test --workspace --locked
-RUSTFLAGS='-C strip=none' python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
+python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
 python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
 ```
 

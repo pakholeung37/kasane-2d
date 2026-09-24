@@ -32,8 +32,8 @@ REFERENCE_CAPTURE = ROOT / "examples/sdk/python_reference_capture.py"
 IMAGE_COMPARATOR = ROOT / "tools/compare_sdk_image.py"
 IMAGE_REFERENCE = ROOT / "tests/fixtures/render_reference/external_v50_default.png"
 IMAGE_REFERENCE_METADATA = IMAGE_REFERENCE.with_suffix(".json")
-TEXTURE = ROOT / "examples/sdk/asymmetric-2x2.png"
-SECOND_TEXTURE = ROOT / "tests/fixtures/external_v50/texture_00.png"
+TEXTURE = ROOT / "modules/kasane-python/tests/fixtures/asymmetric-2x2.png"
+SECOND_TEXTURE = ROOT / "modules/kasane-python/tests/fixtures/texture_00.png"
 EXTERNAL_MODEL3 = ROOT / "tests/fixtures/external_v50/model.model3.json"
 EXTERNAL_MOC3 = ROOT / "tests/fixtures/external_v50/model.moc3"
 

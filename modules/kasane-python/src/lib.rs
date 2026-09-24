@@ -16,6 +16,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use session::NativeSession;
 
+/// Report available project IO, validation, and GPU observation capabilities.
 #[pyfunction]
 fn capabilities(py: Python<'_>) -> PyResult<Py<PyDict>> {
     let result = PyDict::new(py);

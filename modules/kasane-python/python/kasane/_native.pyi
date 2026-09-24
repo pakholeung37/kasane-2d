@@ -37,6 +37,8 @@ Evaluation = tuple[list[tuple[str, float, float, bool]], list[tuple[str, list[Po
 
 
 class SdkFailure(Exception):
+    """SDK failure with stable ``code`` and structured operation context."""
+
     code: str
     operation: str
     object_ids: list[str]
@@ -47,6 +49,8 @@ class SdkFailure(Exception):
 
 
 class ObservationFailure(Exception):
+    """GPU observation failure with a code and optional texture asset ID."""
+
     code: str
     asset_id: str | None
 
@@ -60,10 +64,16 @@ class NativeObserver:
 
 
 class ObjectHandle:
+    """Opaque object identity that may become stale after deletion or reset."""
+
     @property
-    def id(self) -> str: ...
+    def id(self) -> str:
+        """Canonical ID of the referenced object."""
+        ...
     @property
-    def kind(self) -> str: ...
+    def kind(self) -> str:
+        """Kind of the referenced SDK object."""
+        ...
 
 
 class NativeEdit:
@@ -296,4 +306,6 @@ class NativeSession:
     def redo(self) -> Version: ...
 
 
-def capabilities() -> dict[str, bool]: ...
+def capabilities() -> dict[str, bool]:
+    """Report available import, export, validation, and GPU observation features."""
+    ...

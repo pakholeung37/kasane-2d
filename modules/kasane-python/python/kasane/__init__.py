@@ -32,12 +32,16 @@ Point = tuple[float, float]
 
 
 class Appearance(NamedTuple):
+    """Drawable opacity and RGB multiply/screen colors."""
+
     opacity: float = 1
     multiply: tuple[float, float, float] = (1, 1, 1)
     screen: tuple[float, float, float] = (0, 0, 0)
 
 
 class MeshSnapshot(NamedTuple):
+    """Copy of a mesh's name, vertex IDs, and source positions."""
+
     id: str
     name: str
     vertex_ids: list[int]
@@ -46,6 +50,8 @@ class MeshSnapshot(NamedTuple):
 
 
 class MeshProperties(NamedTuple):
+    """Drawing fields accepted by Edit.update_mesh_properties."""
+
     texture_asset_id: str
     appearance: Appearance
     draw_order: float | None
@@ -57,6 +63,8 @@ class MeshProperties(NamedTuple):
 
 
 class MeshPropertiesSnapshot(NamedTuple):
+    """Versioned copy of a mesh's drawing fields."""
+
     texture_asset_id: str
     appearance: Appearance
     draw_order: float | None
@@ -69,6 +77,8 @@ class MeshPropertiesSnapshot(NamedTuple):
 
 
 class MeshGeometryData(NamedTuple):
+    """Source vertices, UVs, and triangles indexed by vertex ID."""
+
     vertex_ids: Sequence[int]
     positions: Sequence[Point]
     uvs: Sequence[Point]
@@ -76,6 +86,8 @@ class MeshGeometryData(NamedTuple):
 
 
 class MeshDrawingData(NamedTuple):
+    """Texture, appearance, ordering, blending, and mask settings for a mesh."""
+
     texture_asset_id: str
     appearance: Appearance = Appearance()
     draw_order: float | None = None
@@ -88,6 +100,8 @@ class MeshDrawingData(NamedTuple):
 
 
 class MeshRecordSpec(NamedTuple):
+    """Complete input record for creating a mesh."""
+
     id: str
     name: str
     geometry: MeshGeometryData
@@ -97,6 +111,8 @@ class MeshRecordSpec(NamedTuple):
 
 
 class MeshRecordSnapshot(NamedTuple):
+    """Versioned full mesh record, including runtime and parent identities."""
+
     id: str
     runtime_id: str
     name: str
@@ -108,18 +124,24 @@ class MeshRecordSnapshot(NamedTuple):
 
 
 class TextureRevision(NamedTuple):
+    """Content hash and GPU upload revision of an observed texture."""
+
     asset_id: str
     sha256: str
     revision: int
 
 
 class DrawableBounds(NamedTuple):
+    """Visibility and optional pixel bounds of a rendered drawable."""
+
     id: str
     visible: bool
     bounds: tuple[int, int, int, int] | None
 
 
 class ObservedFrame(NamedTuple):
+    """Rendered RGBA/PNG image with input, version, view, and adapter details."""
+
     version: Version
     input_sha256: str
     evaluation_revision: int
@@ -139,12 +161,16 @@ class ObservedFrame(NamedTuple):
     adapter_backend: str
 
     def save_png(self, path: Path) -> None:
+        """Write this frame's PNG bytes to an absolute path."""
+
         if not path.is_absolute():
             raise ValueError("PNG output path must be absolute")
         path.write_bytes(self.png)
 
 
 class ObservationRun(NamedTuple):
+    """Paths to one observation run's report, images, and contact sheet."""
+
     directory: Path
     report: Path
     frames: list[Path]
@@ -158,6 +184,8 @@ class ObservationRun(NamedTuple):
 
 
 class AssetSnapshot(NamedTuple):
+    """Versioned PNG asset metadata, including source path and SHA-256."""
+
     id: str
     name: str
     source: str
@@ -168,6 +196,8 @@ class AssetSnapshot(NamedTuple):
 
 
 class CanvasSnapshot(NamedTuple):
+    """Canvas pixel size, origin, and pixels-per-runtime-unit scale."""
+
     width: float
     height: float
     origin_x: float
@@ -181,6 +211,8 @@ class CanvasSnapshot(NamedTuple):
 
 
 class DrawOrderGroup(NamedTuple):
+    """Explicit draw-order range and ordered items under an owner."""
+
     owner: str
     items: list[str]
     min_order: int
@@ -188,6 +220,8 @@ class DrawOrderGroup(NamedTuple):
 
 
 class GeometrySnapshot(NamedTuple):
+    """Versioned source geometry; ``space`` identifies canvas or parent coordinates."""
+
     version: Version
     mesh_id: str
     vertex_ids: list[int]
@@ -199,12 +233,16 @@ class GeometrySnapshot(NamedTuple):
 
 
 class GeometryIssue(NamedTuple):
+    """Non-blocking authoring hint for a mesh or triangle."""
+
     kind: str
     mesh_id: str
     triangle_index: int | None
 
 
 class HistoryState(NamedTuple):
+    """Undo/redo counts, estimated use, and configured history limits."""
+
     undo_steps: int
     redo_steps: int
     estimated_bytes: int
@@ -213,6 +251,8 @@ class HistoryState(NamedTuple):
 
 
 class EditEvent(NamedTuple):
+    """Published change event with before/after versions and affected IDs."""
+
     label: str
     before: Version
     after: Version
@@ -222,6 +262,8 @@ class EditEvent(NamedTuple):
 
 
 class ParameterSnapshot(NamedTuple):
+    """Versioned parameter definition and its sampling range."""
+
     id: str
     name: str
     minimum: float
@@ -233,12 +275,14 @@ class ParameterSnapshot(NamedTuple):
 
 
 class Axis(NamedTuple):
+    """Parameter ID and ordered key values for a binding axis."""
+
     parameter_id: str
     keys: list[float]
 
 
 class MeshKeyform(NamedTuple):
-    """Immutable keyform record; use ``_replace`` to copy with changed fields."""
+    """Mesh key combination, positions, and appearance; use ``_replace`` to copy."""
 
     keys: list[float]
     positions: list[Point]
@@ -247,6 +291,8 @@ class MeshKeyform(NamedTuple):
 
 
 class MeshBindingSnapshot(NamedTuple):
+    """Versioned mesh binding with axes and a complete keyform grid."""
+
     id: str
     mesh_id: str
     axes: list[Axis]
@@ -255,6 +301,8 @@ class MeshBindingSnapshot(NamedTuple):
 
 
 class PartSnapshot(NamedTuple):
+    """Versioned Part and its organization parent and drawing state."""
+
     id: str
     runtime_id: str
     name: str
@@ -265,6 +313,8 @@ class PartSnapshot(NamedTuple):
 
 
 class RotationPose(NamedTuple):
+    """Rotation origin, angle, scale, and reflection flags."""
+
     origin: tuple[float, float]
     angle: float = 0
     scale: float = 1
@@ -273,18 +323,24 @@ class RotationPose(NamedTuple):
 
 
 class SceneWarpKeyform(NamedTuple):
+    """Warp scene keyform with control points and appearance."""
+
     keys: list[float]
     positions: list[Point]
     appearance: Appearance = Appearance()
 
 
 class SceneRotationKeyform(NamedTuple):
+    """Rotation scene keyform with pose and appearance."""
+
     keys: list[float]
     rotation: RotationPose
     appearance: Appearance = Appearance()
 
 
 class ScenePartKeyform(NamedTuple):
+    """Part scene keyform with draw order."""
+
     keys: list[float]
     draw_order: float
 
@@ -293,6 +349,8 @@ SceneKeyform = SceneWarpKeyform | SceneRotationKeyform | ScenePartKeyform
 
 
 class SceneBindingSnapshot(NamedTuple):
+    """Versioned Part, Warp, or Rotation scene binding."""
+
     id: str
     axes: list[Axis]
     kind: str
@@ -302,11 +360,15 @@ class SceneBindingSnapshot(NamedTuple):
 
 
 class RotationData(NamedTuple):
+    """Base angle and pose of a rotation transform."""
+
     base_angle: float
     pose: RotationPose
 
 
 class WarpData(NamedTuple):
+    """Warp grid dimensions, quad mode, and control points."""
+
     rows: int
     columns: int
     quad: bool
@@ -314,6 +376,8 @@ class WarpData(NamedTuple):
 
 
 class TransformSnapshot(NamedTuple):
+    """Versioned rotation or warp transform and its parent relationships."""
+
     id: str
     runtime_id: str
     name: str
@@ -328,12 +392,16 @@ class TransformSnapshot(NamedTuple):
 
 
 class OffscreenKeyform(NamedTuple):
+    """Opacity and optional colors for an offscreen keyform."""
+
     opacity: float
     multiply: tuple[float, float, float] | None = None
     screen: tuple[float, float, float] | None = None
 
 
 class OffscreenSpec(NamedTuple):
+    """Complete input record for an offscreen composition layer."""
+
     id: str
     name: str
     part_id: str
@@ -345,6 +413,8 @@ class OffscreenSpec(NamedTuple):
 
 
 class OffscreenSnapshot(NamedTuple):
+    """Versioned offscreen layer with Part keyform indices."""
+
     id: str
     runtime_id: str
     name: str
@@ -358,6 +428,8 @@ class OffscreenSnapshot(NamedTuple):
 
 
 class GlueVertexPair(NamedTuple):
+    """Paired vertex IDs and their individual glue weights."""
+
     vertex_a: int
     vertex_b: int
     weight_a: float
@@ -365,11 +437,15 @@ class GlueVertexPair(NamedTuple):
 
 
 class GlueBinding(NamedTuple):
+    """Parameter axes and sampled glue intensities."""
+
     axes: list[Axis]
     intensities: list[float]
 
 
 class GlueSpec(NamedTuple):
+    """Complete input record for glue between two meshes."""
+
     id: str
     name: str
     mesh_a_id: str
@@ -380,6 +456,8 @@ class GlueSpec(NamedTuple):
 
 
 class GlueSnapshot(NamedTuple):
+    """Versioned glue record, including its optional parameter binding."""
+
     id: str
     runtime_id: str
     name: str
@@ -392,6 +470,8 @@ class GlueSnapshot(NamedTuple):
 
 
 class BlendKeyTableSpec(NamedTuple):
+    """BlendShape parameter keys and the base key index."""
+
     id: str
     parameter_id: str
     keys: Sequence[float]
@@ -399,6 +479,8 @@ class BlendKeyTableSpec(NamedTuple):
 
 
 class BlendKeyTableSnapshot(NamedTuple):
+    """Versioned BlendShape key table."""
+
     id: str
     parameter_id: str
     keys: list[float]
@@ -407,6 +489,8 @@ class BlendKeyTableSnapshot(NamedTuple):
 
 
 class BlendConstraintSpec(NamedTuple):
+    """BlendShape parameter keys and constraint weights."""
+
     id: str
     parameter_id: str
     keys: Sequence[float]
@@ -414,6 +498,8 @@ class BlendConstraintSpec(NamedTuple):
 
 
 class BlendConstraintSnapshot(NamedTuple):
+    """Versioned BlendShape constraint."""
+
     id: str
     parameter_id: str
     keys: list[float]
@@ -422,6 +508,8 @@ class BlendConstraintSnapshot(NamedTuple):
 
 
 class BlendMeshDelta(NamedTuple):
+    """BlendShape mesh position and drawing deltas."""
+
     positions: Sequence[Point]
     opacity: float | None = None
     draw_order: float | None = None
@@ -430,6 +518,8 @@ class BlendMeshDelta(NamedTuple):
 
 
 class BlendWarpDelta(NamedTuple):
+    """BlendShape warp-control-point and appearance deltas."""
+
     points: Sequence[Point]
     opacity: float | None = None
     multiply: tuple[float, float, float] | None = None
@@ -437,6 +527,8 @@ class BlendWarpDelta(NamedTuple):
 
 
 class BlendRotationDelta(NamedTuple):
+    """BlendShape rotation-pose and appearance deltas."""
+
     origin: Point | None = None
     angle: float | None = None
     scale: float | None = None
@@ -446,14 +538,20 @@ class BlendRotationDelta(NamedTuple):
 
 
 class BlendPartDelta(NamedTuple):
+    """BlendShape Part draw-order delta."""
+
     draw_order: float
 
 
 class BlendGlueDelta(NamedTuple):
+    """BlendShape glue-intensity delta."""
+
     intensity: float
 
 
 class BlendOffscreenDelta(NamedTuple):
+    """BlendShape offscreen opacity and color deltas."""
+
     opacity: float
     multiply: tuple[float, float, float] | None = None
     screen: tuple[float, float, float] | None = None
@@ -466,6 +564,8 @@ BlendDelta = (
 
 
 class BlendBindingSpec(NamedTuple):
+    """BlendShape target, key table, constraints, and target-specific deltas."""
+
     id: str
     target_id: str
     target_kind: str
@@ -475,6 +575,8 @@ class BlendBindingSpec(NamedTuple):
 
 
 class BlendBindingSnapshot(NamedTuple):
+    """Versioned BlendShape binding."""
+
     id: str
     target_id: str
     target_kind: str
@@ -485,18 +587,24 @@ class BlendBindingSnapshot(NamedTuple):
 
 
 class ResourceIssue(NamedTuple):
+    """Missing or invalid external asset reported by resource diagnosis."""
+
     asset_id: str
     code: str
     message: str
 
 
 class StructureIssue(NamedTuple):
+    """Persisted-document validation issue for an object."""
+
     object_id: str
     code: str
     message: str
 
 
 class ParameterSample(NamedTuple):
+    """Requested and sampled parameter values, plus clamp status."""
+
     id: str
     requested: float
     value: float
@@ -504,16 +612,22 @@ class ParameterSample(NamedTuple):
 
 
 class DrawableSample(NamedTuple):
+    """Evaluated runtime positions of one drawable."""
+
     id: str
     positions: list[Point]
 
 
 class Evaluation(NamedTuple):
+    """Compact CPU evaluation of parameters and drawable positions."""
+
     parameters: list[ParameterSample]
     drawables: list[DrawableSample]
 
 
 class DrawableSnapshot(NamedTuple):
+    """Full evaluated drawable geometry and render attributes."""
+
     id: str
     runtime_id: str
     part_id: str
@@ -537,6 +651,8 @@ class DrawableSnapshot(NamedTuple):
 
 
 class EvaluatedOffscreenSnapshot(NamedTuple):
+    """Evaluated offscreen layer state and composition order."""
+
     id: str
     runtime_id: str
     owner_part_id: str
@@ -552,6 +668,8 @@ class EvaluatedOffscreenSnapshot(NamedTuple):
 
 
 class EvaluationSnapshot(NamedTuple):
+    """Full CPU evaluation with source version, drawables, and render plan."""
+
     version: Version
     source_revision: int
     canvas: CanvasSnapshot
@@ -572,7 +690,12 @@ def _evaluation_snapshot(data) -> EvaluationSnapshot:
 
 
 class SaveResult(NamedTuple):
-    """Save receipt; ``manifest`` is the path to the saved project."""
+    """Save receipt with the actual manifest path and publication status.
+
+    ``durable`` reports whether directory synchronization succeeded. ``warnings``
+    describe publication issues; ``history_warnings`` concern older resources
+    referenced by undo history.
+    """
 
     manifest: Path
     durable: bool
@@ -581,6 +704,8 @@ class SaveResult(NamedTuple):
 
 
 class ImportResult(NamedTuple):
+    """Import version, MOC version, resource diagnostics, and warnings."""
+
     version: Version
     moc_version: int
     diagnostics: list[ResourceIssue]
@@ -588,6 +713,8 @@ class ImportResult(NamedTuple):
 
 
 class ExportResult(NamedTuple):
+    """Export publication and durability status with warnings."""
+
     published: bool
     durable: bool
     warnings: list[str]
@@ -597,26 +724,32 @@ _sessions: WeakSet[Session] = WeakSet()
 
 
 class Edit:
-    """An atomic SDK edit. Commands publish together on successful exit."""
+    """Candidate edit that publishes all commands together on successful exit.
+
+    Any failed command aborts the candidate, even if its exception is caught.
+    An exception leaving the ``with`` block cancels it.
+    """
 
     def __init__(self, native) -> None:
         self._native = native
         self._closed = False
 
     def __enter__(self) -> Edit:
+        """Return this edit for use in a context manager."""
         return self
 
     def parameter(self, parameter_id: str) -> ParameterSnapshot | None:
-        """Read the parameter after preceding operations in this edit."""
+        """Read a parameter after preceding edit operations, or None if absent."""
         raw = self._native.parameter(parameter_id)
         return ParameterSnapshot(*raw) if raw is not None else None
 
     def mesh(self, mesh_id: str) -> MeshSnapshot | None:
-        """Read the mesh after preceding operations in this edit."""
+        """Read a mesh after preceding edit operations, or None if absent."""
         raw = self._native.mesh(mesh_id)
         return MeshSnapshot(*raw) if raw is not None else None
 
     def __exit__(self, exception_type, exception, traceback) -> bool:
+        """Commit on success, cancel on exception, and never suppress the exception."""
         if self._closed:
             return False
         if exception_type is not None:
@@ -633,24 +766,29 @@ class Edit:
             raise
 
     def add_png_asset(self, asset_id: str, name: str, absolute_path: Path) -> None:
+        """Read an absolute PNG path and add its size and content hash as an asset."""
         self._call(lambda: self._native.add_png_asset(asset_id, name, str(absolute_path)))
 
     def add_png_asset_from_base(
         self, asset_id: str, name: str, absolute_base: Path, relative_path: Path
     ) -> None:
+        """Add a PNG resolved from a relative path and an explicit absolute base."""
         self._call(lambda: self._native.add_png_asset_from_base(
             asset_id, name, str(absolute_base), str(relative_path)
         ))
 
     def replace_png_asset(self, asset_id: str, name: str, absolute_path: Path) -> None:
+        """Replace an asset with a PNG; new dimensions and content are allowed."""
         self._call(lambda: self._native.replace_png_asset(asset_id, name, str(absolute_path)))
 
     def relocate_png_asset(self, asset_id: str, absolute_path: Path) -> None:
+        """Change an asset path only if the new PNG matches its dimensions and hash."""
         self._call(lambda: self._native.relocate_png_asset(asset_id, str(absolute_path)))
 
     def replace_canvas(
         self, width: float, height: float, origin: Point, pixels_per_unit: float
     ) -> None:
+        """Replace the canvas size, pixel origin, and pixels-per-unit scale."""
         self._call(
             lambda: self._native.replace_canvas(
                 width, height, origin[0], origin[1], pixels_per_unit
@@ -658,6 +796,7 @@ class Edit:
         )
 
     def replace_draw_order_groups(self, groups: Sequence[DrawOrderGroup]) -> None:
+        """Replace all explicit draw-order groups in this document."""
         self._call(
             lambda: self._native.replace_draw_order_groups(
                 [(g.owner, list(g.items), g.min_order, g.max_order) for g in groups]
@@ -672,6 +811,7 @@ class Edit:
         enabled: bool = True,
         draw_order: float = 0,
     ) -> None:
+        """Create a Part with an optional organization parent."""
         self._call(
             lambda: self._native.create_part(
                 part_id, name, parent_id, enabled, draw_order
@@ -681,6 +821,7 @@ class Edit:
     def replace_part(
         self, part_id: str, name: str, parent_id: str, enabled: bool, draw_order: float
     ) -> None:
+        """Replace an existing Part while preserving its identity."""
         self._call(
             lambda: self._native.replace_part(
                 part_id, name, parent_id, enabled, draw_order
@@ -691,6 +832,7 @@ class Edit:
         self, transform_id: str, name: str, rotation: RotationData,
         part_id: str | None = None, parent_id: str | None = None,
     ) -> None:
+        """Create a rotation deformer, optionally under a Part or transform."""
         self._call(lambda: self._native.create_rotation_transform(
             transform_id, name, part_id, parent_id, _rotation_tuple(rotation)
         ))
@@ -699,15 +841,18 @@ class Edit:
         self, transform_id: str, name: str, warp: WarpData,
         part_id: str | None = None, parent_id: str | None = None,
     ) -> None:
+        """Create a warp deformer from grid dimensions and control points."""
         self._call(lambda: self._native.create_warp_transform(
             transform_id, name, part_id, parent_id, warp.rows, warp.columns,
             warp.quad, list(warp.points)
         ))
 
     def update_rotation(self, transform_id: str, rotation: RotationData) -> None:
+        """Update the rotation data of an existing rotation transform."""
         self._call(lambda: self._native.update_rotation(transform_id, _rotation_tuple(rotation)))
 
     def replace_transform(self, transform: TransformSnapshot) -> None:
+        """Replace a transform from a versioned snapshot, keeping its runtime identity."""
         rotation = _rotation_tuple(transform.rotation) if transform.rotation is not None else None
         warp = (
             (transform.warp.rows, transform.warp.columns, transform.warp.quad, list(transform.warp.points))
@@ -719,14 +864,17 @@ class Edit:
         ))
 
     def create_offscreen(self, offscreen: OffscreenSpec) -> None:
+        """Create an offscreen composition layer from a complete specification."""
         self._call(lambda: self._native.create_offscreen(_offscreen_data(offscreen)))
 
     def replace_offscreen(self, offscreen: OffscreenSnapshot) -> None:
+        """Replace an offscreen layer from a snapshot."""
         self._call(lambda: self._native.replace_offscreen(_offscreen_data(offscreen)))
 
     def replace_part_binding_with_offscreen(
         self, binding: SceneBindingSnapshot, offscreen: OffscreenSnapshot,
     ) -> None:
+        """Replace a Part binding and its offscreen keyform mapping atomically."""
         if binding.kind != "part":
             self._native.abort()
             raise ValueError("Expected a Part scene binding")
@@ -738,15 +886,19 @@ class Edit:
         ))
 
     def create_glue(self, glue: GlueSpec) -> None:
+        """Create glue between two meshes from paired vertex IDs and weights."""
         self._call(lambda: self._native.create_glue(_glue_data(glue)))
 
     def replace_glue(self, glue: GlueSnapshot) -> None:
+        """Replace an existing glue record from a snapshot."""
         self._call(lambda: self._native.replace_glue(_glue_data(glue)))
 
     def create_mesh(self, mesh: MeshRecordSpec) -> None:
+        """Create a mesh from a complete geometry and drawing record."""
         self._call(lambda: self._native.create_mesh(_mesh_record_data(mesh)))
 
     def replace_mesh(self, mesh: MeshRecordSnapshot) -> None:
+        """Replace a mesh from a full snapshot while retaining its identity."""
         self._call(lambda: self._native.replace_mesh(_mesh_record_data(mesh)))
 
     def replace_topology(
@@ -758,6 +910,12 @@ class Edit:
         blend_bindings: Sequence[BlendBindingSnapshot] = (),
         glues: Sequence[GlueSnapshot] = (),
     ) -> None:
+        """Replace topology and every affected binding/glue in one edit.
+
+        The source geometry must be from the edit starting version. Map old vertex
+        IDs to new IDs or None, and supply updated dependent objects as needed.
+        """
+
         binding_data = None if binding is None else (
             binding.id, binding.mesh_id,
             [(axis.parameter_id, list(axis.keys)) for axis in binding.axes],
@@ -774,37 +932,45 @@ class Edit:
         ))
 
     def create_blend_key_table(self, table: BlendKeyTableSpec) -> None:
+        """Create a BlendShape parameter key table."""
         self._call(lambda: self._native.create_blend_key_table(
             table.id, table.parameter_id, list(table.keys), table.base_key_idx,
         ))
 
     def replace_blend_key_table(self, table: BlendKeyTableSnapshot) -> None:
+        """Replace an existing BlendShape key table."""
         self._call(lambda: self._native.replace_blend_key_table(
             table.id, table.parameter_id, list(table.keys), table.base_key_idx,
         ))
 
     def create_blend_constraint(self, constraint: BlendConstraintSpec) -> None:
+        """Create a BlendShape constraint from keys and weights."""
         self._call(lambda: self._native.create_blend_constraint(
             constraint.id, constraint.parameter_id,
             list(constraint.keys), list(constraint.weights),
         ))
 
     def replace_blend_constraint(self, constraint: BlendConstraintSnapshot) -> None:
+        """Replace an existing BlendShape constraint."""
         self._call(lambda: self._native.replace_blend_constraint(
             constraint.id, constraint.parameter_id,
             list(constraint.keys), list(constraint.weights),
         ))
 
     def create_blend_binding(self, binding: BlendBindingSpec) -> None:
+        """Create a BlendShape binding with target-specific delta keyforms."""
         self._call(lambda: self._native.create_blend_binding(_blend_binding_data(binding)))
 
     def replace_blend_binding(self, binding: BlendBindingSnapshot) -> None:
+        """Replace an existing BlendShape binding."""
         self._call(lambda: self._native.replace_blend_binding(_blend_binding_data(binding)))
 
     def update_warp_points(self, transform_id: str, points: Sequence[Point]) -> None:
+        """Update the control points of an existing warp transform."""
         self._call(lambda: self._native.update_warp_points(transform_id, list(points)))
 
     def erase_object(self, object_id: str) -> None:
+        """Delete an unreferenced object; referenced objects raise OBJECT_REFERENCED."""
         self._call(lambda: self._native.erase_object(object_id))
 
     def replace_parameter(
@@ -817,6 +983,7 @@ class Edit:
         repeat: bool = False,
         kind: str | None = None,
     ) -> None:
+        """Replace a parameter definition; kind=None keeps its current kind."""
         self._call(
             lambda: self._native.replace_parameter(
                 parameter_id, name, minimum, maximum, default_value, repeat, kind
@@ -824,33 +991,41 @@ class Edit:
         )
 
     def set_organization_parent(self, part_id: str, parent_id: str) -> None:
+        """Move a Part under another organization parent."""
         self._call(lambda: self._native.set_organization_parent(part_id, parent_id))
 
     def set_transform_parent(self, transform_id: str, parent_id: str | None) -> None:
+        """Set or clear a transform deformer parent."""
         self._call(lambda: self._native.set_transform_parent(transform_id, parent_id))
 
     def set_transform_part(self, transform_id: str, part_id: str | None) -> None:
+        """Set or clear the Part that owns a transform."""
         self._call(lambda: self._native.set_transform_part(transform_id, part_id))
 
     def set_deform_parent(self, mesh_id: str, transform_id: str) -> None:
+        """Set the transform that deforms a mesh."""
         self._call(lambda: self._native.set_deform_parent(mesh_id, transform_id))
 
     def set_mesh_part(self, mesh_id: str, part_id: str) -> None:
+        """Set the Part that owns a mesh."""
         self._call(lambda: self._native.set_mesh_part(mesh_id, part_id))
 
     def create_rectangle(
         self, mesh_id: str, name: str, asset_id: str, minimum: Point, maximum: Point
     ) -> None:
+        """Create a four-vertex root mesh using an existing texture asset."""
         self._call(
             lambda: self._native.create_rectangle(mesh_id, name, asset_id, minimum, maximum)
         )
 
     def rename_mesh(self, mesh_id: str, name: str) -> None:
+        """Change a mesh display name without replacing its geometry."""
         self._call(lambda: self._native.rename_mesh(mesh_id, name))
 
     def update_positions(
         self, mesh_id: str, vertex_ids: Sequence[int], positions: Sequence[Point]
     ) -> None:
+        """Replace source positions for the supplied stable vertex IDs."""
         self._call(
             lambda: self._native.update_positions(mesh_id, list(vertex_ids), list(positions))
         )
@@ -865,6 +1040,7 @@ class Edit:
         repeat: bool = False,
         kind: str = "normal",
     ) -> None:
+        """Create a normal or blend_shape parameter over a numeric range."""
         self._call(
             lambda: self._native.create_parameter(
                 parameter_id, name, minimum, maximum, default_value, repeat, kind
@@ -878,6 +1054,7 @@ class Edit:
         axes: Sequence[Axis],
         forms: Sequence[MeshKeyform],
     ) -> None:
+        """Create a complete Cartesian grid of mesh parameter keyforms."""
         self._call(
             lambda: self._native.create_mesh_binding(
                 binding_id,
@@ -891,6 +1068,7 @@ class Edit:
         self, binding_id: str, mesh_id: str,
         axes: Sequence[Axis], forms: Sequence[MeshKeyform],
     ) -> None:
+        """Replace a complete mesh parameter binding and its keyforms."""
         self._call(lambda: self._native.replace_mesh_binding(
             binding_id, mesh_id,
             [(axis.parameter_id, list(axis.keys)) for axis in axes],
@@ -898,11 +1076,13 @@ class Edit:
         ))
 
     def set_mesh_keyform(self, binding_id: str, form: MeshKeyform) -> None:
+        """Update an existing key combination in a mesh binding."""
         self._call(lambda: self._native.set_mesh_keyform(
             binding_id, _mesh_form_tuple(form)
         ))
 
     def update_mesh_properties(self, mesh_id: str, properties: MeshProperties) -> None:
+        """Replace drawing fields while preserving mesh geometry and identity."""
         self._call(lambda: self._native.update_mesh_properties(
             mesh_id,
             properties.texture_asset_id,
@@ -919,6 +1099,7 @@ class Edit:
         self, binding_id: str, kind: str, target_id: str,
         axes: Sequence[Axis], forms: Sequence[SceneKeyform],
     ) -> None:
+        """Create a complete part, rotation, or warp parameter binding."""
         self._call(lambda: self._native.create_scene_binding(
             binding_id, kind, target_id,
             [(axis.parameter_id, list(axis.keys)) for axis in axes],
@@ -929,6 +1110,7 @@ class Edit:
         self, binding_id: str, kind: str, target_id: str,
         axes: Sequence[Axis], forms: Sequence[SceneKeyform],
     ) -> None:
+        """Replace a complete scene parameter binding."""
         self._call(lambda: self._native.replace_scene_binding(
             binding_id, kind, target_id,
             [(axis.parameter_id, list(axis.keys)) for axis in axes],
@@ -936,23 +1118,31 @@ class Edit:
         ))
 
     def set_scene_keyform(self, binding_id: str, form: SceneKeyform) -> None:
+        """Update an existing key combination in a scene binding."""
         self._call(lambda: self._native.set_scene_keyform(
             binding_id, _scene_kind(form), _scene_form_tuple(_scene_kind(form), form)
         ))
 
     def commit(self) -> Version:
+        """Publish this edit atomically and return the new session version."""
         try:
             return self._native.commit()
         finally:
             self._closed = True
 
     def cancel(self) -> None:
+        """Discard this edit without publishing its candidate changes."""
         self._native.cancel()
         self._closed = True
 
 
 class Session:
-    """Thread-safe handle to one Rust authoring session."""
+    """Thread-safe authoring session for one current project.
+
+    Mutations are made through ``edit``; reads return detached snapshots.
+    ``document_id`` is a canonical UUID string, ``origin`` is a pixel ``(x, y)``
+    tuple, and ``pixels_per_unit`` converts source pixels to runtime units.
+    """
 
     def __init__(
         self,
@@ -962,6 +1152,7 @@ class Session:
         origin: Point,
         pixels_per_unit: float,
     ) -> None:
+        """Create an empty document with a UUID and canvas in source pixels."""
         self._native = NativeSession(
             document_id, width, height, origin[0], origin[1], pixels_per_unit
         )
@@ -985,6 +1176,7 @@ class Session:
         max_steps: int,
         max_bytes: int,
     ) -> Session:
+        """Create an empty session with explicit undo step and byte limits."""
         native = NativeSession.with_history_limits(
             document_id,
             width,
@@ -998,6 +1190,7 @@ class Session:
         return cls._from_native(native)
 
     def edit(self, label: str, expected_version: Version | None = None) -> Edit:
+        """Start an atomic edit, optionally requiring the current version to match."""
         return Edit(self._native.start_edit(label, expected_version))
 
     def new_project(
@@ -1009,6 +1202,7 @@ class Session:
         pixels_per_unit: float,
         expected_version: Version | None = None,
     ) -> Version:
+        """Replace this session with an empty project and return its new version."""
         return self._native.new_project(
             document_id,
             width,
@@ -1027,7 +1221,8 @@ class Session:
 
         ``on_exists='new'`` picks a numbered sibling when another project already
         occupies the destination. It never overwrites a project or bypasses a
-        ``PROJECT_CONFLICT`` on the current session's own saved path.
+        ``PROJECT_CONFLICT`` on the current session's own saved path. Inspect
+        the result's ``durable`` flag and warnings after a successful save.
         """
         if on_exists not in ("error", "new"):
             raise ValueError("on_exists must be 'error' or 'new'")
@@ -1053,6 +1248,11 @@ class Session:
     def import_model3(
         self, absolute_path: Path, expected_version: Version | None = None
     ) -> ImportResult:
+        """Replace this session from an absolute model3 JSON path.
+
+        Return an ImportResult with the MOC version, resource diagnostics, and warnings.
+        """
+
         version, moc_version, diagnostics, warnings = self._native.import_model3(
             str(absolute_path), expected_version
         )
@@ -1066,6 +1266,7 @@ class Session:
         texture_map: Mapping[int, Path],
         expected_version: Version | None = None,
     ) -> ImportResult:
+        """Replace this session from a bare MOC3 and absolute texture-slot paths."""
         paths = {slot: str(path) for slot, path in texture_map.items()}
         version, moc_version, diagnostics, warnings = self._native.import_bare_moc3(
             str(absolute_path), paths, expected_version
@@ -1077,58 +1278,76 @@ class Session:
     def export_package(
         self, absolute_path: Path, expected_version: Version | None = None
     ) -> ExportResult:
+        """Publish a MOC3/model3/texture package without changing document version."""
         return ExportResult(*self._native.export_package(str(absolute_path), expected_version))
 
     def undo(self) -> Version:
+        """Undo one committed edit and return the resulting version."""
         return self._native.undo()
 
     def redo(self) -> Version:
+        """Redo one committed edit and return the resulting version."""
         return self._native.redo()
 
     def mesh_ids(self) -> list[str]:
+        """Return IDs of all committed meshes."""
         return self._native.mesh_ids()
 
     def asset_ids(self) -> list[str]:
+        """Return IDs of all committed texture assets."""
         return self._native.asset_ids()
 
     def asset(self, asset_id: str) -> AssetSnapshot | None:
+        """Return an asset snapshot, or None when the ID is absent."""
         raw = self._native.asset(asset_id)
         return AssetSnapshot(*raw) if raw is not None else None
 
     def references_to(self, object_id: str) -> list[str]:
+        """Return IDs of committed objects referring to the given object."""
         return self._native.references_to(object_id)
 
     def parameter_ids(self) -> list[str]:
+        """Return IDs of all committed parameters."""
         return self._native.parameter_ids()
 
     def binding_ids(self) -> list[str]:
+        """Return IDs of all committed mesh bindings."""
         return self._native.binding_ids()
 
     def part_ids(self) -> list[str]:
+        """Return IDs of all committed Parts."""
         return self._native.part_ids()
 
     def transform_ids(self) -> list[str]:
+        """Return IDs of all committed rotation and warp transforms."""
         return self._native.transform_ids()
 
     def scene_binding_ids(self) -> list[str]:
+        """Return IDs of all committed scene bindings."""
         return self._native.scene_binding_ids()
 
     def blend_key_table_ids(self) -> list[str]:
+        """Return IDs of all committed BlendShape key tables."""
         return self._native.blend_key_table_ids()
 
     def blend_constraint_ids(self) -> list[str]:
+        """Return IDs of all committed BlendShape constraints."""
         return self._native.blend_constraint_ids()
 
     def blend_binding_ids(self) -> list[str]:
+        """Return IDs of all committed BlendShape bindings."""
         return self._native.blend_binding_ids()
 
     def glue_ids(self) -> list[str]:
+        """Return IDs of all committed glue objects."""
         return self._native.glue_ids()
 
     def offscreen_ids(self) -> list[str]:
+        """Return IDs of all committed offscreen layers."""
         return self._native.offscreen_ids()
 
     def parameter(self, parameter_id: str) -> ParameterSnapshot | None:
+        """Return a parameter snapshot, or None when the ID is absent."""
         raw = self._native.parameter(parameter_id)
         if raw is None:
             return None
@@ -1138,6 +1357,7 @@ class Session:
         """Resolve an ID or unique display name to a parameter ID.
 
         IDs take precedence if a display name happens to equal another ID.
+        Unknown or ambiguous names raise ValueError; use IDs for duplicates.
         """
         ids = self.parameter_ids()
         if name_or_id in ids:
@@ -1168,12 +1388,14 @@ class Session:
         return resolved
 
     def mesh(self, mesh_id: str) -> MeshSnapshot | None:
+        """Return a compact mesh snapshot, or None when the ID is absent."""
         raw = self._native.mesh(mesh_id)
         if raw is None:
             return None
         return MeshSnapshot(*raw)
 
     def mesh_record(self, mesh_id: str) -> MeshRecordSnapshot | None:
+        """Return full geometry, drawing, and relationship data for a mesh."""
         raw = self._native.mesh_record(mesh_id)
         if raw is None:
             return None
@@ -1186,6 +1408,7 @@ class Session:
         )
 
     def mesh_properties(self, mesh_id: str) -> MeshPropertiesSnapshot | None:
+        """Return a mesh drawing-properties snapshot, or None if absent."""
         raw = self._native.mesh_properties(mesh_id)
         if raw is None:
             return None
@@ -1196,22 +1419,28 @@ class Session:
         )
 
     def binding(self, binding_id: str) -> MeshBindingSnapshot | None:
+        """Return a mesh binding snapshot, or None when the ID is absent."""
         return _binding_snapshot(self._native.binding(binding_id))
 
     def binding_for_mesh(self, mesh_id: str) -> MeshBindingSnapshot | None:
+        """Return the binding of a mesh, or None when it is unbound."""
         return _binding_snapshot(self._native.binding_for_mesh(mesh_id))
 
     def scene_binding(self, binding_id: str) -> SceneBindingSnapshot | None:
+        """Return a scene binding snapshot, or None when the ID is absent."""
         return _scene_binding_snapshot(self._native.scene_binding(binding_id))
 
     def binding_for_scene(self, target_id: str) -> SceneBindingSnapshot | None:
+        """Return a scene binding for the target, or None if unbound."""
         return _scene_binding_snapshot(self._native.binding_for_scene(target_id))
 
     def part(self, part_id: str) -> PartSnapshot | None:
+        """Return a Part snapshot, or None when the ID is absent."""
         raw = self._native.part(part_id)
         return PartSnapshot(*raw) if raw is not None else None
 
     def transform(self, transform_id: str) -> TransformSnapshot | None:
+        """Return a rotation or warp snapshot, or None when the ID is absent."""
         raw = self._native.transform(transform_id)
         if raw is None:
             return None
@@ -1221,6 +1450,7 @@ class Session:
         return TransformSnapshot(id, runtime_id, name, part_id, parent_id, kind, rotation_data, warp_data, enabled, Appearance(*appearance), version)
 
     def offscreen(self, offscreen_id: str) -> OffscreenSnapshot | None:
+        """Return an offscreen snapshot, or None when the ID is absent."""
         raw = self._native.offscreen(offscreen_id)
         if raw is None:
             return None
@@ -1231,6 +1461,7 @@ class Session:
         )
 
     def glue(self, glue_id: str) -> GlueSnapshot | None:
+        """Return a glue snapshot, or None when the ID is absent."""
         raw = self._native.glue(glue_id)
         if raw is None:
             return None
@@ -1244,14 +1475,17 @@ class Session:
         )
 
     def blend_key_table(self, table_id: str) -> BlendKeyTableSnapshot | None:
+        """Return a BlendShape key table snapshot, or None if absent."""
         raw = self._native.blend_key_table(table_id)
         return BlendKeyTableSnapshot(*raw) if raw is not None else None
 
     def blend_constraint(self, constraint_id: str) -> BlendConstraintSnapshot | None:
+        """Return a BlendShape constraint snapshot, or None if absent."""
         raw = self._native.blend_constraint(constraint_id)
         return BlendConstraintSnapshot(*raw) if raw is not None else None
 
     def blend_binding(self, binding_id: str) -> BlendBindingSnapshot | None:
+        """Return a BlendShape binding snapshot, or None if absent."""
         raw = self._native.blend_binding(binding_id)
         if raw is None:
             return None
@@ -1275,40 +1509,57 @@ class Session:
         return BlendBindingSnapshot(id, target_id, kind, table_id, constraint_ids, keyforms, version)
 
     def handle(self, kind: str, object_id: str) -> ObjectHandle:
+        """Get a handle for a committed object of the given kind and ID."""
         return self._native.handle(kind, object_id)
 
     def resolve_handle(self, handle: ObjectHandle) -> None:
+        """Raise SdkFailure if a handle no longer refers to this live object."""
         self._native.resolve_handle(handle)
 
     def mesh_by_handle(self, handle: ObjectHandle) -> MeshSnapshot:
+        """Read a mesh through a validated object handle."""
         return MeshSnapshot(*self._native.mesh_by_handle(handle))
 
     def find_meshes_by_name(self, name: str) -> list[MeshSnapshot]:
+        """Return every mesh whose display name matches exactly."""
         return [MeshSnapshot(*mesh) for mesh in self._native.find_meshes_by_name(name)]
 
     def require_unique_mesh(self, name: str) -> MeshSnapshot:
+        """Return the only mesh with this name; reject missing or duplicate names."""
         return MeshSnapshot(*self._native.require_unique_mesh(name))
 
     def geometry(self, mesh_id: str) -> GeometrySnapshot | None:
+        """Return versioned source geometry, or None when the mesh is absent."""
         raw = self._native.geometry(mesh_id)
         return GeometrySnapshot(*raw) if raw is not None else None
 
     def validate_structure(self) -> list[StructureIssue]:
+        """List persistent-document structure problems without reading asset files."""
         return [StructureIssue(*issue) for issue in self._native.validate_structure()]
 
     def history_state(self) -> HistoryState:
+        """Return undo/redo counts, estimated bytes, and configured limits."""
         return HistoryState(*self._native.history_state())
 
     def history_lengths(self) -> tuple[int, int]:
+        """Return the current (undo_steps, redo_steps) pair."""
         return self._native.history_lengths()
 
     def estimated_content_bytes(self) -> int:
+        """Estimate persistent document content size, not process RSS."""
         return self._native.estimated_content_bytes()
 
     def drain_events(self) -> list[EditEvent]:
+        """Consume edit and undo/redo events published since the last drain."""
         return [EditEvent(*event) for event in self._native.drain_events()]
 
     def evaluate(self, values: Mapping[str, float]) -> Evaluation:
+        """Evaluate parameter values to sampled parameters and runtime positions.
+
+        Values may use parameter IDs or unique display names. This does not update
+        the session preview state.
+        """
+
         parameters, drawables = self._native.evaluate(self._parameter_values(values))
         return Evaluation(
             [ParameterSample(*sample) for sample in parameters],
@@ -1316,10 +1567,14 @@ class Session:
         )
 
     def evaluate_snapshot(self, values: Mapping[str, float]) -> EvaluationSnapshot:
-        """Return all evaluated render attributes and the source version."""
+        """Return full render attributes and source version without changing preview.
+
+        This copies drawable geometry arrays; use ``evaluate`` for positions only.
+        """
         return _evaluation_snapshot(self._native.evaluate_snapshot(self._parameter_values(values)))
 
     def diagnose_resources(self) -> list[ResourceIssue]:
+        """Check referenced asset files and return missing or damaged resources."""
         return [ResourceIssue(*item) for item in self._native.diagnose_resources()]
 
     def diagnose_geometry(
@@ -1327,6 +1582,7 @@ class Session:
         min_triangle_area: float = 0,
         canvas_bounds: tuple[Point, Point] | None = None,
     ) -> list[GeometryIssue]:
+        """Return non-blocking triangle and canvas-boundary authoring hints."""
         return [
             GeometryIssue(*item)
             for item in self._native.diagnose_geometry(min_triangle_area, canvas_bounds)
@@ -1334,17 +1590,21 @@ class Session:
 
     @property
     def preview_values(self) -> dict[str, float]:
+        """Return a copy of the current preview parameter values."""
         return self._native.preview_values()
 
     @property
     def preview_revision(self) -> int:
+        """Return the preview-input revision."""
         return self._native.preview_revision()
 
     @property
     def preview_evaluation_count(self) -> int:
+        """Return how many preview evaluations this session has performed."""
         return self._native.preview_evaluation_count()
 
     def preview_frame(self) -> Evaluation:
+        """Return compact evaluated positions for the current preview values."""
         parameters, drawables = self._native.preview_frame()
         return Evaluation(
             [ParameterSample(*sample) for sample in parameters],
@@ -1352,68 +1612,86 @@ class Session:
         )
 
     def preview_snapshot(self) -> EvaluationSnapshot:
+        """Return full evaluated render state for the current preview values."""
         return _evaluation_snapshot(self._native.preview_snapshot())
 
     def set_preview_values(self, values: Mapping[str, float]) -> bool:
+        """Set all preview parameter values; return whether preview input changed."""
         return self._native.set_preview_values(self._parameter_values(values))
 
     def set_preview_parameter(self, parameter_id: str, value: float) -> bool:
+        """Set one preview value by ID or unique name; return whether it changed."""
         return self._native.set_preview_parameter(self.parameter_id(parameter_id), value)
 
     def reset_preview_values(self) -> bool:
+        """Clear preview overrides; return whether preview input changed."""
         return self._native.reset_preview_values()
 
     @property
     def version(self) -> Version:
+        """Current (session_id, generation, revision) tuple."""
         return self._native.version()
 
     @property
     def document_id(self) -> str:
+        """UUID of the current project document."""
         return self._native.document_id()
 
     @property
     def canvas(self) -> CanvasSnapshot:
-        """Current canvas snapshot (property)."""
+        """Return a copy of the current canvas settings."""
         return CanvasSnapshot(*self._native.canvas())
 
     @property
     def draw_order_groups(self) -> list[DrawOrderGroup] | None:
+        """Copy of explicit draw-order groups, or None when no groups exist."""
         raw = self._native.draw_order_groups()
         return [DrawOrderGroup(*group) for group in raw] if raw is not None else None
 
     @property
     def evaluation_revision(self) -> int:
+        """Revision of content that last affected evaluation output."""
         return self._native.evaluation_revision()
 
     @property
     def modified(self) -> bool:
+        """Whether document content differs from the saved baseline."""
         return self._native.modified()
 
     @property
     def project_path(self) -> Path | None:
-        """Current manifest path, if saved or opened (property)."""
+        """Return the manifest path after save/open, or None if unsaved."""
         value = self._native.project_path()
         return Path(value) if value is not None else None
 
 
 class Observer:
-    """Reusable offscreen renderer; requires a wheel built with the observe feature."""
+    """Reusable GPU renderer available in wheels built with ``observe``."""
 
     def __init__(self, width: int, height: int, fit_long_side: float) -> None:
+        """Create an offscreen observer with output size and fitted view extent."""
         if NativeObserver is None:
             raise RuntimeError("This kasane wheel has no GPU observation feature")
         self._native = NativeObserver(width, height, fit_long_side)
 
     def __enter__(self) -> Observer:
+        """Return this observer for use in a context manager."""
         return self
 
     def __exit__(self, exception_type, exception, traceback) -> bool:
+        """Leave the observer context without suppressing an exception."""
         return False
 
     def set_fit_long_side(self, value: float) -> None:
+        """Change the fitted view extent while reusing the GPU observer."""
         self._native.set_fit_long_side(value)
 
     def observe(self, session: Session, values: Mapping[str, float] | None = None) -> ObservedFrame:
+        """Render a session at parameter values without changing its preview state.
+
+        Values may use parameter IDs or unique display names. The result holds
+        RGBA bytes, PNG bytes, bounds, version, texture hashes, and adapter data.
+        """
         raw = self._native.observe(session._native, session._parameter_values(values or {}))
         metadata, width, height, rgba, png, textures, adapter_name, backend = raw
         version, input_sha256, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
@@ -1429,7 +1707,12 @@ class Observer:
         self, session: Session, samples: Sequence[Mapping[str, float]], output: Path,
         focus: Sequence[str] = (),
     ) -> ObservationRun:
-        """Render each sample into a unique run directory and write a JSON report."""
+        """Render nonempty samples into a unique child of an absolute directory.
+
+        ``focus`` contains drawable IDs to crop. Return paths for the report,
+        frames, crops, and contact sheet. A failed run still writes a report
+        and attaches ``run_directory`` to the raised exception.
+        """
         if not output.is_absolute():
             raise ValueError("Observation output path must be absolute")
         if not samples:

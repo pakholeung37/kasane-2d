@@ -11,9 +11,9 @@ import zlib
 import kasane
 
 
-ROOT = Path(__file__).resolve().parents[3]
-TEXTURE = ROOT / "examples/sdk/asymmetric-2x2.png"
-SECOND_TEXTURE = ROOT / "tests/fixtures/external_v50/texture_00.png"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
+TEXTURE = FIXTURES / "asymmetric-2x2.png"
+SECOND_TEXTURE = FIXTURES / "texture_00.png"
 DOCUMENT = "00000000-0000-4000-8000-000000000001"
 ASSET = "00000000-0000-4000-8000-000000000002"
 MESH = "00000000-0000-4000-8000-000000000003"

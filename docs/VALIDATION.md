@@ -15,7 +15,7 @@ Rust SDK 测试覆盖隔离编辑、句柄、history、导入、工程保存和�
 ## 仓库外 wheel 集成测试
 
 ```sh
-RUSTFLAGS='-C strip=none' python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
+python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
 python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
 ```
 

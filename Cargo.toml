@@ -29,3 +29,8 @@ sha2 = "0.10"
 png = "0.17"
 bytemuck = { version = "1.25", features = ["derive"] }
 wgpu = "29"
+
+# Some macOS 27 toolchains produce an unloadable cdylib when release stripping
+# uses an external llvm-objcopy without the Mach-O LINKEDIT alignment fix.
+[profile.release.package.kasane-python]
+strip = "none"

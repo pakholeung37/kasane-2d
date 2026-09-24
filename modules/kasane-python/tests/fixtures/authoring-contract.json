@@ -1,0 +1,12 @@
+{
+  "document_id": "00000000-0000-4000-8000-000000000001",
+  "asset_id": "00000000-0000-4000-8000-000000000002",
+  "mesh_id": "00000000-0000-4000-8000-000000000003",
+  "missing_asset_id": "00000000-0000-4000-8000-000000000099",
+  "initial_name": "face",
+  "updated_name": "face-updated",
+  "minimum": [40.0, 40.0],
+  "maximum": [60.0, 60.0],
+  "evaluated_first_position": [-1.0, 1.0],
+  "invalid_create_code": "MISSING_ASSET"
+}

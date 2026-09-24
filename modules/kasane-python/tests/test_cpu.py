@@ -36,7 +36,7 @@ BLEND_ROTATION = "00000000-0000-4000-8000-000000000021"
 BLEND_PART = "00000000-0000-4000-8000-000000000022"
 BLEND_GLUE = "00000000-0000-4000-8000-000000000023"
 BLEND_OFFSCREEN = "00000000-0000-4000-8000-000000000024"
-TEXTURE = Path(__file__).resolve().parents[3] / "examples/sdk/asymmetric-2x2.png"
+TEXTURE = Path(__file__).resolve().parent / "fixtures/asymmetric-2x2.png"
 EXTERNAL = Path(__file__).resolve().parents[3] / "tests/fixtures/external_v50"
 
 

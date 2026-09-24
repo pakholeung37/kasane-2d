@@ -116,7 +116,7 @@ fn effect_families_share_one_publish_and_failed_replacement_preserves_it() {
     )
     .unwrap();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/sdk/asymmetric-2x2.png");
+        .join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(&id(2), "texture", &path).unwrap();
     let mesh_a = rectangle_mesh(
         &id(3),

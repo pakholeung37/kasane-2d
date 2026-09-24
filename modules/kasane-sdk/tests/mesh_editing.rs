@@ -12,7 +12,7 @@ const OTHER_ID: &str = "00000000-0000-4000-8000-000000000104";
 
 fn fixture() -> AuthoringSession {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/sdk/asymmetric-2x2.png");
+        .join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(ASSET_ID, "texture", &path).unwrap();
     let mesh = rectangle_mesh(
         MESH_ID,

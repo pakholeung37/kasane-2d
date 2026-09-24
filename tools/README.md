@@ -13,7 +13,7 @@
 
 ```sh
 python3 -m unittest discover -s tests -p test_acceptance_validators.py -v
-RUSTFLAGS='-C strip=none' python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
+python3.14 -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
 python3.14 tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl
 python3 tools/compare_wgpu_blends.py
 ```

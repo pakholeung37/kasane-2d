@@ -12,7 +12,12 @@ use crate::conversion::{version_tuple, VersionTuple};
 use crate::error::poisoned;
 use crate::session::NativeSession;
 
-create_exception!(_native, ObservationFailure, PyException);
+create_exception!(
+    _native,
+    ObservationFailure,
+    PyException,
+    "GPU observation failure with code and optional texture asset ID."
+);
 
 fn observation_failure(py: Python<'_>, error: ObservationError) -> PyErr {
     let failure = ObservationFailure::new_err(error.message);

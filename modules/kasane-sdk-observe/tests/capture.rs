@@ -14,7 +14,7 @@ fn captures_unpublished_project_and_keeps_old_frame_after_edit() {
     )
     .unwrap();
     let png = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/sdk/asymmetric-2x2.png");
+        .join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(ASSET, "texture", &png).unwrap();
     let mesh = rectangle_mesh(
         MESH,
@@ -63,7 +63,7 @@ fn renders_unsaved_session_and_reuses_gpu_across_changes() {
     )
     .unwrap();
     let png = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../examples/sdk/asymmetric-2x2.png");
+        .join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(ASSET, "texture", &png).unwrap();
     let mesh = rectangle_mesh(
         MESH,
@@ -121,7 +121,7 @@ fn renders_unsaved_session_and_reuses_gpu_across_changes() {
     assert_ne!(second.version, first.version);
 
     let new_png = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../tests/fixtures/external_v50/texture_00.png");
+        .join("tests/fixtures/texture_00.png");
     let replacement = prepare_png_asset(ASSET, "texture", &new_png).unwrap();
     session
         .edit("texture", None, |edit| edit.replace_asset(replacement))

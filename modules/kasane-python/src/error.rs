@@ -5,7 +5,12 @@ use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyRuntimeError};
 use pyo3::prelude::*;
 
-create_exception!(_native, SdkFailure, PyException);
+create_exception!(
+    _native,
+    SdkFailure,
+    PyException,
+    "SDK failure with code, operation, object IDs, versions, and referrers."
+);
 
 pub(crate) fn sdk_failure(py: Python<'_>, error: SdkError) -> PyErr {
     let failure = SdkFailure::new_err(error.message.to_string());

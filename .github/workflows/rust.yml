@@ -33,8 +33,6 @@ jobs:
       - name: Regression tests
         run: cargo test --workspace --locked
       - name: Build Python wheel
-        env:
-          RUSTFLAGS: -C strip=none
         run: python -m pip wheel --no-deps --wheel-dir target/wheels modules/kasane-python
       - name: SDK wheel integration
         run: python -c "from pathlib import Path; import subprocess, sys; wheels = list(Path('target/wheels').glob('kasane-*.whl')); assert len(wheels) == 1, wheels; sys.exit(subprocess.call([sys.executable, 'tools/validate_sdk.py', '--wheel', str(wheels[0])]))"
