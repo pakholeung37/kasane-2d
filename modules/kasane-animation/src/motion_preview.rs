@@ -44,6 +44,53 @@ pub struct MotionSnapshot {
     pub coverage: Vec<String>,
 }
 
+/// Identity of the last successful preview operation. This is evidence of
+/// provenance, not a serialized simulation state or a replay recipe.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct MotionOperation {
+    pub preview_id: String,
+    pub sequence: u64,
+    pub kind: MotionOperationKind,
+    pub actual_time: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+pub enum MotionOperationKind {
+    Created,
+    Reset,
+    SetBaseParameter {
+        parameter_id: String,
+        value: f32,
+    },
+    ScheduleMotion {
+        motion_id: String,
+        time: f32,
+    },
+    ScheduleMotionEntry {
+        group: String,
+        index: usize,
+        motion_id: String,
+        time: f32,
+    },
+    ScheduleExpression {
+        expression_id: String,
+        time: f32,
+    },
+    ScheduleParameterInput {
+        parameter_id: String,
+        time: f32,
+        value: f32,
+    },
+    Advance {
+        dt: f32,
+    },
+    Seek {
+        requested_time: f32,
+    },
+    StabilizePhysics,
+}
+
 /// Detached combined preview with immutable assets and bounded canonical seek checkpoints.
 /// Create a new preview after authoring edits; playback never edits the source document.
 pub struct MotionPreview {
@@ -57,6 +104,7 @@ pub struct MotionPreview {
     expressions: ExpressionRuntime,
     motion: MotionRuntime,
     cache: SeekCache,
+    operation: MotionOperation,
 }
 
 impl MotionPreview {
@@ -93,6 +141,12 @@ impl MotionPreview {
             curves,
             source_identity: None,
             cache: SeekCache::default(),
+            operation: MotionOperation {
+                preview_id: uuid::Uuid::new_v4().to_string(),
+                sequence: 0,
+                kind: MotionOperationKind::Created,
+                actual_time: 0.0,
+            },
             motion: MotionRuntime::new(parameters.clone()),
             physics: PhysicsRuntime::new(&document),
             expressions: ExpressionRuntime::default(),
@@ -133,6 +187,16 @@ impl MotionPreview {
         &self.snapshot
     }
 
+    pub fn operation(&self) -> &MotionOperation {
+        &self.operation
+    }
+
+    fn commit_operation(&mut self, kind: MotionOperationKind) {
+        self.operation.sequence += 1;
+        self.operation.kind = kind;
+        self.operation.actual_time = self.snapshot.time;
+    }
+
     /// Schedule a clip UUID using clip fades (no model3 registration overrides).
     /// Time is finite, nonnegative absolute seconds and cannot precede current time.
     /// Equal-time calls retain order; activation starts on the first update at or after time.
@@ -143,6 +207,10 @@ impl MotionPreview {
         self.motion
             .schedule_motion(&self.document, self.snapshot.time, id, time, (None, None))?;
         self.cache.clear();
+        self.commit_operation(MotionOperationKind::ScheduleMotion {
+            motion_id: id.into(),
+            time,
+        });
         Ok(())
     }
 
@@ -184,6 +252,12 @@ impl MotionPreview {
             (entry.fade_in, entry.fade_out),
         )?;
         self.cache.clear();
+        self.commit_operation(MotionOperationKind::ScheduleMotionEntry {
+            group: group.into(),
+            index,
+            motion_id: entry.clip_id.clone(),
+            time,
+        });
         Ok(())
     }
 
@@ -241,6 +315,10 @@ impl MotionPreview {
         self.expressions
             .schedule(&self.document, self.snapshot.time, id, time)?;
         self.cache.clear();
+        self.commit_operation(MotionOperationKind::ScheduleExpression {
+            expression_id: id.into(),
+            time,
+        });
         Ok(())
     }
 
@@ -257,9 +335,13 @@ impl MotionPreview {
                 "nonfinite parameter {id}"
             )));
         }
-        self.base
-            .insert(id.into(), value.clamp(parameter.minimum, parameter.maximum));
-        self.reset();
+        let value = value.clamp(parameter.minimum, parameter.maximum);
+        self.base.insert(id.into(), value);
+        self.reset_state();
+        self.commit_operation(MotionOperationKind::SetBaseParameter {
+            parameter_id: id.into(),
+            value,
+        });
         Ok(())
     }
 
@@ -283,6 +365,11 @@ impl MotionPreview {
             value,
         )?;
         self.cache.clear();
+        self.commit_operation(MotionOperationKind::ScheduleParameterInput {
+            parameter_id: id.into(),
+            time,
+            value,
+        });
         Ok(())
     }
 
@@ -290,6 +377,11 @@ impl MotionPreview {
     /// Retains activation/input schedules and cache budget; clears checkpoints/statistics
     /// and fired events. Time-zero activations require `advance(0)` or `seek(0)`.
     pub fn reset(&mut self) {
+        self.reset_state();
+        self.commit_operation(MotionOperationKind::Reset);
+    }
+
+    fn reset_state(&mut self) {
         self.cache.clear();
         let mut parameters = self.base.clone();
         let mut virtual_controls = BTreeMap::new();
@@ -342,6 +434,7 @@ impl MotionPreview {
         self.snapshot.time = time;
         self.snapshot.coverage.sort();
         self.snapshot.coverage.dedup();
+        self.commit_operation(MotionOperationKind::Advance { dt });
         Ok(&self.snapshot)
     }
 
@@ -351,6 +444,7 @@ impl MotionPreview {
     pub fn stabilize_physics(&mut self) {
         self.physics
             .stabilize(&self.document, &mut self.snapshot.parameters);
+        self.commit_operation(MotionOperationKind::StabilizePhysics);
     }
 
     /// Seek to absolute seconds using canonical checkpoints or the initial state.
@@ -375,10 +469,14 @@ impl MotionPreview {
         let mut steps = crate::replay::ReplaySteps::new(time)?;
         let mut candidate = Self::from_shared(Arc::clone(&self.document), Arc::clone(&self.curves));
         candidate.source_identity = self.source_identity;
+        candidate
+            .operation
+            .preview_id
+            .clone_from(&self.operation.preview_id);
         candidate.base.clone_from(&self.base);
         candidate.motion.copy_schedule_from(&self.motion);
         candidate.expressions.clone_from(&self.expressions);
-        candidate.reset();
+        candidate.reset_state();
         let mut cache = self.cache.clone();
         let checkpoint = cache.nearest(time);
         let start = checkpoint.as_ref().map_or(0, |state| state.step);
@@ -415,6 +513,10 @@ impl MotionPreview {
             }
         }
         candidate.cache = cache;
+        candidate.operation.sequence = self.operation.sequence;
+        candidate.commit_operation(MotionOperationKind::Seek {
+            requested_time: time,
+        });
         *self = candidate;
         Ok(&self.snapshot)
     }

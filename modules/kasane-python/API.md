@@ -463,31 +463,44 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.set_fit_long_side(value)` | Change the view's fitted long side. |
 | `observer.observe_run(session, samples, output, focus=())` | Render one or more parameter maps into a unique child of absolute `output`; optionally crop visible drawable IDs. Return `ObservationRun`. |
 | `observer.capture_scene(session, values=None)` | Freeze one evaluated frame and all decoded texture bytes in `CapturedScene`; later edits and asset changes do not change it. |
+| `observer.capture_scenes(session, samples)` | Freeze 1–64 parameter samples against one detached document snapshot; resolve names there and decode the union of textures once. All returned scenes share a capture ID. |
 | `observer.capture_animation_scene(session, preview, apply_model_opacity=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; reject a stale preview. |
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
+| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...))` | Return an O1 raw `InspectionPacket` with a frozen scene and one transparent context view. |
+| `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Return the actual animation frame in the same raw packet form, with current operation identity. |
+| `observer.render(packet, *, request)` | Append a raw ROI view to a new packet value with the same capture ID, without reading a session or source asset. |
+| `packet.save(absolute_directory, profile="analysis")` | Save a new packet with checked artifact hashes; `report` stores PNG/metadata, `analysis` also stores evaluated geometry and raw RGBA, `scene` also stores frozen textures for rerendering. |
+| `kasane.open_inspection_packet(absolute_directory)` / `observer.open(...)` | Validate and open a saved packet. Report/analysis profiles can be read from a CPU-only wheel; scene profile requires the observe wheel. |
 
-The capture/ROI methods are the first O1 slice of the visual inspection plan.
+These capture, raw packet and ROI methods complete O1's frozen-scene gate.
 `CapturedScene.capture_id` is unique to an acquisition and survives a v2 scene
 bundle round trip. `CapturedScene.scene_digest` hashes canonical frozen scene
 content, including metadata and texture descriptors/content hashes, while
-excluding the acquisition ID and session/evaluation revision counters.
+excluding the acquisition ID, live animation operation identity, and
+session/evaluation revision counters.
 `RenderedSceneView.render_digest` adds the explicit ROI, dimensions, padding,
 and fixed raw context render policy. The digest identifies inputs and policy,
 not GPU pixel equivalence across adapters. The legacy `ObservedFrame.input_sha256`
 keeps its original behavior and is separate from these digests. Opening a v1
 bundle computes the scene digest and assigns a new capture ID.
-They currently render the legacy raw transparent pixel policy. The planned
-`inspect` packet, labels, display backgrounds, query and comparison APIs are
-not yet provided by these methods. A saved scene contains an evaluated frame,
+They currently render the legacy raw transparent pixel policy. The O1 packet
+uses `RawInspectionRequest`; the full `InspectionRequest`, labels, display
+backgrounds, query/comparison APIs, batch layout and complete report v2 remain
+later-stage work. `packet.capabilities` explicitly marks those channels
+unavailable. The `analysis` profile preserves query inputs but does not yet
+implement the O2 geometry/probe query. A saved scene contains an evaluated frame,
 not a resumable animation preview. `CapturedScene.source` reports
 `source_kind`, and for animation, current snapshot, host Model opacity policy
 and `history_status="not_recorded"`. Snapshot events cover only the most recent
-update, not a full interval journal. `CapturedScene.authoring` returns frozen
-mesh names/source topology, Parts, transforms and mesh bindings from the same
-document revision as the frame; it does not yet report evaluated interpolation
-weights.
+update, not a full interval journal. `source.operation` records preview ID,
+successful operation sequence, kind and actual time; it is not a full playback
+recipe or a semantic state digest. `CapturedScene.authoring` returns frozen
+mesh/Part/transform/binding and offscreen/glue/blend source records from the
+same document revision as the frame; it does not yet report selected keyform
+interpolation weights. `CapturedScene.metadata.snapshot_clone_ns` records the
+cost of copying the authoring document for the read-only capture.
 
 ```python
 with kasane.Observer(256, 256, 256) as observer:
@@ -505,6 +518,12 @@ with kasane.Observer(256, 256, 256) as observer:
         reopened, roi=(20, 20, 60, 60), resolution=(1024, 768),
         padding_canvas=4,
     ).frame.rgba == view.frame.rgba
+
+    request = kasane.RawInspectionRequest((20, 20, 60, 60), (1024, 768), 4)
+    packet = observer.inspect_scene(scene, request=request)
+    receipt = packet.save(Path("/absolute/path/to/new-packet"), profile="scene")
+    reopened_packet = observer.open(receipt.directory)
+    assert observer.render(reopened_packet, request=request).capture_id == packet.capture_id
 ```
 
 `ObservationRun.directory` (also `output`) is the actual run directory;

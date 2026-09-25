@@ -8,30 +8,35 @@ staged research/plan changes were preserved. Fixture manifest SHA-256:
 | Stage | Status | Delivered here | Remaining gate |
 | --- | --- | --- | --- |
 | O0 contract and baseline | complete | Typed target contract, three generated/verified synthetic projects, raw pixel/timing/RSS baseline, derived light/dark arithmetic reference, edit task definition | Renderer-native background results belong to V01 implementation |
-| O1 frozen capture and ROI slice | in progress | `ResolvedObservation` freezes evaluated frame, authoring mesh/Part/transform/binding records and decoded textures; explicit ROI rerender; data-only scene save/open; Python static and animation frame capture; stale-preview and Model opacity policy; independent-process reopen; canonical scene/render digests and persistent capture ID | Full packet/report v2, scene/analysis/report profiles, multi-sample snapshot, playback recipe/operation identity, public `inspect*`/`render(packet)` APIs |
-| O2–O7 | not started | — | V01–V07 presentation/query/diagnostics, V08 runner, V09 traces, V10 continuity, agent experiments |
+| O1 frozen capture and ROI | complete | Detached document snapshot; 1–64 samples with one texture union decode; full frozen authoring source records; static/actual animation frame capture with last successful operation identity; explicit ROI; scene and raw packet round trips; report/analysis/scene payload profiles; canonical capture/scene/render IDs; independent-process reopen and legacy pixel regression | O1 acceptance gate passed. Full playback recipe/runner, query-capable analysis profile, presentation, complete report v2 and full `InspectionRequest` belong to O2/O3 |
+| O2–O7 | not started | — | V01–V07 presentation/query/diagnostics, V08 runner and playback recipe, V09 traces, V10 continuity, agent experiments |
 
-The new Python O1 API is `capture_scene`, `capture_animation_scene`,
-`render_scene`, `save_scene`, and `open_scene`; it is documented in
+The Python O1 API includes `capture_scene`, `capture_scenes`,
+`capture_animation_scene`, `render_scene`, `save_scene`, `open_scene`,
+`inspect`, `inspect_animation`, `render(packet)`, `packet.save`, and
+`open_inspection_packet`; it is documented in
 `modules/kasane-python/API.md`. The saved scene has no resumable animation
 runtime state. `CapturedScene.source` records the current animation snapshot,
-host Model opacity policy and `history_status=not_recorded`; events in that
+host Model opacity policy, last successful operation identity, and
+`history_status=not_recorded`; events in that
 snapshot cover only the last update. `CapturedScene.authoring` is frozen
-metadata and source topology, not selected-keyform provenance.
+metadata and source topology, not selected-keyform provenance. Packet profile
+capabilities explicitly report when GPU rerender, raw bytes and evaluated
+geometry are present. CPU geometry/coverage query is not yet implemented.
 
 ## Verification record
 
 | Command/evidence | Result |
 | --- | --- |
 | `build_fixtures.py --verify` with final GPU wheel | passed, 9 files and 3 projects |
-| `cargo test -p kasane-sdk-observe --locked` | passed: 4 unit + 5 integration tests; canonical digest normalization/nonfinite rejection, cross-process scene reopen, corruption/version/path rejection |
-| `cargo test --workspace --locked` | passed after canonical identity work |
+| `cargo test -p kasane-sdk-observe --locked` | passed: 4 unit + 6 integration tests; multi-sample snapshot, canonical digest normalization/nonfinite rejection, cross-process scene reopen, corruption/version/path rejection |
+| `cargo test --workspace --locked` | passed after O1 capture/operation work |
 | `cargo test -p kasane-moc3-psd --locked` | passed after those test lint edits |
-| `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed after canonical identity work |
+| `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed after O1 capture/operation work |
 | `cargo fmt --check`, `git diff --check` | passed |
-| release GPU wheel, isolated CPython 3.14 environment | passed 6 `test_observe.py` tests, including Pose opacity, digest equality and bundle reopen |
-| release CPU-only wheel, isolated CPython 3.14 environment | imported without GPU observation dependency; passed 50 `test_cpu.py` tests |
-| raw baseline on final GPU wheel | all five self-authored case raw hashes matched the pre-change wheel on Apple M4/Metal, including after canonical identity work |
+| release GPU wheel, isolated CPython 3.14 environment | passed 8 `test_observe.py` tests, including Pose opacity, batch name ambiguity, profile capability gates, packet corruption and independent-process scene packet reopen |
+| release CPU-only wheel, isolated CPython 3.14 environment | passed 51 `test_cpu.py` tests; separately opened report/analysis profiles without GPU |
+| raw baseline on final GPU wheel | all five self-authored case raw and legacy input hashes matched the pre-change wheel on Apple M4/Metal |
 
 Baseline values and reproducible commands are in
 `docs/OBSERVE-VISUAL-BASELINE.md`; contract and capability limits are in
@@ -42,3 +47,10 @@ the separate canonical `scene_digest` and `render_digest` are versioned input
 identifiers. They do not promise byte-identical output across GPU adapters.
 The scene bundle writer now emits schema v2 with a persisted capture ID and
 validated scene digest; the reader also accepts v1 and assigns it a new ID.
+The raw packet manifest is schema 2 and only claims the channels currently
+captured. Analysis reopening preserves raw bytes and evaluated geometry for O2;
+it does not yet expose geometry/PixelProbe queries. Animation operation identity
+distinguishes reset/advance(0)/seek(0), but the unrecorded live history is not
+a replay recipe or resumable runtime state. Operation identity is excluded from
+the scene digest: separate previews of an identical frozen scene have the same
+scene digest and distinct capture IDs.

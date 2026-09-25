@@ -4,13 +4,18 @@
 //! captured descriptors, so an observer never holds an editing lock while
 //! decoding images or submitting GPU work.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-use kasane_animation::{MotionPreview, MotionSnapshot};
-use kasane_core::{DrawableFrame, ImageAsset, Mesh, MeshBinding, Part, PreviewValues, Transform};
+use kasane_animation::{MotionOperation, MotionPreview, MotionSnapshot};
+use kasane_core::draw_order::DrawOrderGroup;
+use kasane_core::{
+    BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, DrawableFrame, Glue, ImageAsset,
+    Mesh, MeshBinding, Offscreen, Parameter, Part, PreviewValues, SceneBinding, Transform,
+};
 use kasane_project::{read_project_asset, AssetData};
-use kasane_sdk::{AuthoringSession, Version};
+use kasane_sdk::{AuthoringSession, AuthoringSnapshot, Version};
 
 mod bundle;
 mod gpu;
@@ -22,6 +27,7 @@ pub use view::{CanvasRoi, RenderRequest, ViewMapping};
 pub struct ObservationInput {
     version: Version,
     evaluation_revision: u64,
+    snapshot_clone_ns: u64,
     document_id: String,
     requested: PreviewValues,
     frame: DrawableFrame,
@@ -39,6 +45,24 @@ pub struct CapturedAuthoring {
     pub parts: Vec<Part>,
     pub transforms: Vec<Transform>,
     pub bindings: Vec<MeshBinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<Parameter>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub assets: Vec<ImageAsset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub draw_order_groups: Vec<DrawOrderGroup>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub scene_bindings: Vec<SceneBinding>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub offscreens: Vec<Offscreen>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub glues: Vec<Glue>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blend_key_tables: Vec<BlendShapeKeyTable>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blend_constraints: Vec<BlendShapeConstraint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub blend_bindings: Vec<BlendShapeBinding>,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -50,6 +74,9 @@ pub enum ObservationSource {
         apply_model_opacity: bool,
         /// Live preview captures do not contain a complete update journal.
         history_status: HistoryStatus,
+        /// Last successful operation; not a complete replay recipe.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        operation: Option<MotionOperation>,
     },
 }
 
@@ -70,7 +97,7 @@ pub struct ResolvedTexture {
 #[derive(Clone, Debug)]
 pub struct ResolvedObservation {
     input: ObservationInput,
-    textures: Vec<ResolvedTexture>,
+    textures: Arc<[ResolvedTexture]>,
     capture_id: String,
     scene_digest: String,
 }
@@ -79,7 +106,47 @@ pub(crate) const MAX_CAPTURE_TEXTURE_BYTES: u64 = 256 * 1024 * 1024;
 
 impl ResolvedObservation {
     pub fn capture(input: ObservationInput) -> Result<Self, ObservationError> {
-        let expected_rgba = input.assets.iter().try_fold(0u64, |total, asset| {
+        Ok(Self::capture_many(vec![input])?.remove(0))
+    }
+
+    /// Resolve the union of sample assets once and share their decoded bytes.
+    /// All inputs must come from the same authoring snapshot.
+    pub fn capture_many(inputs: Vec<ObservationInput>) -> Result<Vec<Self>, ObservationError> {
+        if inputs.is_empty() || inputs.len() > 64 {
+            return Err(ObservationError {
+                code: "OBSERVATION_BUDGET_EXCEEDED".into(),
+                message: "Sample count must be 1..64".into(),
+                asset_id: None,
+            });
+        }
+        let first = &inputs[0];
+        let mut assets = BTreeMap::<String, ImageAsset>::new();
+        for input in &inputs {
+            if input.version != first.version
+                || input.document_id != first.document_id
+                || input.evaluation_revision != first.evaluation_revision
+                || input.root != first.root
+                || input.authoring != first.authoring
+            {
+                return Err(ObservationError {
+                    code: "MIXED_DOCUMENT_SNAPSHOTS".into(),
+                    message: "Samples must use one authoring snapshot".into(),
+                    asset_id: None,
+                });
+            }
+            for asset in &input.assets {
+                if let Some(existing) = assets.insert(asset.id.clone(), asset.clone()) {
+                    if existing != *asset {
+                        return Err(ObservationError {
+                            code: "MIXED_DOCUMENT_SNAPSHOTS".into(),
+                            message: "Asset descriptor changed between samples".into(),
+                            asset_id: Some(asset.id.clone()),
+                        });
+                    }
+                }
+            }
+        }
+        let expected_rgba = assets.values().try_fold(0u64, |total, asset| {
             total.checked_add(u64::from(asset.width) * u64::from(asset.height) * 4)
         });
         if expected_rgba.is_none_or(|bytes| bytes > MAX_CAPTURE_TEXTURE_BYTES) {
@@ -89,7 +156,18 @@ impl ResolvedObservation {
                 asset_id: None,
             });
         }
-        let textures = input.resolve_textures()?;
+        let textures: Vec<ResolvedTexture> = assets
+            .into_values()
+            .map(|asset| {
+                let data =
+                    read_project_asset(&first.root, &asset).map_err(|status| ObservationError {
+                        code: status.code,
+                        message: status.message,
+                        asset_id: Some(asset.id.clone()),
+                    })?;
+                Ok(ResolvedTexture { asset, data })
+            })
+            .collect::<Result<_, _>>()?;
         let retained = textures.iter().try_fold(0u64, |total, texture| {
             total
                 .checked_add(texture.data.bytes.len() as u64)?
@@ -102,14 +180,21 @@ impl ResolvedObservation {
                 asset_id: None,
             });
         }
-        let mut capture = Self {
-            input,
-            textures,
-            capture_id: uuid::Uuid::new_v4().to_string(),
-            scene_digest: String::new(),
-        };
-        capture.scene_digest = capture.compute_scene_digest()?;
-        Ok(capture)
+        let shared: Arc<[ResolvedTexture]> = textures.into();
+        let capture_id = uuid::Uuid::new_v4().to_string();
+        inputs
+            .into_iter()
+            .map(|input| {
+                let mut capture = Self {
+                    input,
+                    textures: Arc::clone(&shared),
+                    capture_id: capture_id.clone(),
+                    scene_digest: String::new(),
+                };
+                capture.scene_digest = capture.compute_scene_digest()?;
+                Ok(capture)
+            })
+            .collect()
     }
 
     pub fn input(&self) -> &ObservationInput {
@@ -145,11 +230,59 @@ impl std::fmt::Display for ObservationError {
 impl std::error::Error for ObservationError {}
 
 impl ObservationInput {
+    /// Resolve IDs or unique display names against the detached document.
+    pub fn resolve_requested(
+        snapshot: &AuthoringSnapshot,
+        values: &PreviewValues,
+    ) -> Result<PreviewValues, ObservationError> {
+        let document = snapshot.document();
+        let mut resolved = PreviewValues::new();
+        for (name_or_id, value) in values {
+            let id = if document.get_parameter(name_or_id).is_some() {
+                name_or_id.clone()
+            } else {
+                let mut matches = document.parameter_order().iter().filter(|id| {
+                    document
+                        .get_parameter(id)
+                        .is_some_and(|p| p.name == *name_or_id)
+                });
+                match (matches.next(), matches.next()) {
+                    (Some(id), None) => id.clone(),
+                    (Some(_), Some(_)) => {
+                        return Err(ObservationError {
+                            code: "AMBIGUOUS_PARAMETER_NAME".into(),
+                            message: format!("Parameter name {name_or_id:?} is ambiguous"),
+                            asset_id: None,
+                        });
+                    }
+                    _ => {
+                        return Err(ObservationError {
+                            code: "UNKNOWN_PARAMETER".into(),
+                            message: format!("Unknown parameter {name_or_id:?}"),
+                            asset_id: None,
+                        });
+                    }
+                }
+            };
+            if resolved.insert(id.clone(), *value).is_some() {
+                return Err(ObservationError {
+                    code: "DUPLICATE_PARAMETER".into(),
+                    message: format!("Parameter {id:?} was supplied twice"),
+                    asset_id: None,
+                });
+            }
+        }
+        Ok(resolved)
+    }
+
     pub fn version(&self) -> Version {
         self.version
     }
     pub fn evaluation_revision(&self) -> u64 {
         self.evaluation_revision
+    }
+    pub fn snapshot_clone_ns(&self) -> u64 {
+        self.snapshot_clone_ns
     }
     pub fn document_id(&self) -> &str {
         &self.document_id
@@ -177,7 +310,15 @@ impl ObservationInput {
         session: &AuthoringSession,
         requested: &PreviewValues,
     ) -> Result<Self, ObservationError> {
-        let frame = session
+        Self::capture_from_snapshot(&session.read_snapshot(), requested)
+    }
+
+    /// Evaluate a detached authoring snapshot; no live session is consulted.
+    pub fn capture_from_snapshot(
+        snapshot: &AuthoringSnapshot,
+        requested: &PreviewValues,
+    ) -> Result<Self, ObservationError> {
+        let frame = snapshot
             .evaluate(requested)
             .map_err(|error| ObservationError {
                 code: error.code.into(),
@@ -185,11 +326,29 @@ impl ObservationInput {
                 asset_id: error.object_ids.first().cloned(),
             })?;
         Self::capture_frame(
-            session,
+            snapshot,
             requested.clone(),
             frame,
             ObservationSource::Parameters,
         )
+    }
+
+    /// Capture up to 64 parameter samples against one detached document.
+    pub fn capture_samples(
+        snapshot: &AuthoringSnapshot,
+        samples: &[PreviewValues],
+    ) -> Result<Vec<Self>, ObservationError> {
+        if samples.is_empty() || samples.len() > 64 {
+            return Err(ObservationError {
+                code: "OBSERVATION_BUDGET_EXCEEDED".into(),
+                message: "Sample count must be 1..64".into(),
+                asset_id: None,
+            });
+        }
+        samples
+            .iter()
+            .map(|values| Self::capture_from_snapshot(snapshot, values))
+            .collect()
     }
 
     /// Capture a previously evaluated Motion/Expression/Physics/Pose frame.
@@ -210,10 +369,19 @@ impl ObservationInput {
         preview: &MotionPreview,
         apply_model_opacity: bool,
     ) -> Result<Self, ObservationError> {
-        let version = session.version();
+        Self::capture_motion_from_snapshot(&session.read_snapshot(), preview, apply_model_opacity)
+    }
+
+    /// Capture animation against the exact document snapshot checked for identity.
+    pub fn capture_motion_from_snapshot(
+        snapshot: &AuthoringSnapshot,
+        preview: &MotionPreview,
+        apply_model_opacity: bool,
+    ) -> Result<Self, ObservationError> {
+        let version = snapshot.version();
         if preview.source_identity() != Some((version.session_id, version.generation))
             || preview.document_revision() != version.revision
-            || preview.document_id() != session.document_id()
+            || preview.document_id() != snapshot.document().id()
         {
             return Err(ObservationError {
                 code: "STALE_ANIMATION_PREVIEW".into(),
@@ -248,25 +416,27 @@ impl ObservationInput {
             }
         }
         Self::capture_frame(
-            session,
+            snapshot,
             requested,
             frame,
             ObservationSource::Animation {
                 snapshot: Box::new(preview.snapshot().clone()),
                 apply_model_opacity,
                 history_status: HistoryStatus::NotRecorded,
+                operation: Some(preview.operation().clone()),
             },
         )
     }
 
     fn capture_frame(
-        session: &AuthoringSession,
+        snapshot: &AuthoringSnapshot,
         requested: PreviewValues,
         frame: DrawableFrame,
         source: ObservationSource,
     ) -> Result<Self, ObservationError> {
-        let version = session.version();
-        let evaluation_revision = session.evaluation_revision();
+        let version = snapshot.version();
+        let document = snapshot.document();
+        let evaluation_revision = document.evaluation_revision();
         let required: BTreeSet<_> = frame
             .drawables
             .iter()
@@ -274,59 +444,138 @@ impl ObservationInput {
             .collect();
         let mut assets = Vec::with_capacity(required.len());
         for id in required {
-            let asset = session.asset(id).ok_or_else(|| ObservationError {
-                code: "MISSING_ASSET".into(),
-                message: "Drawable references an absent asset".into(),
-                asset_id: Some(id.to_owned()),
-            })?;
+            let asset = document
+                .get_asset(id)
+                .cloned()
+                .ok_or_else(|| ObservationError {
+                    code: "MISSING_ASSET".into(),
+                    message: "Drawable references an absent asset".into(),
+                    asset_id: Some(id.to_owned()),
+                })?;
             assets.push(asset);
         }
-        let root = session
+        let root = snapshot
             .project_path()
             .and_then(|path| path.parent())
             .map_or_else(PathBuf::new, std::path::Path::to_path_buf);
         let authoring = CapturedAuthoring {
-            meshes: session
-                .mesh_ids()
+            meshes: document
+                .mesh_order()
                 .iter()
                 .map(|id| {
-                    session
-                        .mesh(id)
+                    document
+                        .get_mesh(id)
+                        .cloned()
                         .expect("mesh ID exists in captured document")
                 })
                 .collect(),
-            parts: session
-                .part_ids()
+            parts: document
+                .part_order()
                 .iter()
                 .map(|id| {
-                    session
-                        .part(id)
+                    document
+                        .get_part(id)
+                        .cloned()
                         .expect("part ID exists in captured document")
                 })
                 .collect(),
-            transforms: session
-                .transform_ids()
+            transforms: document
+                .transform_order()
                 .iter()
                 .map(|id| {
-                    session
-                        .transform(id)
+                    document
+                        .get_transform(id)
+                        .cloned()
                         .expect("transform ID exists in captured document")
                 })
                 .collect(),
-            bindings: session
-                .binding_ids()
+            bindings: document
+                .binding_order()
                 .iter()
                 .map(|id| {
-                    session
-                        .binding(id)
+                    document
+                        .get_binding(id)
+                        .cloned()
                         .expect("binding ID exists in captured document")
+                })
+                .collect(),
+            parameters: document
+                .parameter_order()
+                .iter()
+                .map(|id| {
+                    document
+                        .get_parameter(id)
+                        .cloned()
+                        .expect("parameter exists")
+                })
+                .collect(),
+            assets: document
+                .asset_order()
+                .iter()
+                .map(|id| document.get_asset(id).cloned().expect("asset exists"))
+                .collect(),
+            draw_order_groups: document.draw_order_groups().unwrap_or_default().to_vec(),
+            scene_bindings: document
+                .scene_binding_order()
+                .iter()
+                .map(|id| {
+                    document
+                        .get_scene_binding(id)
+                        .cloned()
+                        .expect("scene binding exists")
+                })
+                .collect(),
+            offscreens: document
+                .offscreen_order()
+                .iter()
+                .map(|id| {
+                    document
+                        .get_offscreen(id)
+                        .cloned()
+                        .expect("offscreen exists")
+                })
+                .collect(),
+            glues: document
+                .glue_order()
+                .iter()
+                .map(|id| document.get_glue(id).cloned().expect("glue exists"))
+                .collect(),
+            blend_key_tables: document
+                .blend_key_table_order()
+                .iter()
+                .map(|id| {
+                    document
+                        .get_blend_key_table(id)
+                        .cloned()
+                        .expect("key table exists")
+                })
+                .collect(),
+            blend_constraints: document
+                .blend_constraint_order()
+                .iter()
+                .map(|id| {
+                    document
+                        .get_blend_constraint(id)
+                        .cloned()
+                        .expect("constraint exists")
+                })
+                .collect(),
+            blend_bindings: document
+                .blend_binding_order()
+                .iter()
+                .map(|id| {
+                    document
+                        .get_blend_binding(id)
+                        .cloned()
+                        .expect("blend binding exists")
                 })
                 .collect(),
         };
         Ok(Self {
             version,
             evaluation_revision,
-            document_id: session.document_id().to_owned(),
+            snapshot_clone_ns: snapshot.clone_elapsed_ns(),
+            document_id: document.id().to_owned(),
             requested,
             frame,
             assets,

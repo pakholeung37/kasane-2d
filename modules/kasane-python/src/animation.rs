@@ -198,6 +198,10 @@ impl NativeMotionPreview {
     fn snapshot(&self) -> MotionPreviewTuple {
         motion_snapshot(&self.inner)
     }
+    fn operation_json(&self) -> PyResult<String> {
+        serde_json::to_string(self.inner.operation())
+            .map_err(|error| pyo3::exceptions::PyRuntimeError::new_err(error.to_string()))
+    }
     fn set_base_parameter(&mut self, py: Python<'_>, id: &str, value: f32) -> PyResult<()> {
         self.inner
             .set_base_parameter(id, value)

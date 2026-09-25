@@ -11,7 +11,9 @@ mod motion_runtime;
 mod physics;
 pub use physics::PhysicsPreview;
 mod pose;
-pub use motion_preview::{MotionEventFired, MotionPreview, MotionSnapshot};
+pub use motion_preview::{
+    MotionEventFired, MotionOperation, MotionOperationKind, MotionPreview, MotionSnapshot,
+};
 
 mod expression;
 mod expression_preview;

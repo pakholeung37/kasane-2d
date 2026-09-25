@@ -26,9 +26,100 @@ PART = "00000000-0000-4000-8000-000000000006"
 OFFSCREEN = "00000000-0000-4000-8000-000000000007"
 PART_B = "00000000-0000-4000-8000-000000000008"
 POSE = "00000000-0000-4000-8000-000000000009"
+PARAMETER = "00000000-0000-4000-8000-000000000010"
 
 
 class GpuWheelTests(unittest.TestCase):
+    def test_batch_resolves_names_from_one_snapshot_and_rejects_ambiguity(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("duplicate names") as edit:
+            edit.create_parameter(PARAMETER, "Same", -1, 1, 0)
+            edit.create_parameter(PART, "Same", -1, 1, 0)
+        with kasane.Observer(32, 32, 32) as observer:
+            with self.assertRaises(ValueError):
+                observer.capture_scenes(model, [{}] * 65)
+            with self.assertRaises(kasane.ObservationFailure) as failure:
+                observer.capture_scenes(model, [{"Same": 0.5}])
+            self.assertEqual(failure.exception.code, "AMBIGUOUS_PARAMETER_NAME")
+            samples = observer.capture_scenes(model, [{PARAMETER: 0}, {PART: 0.5}])
+            self.assertEqual(samples[0].capture_id, samples[1].capture_id)
+            self.assertEqual(samples[1].metadata["requested"], {PART: 0.5})
+        with self.assertRaises(ValueError):
+            kasane.RawInspectionRequest((0, 0, 100, 100), (4096, 4096))
+
+    def test_raw_packet_profiles_reopen_with_explicit_capabilities(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("packet fixture") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        request = kasane.RawInspectionRequest((35, 35, 65, 65), (96, 80))
+        with kasane.Observer(64, 64, 64) as observer:
+            packet = observer.inspect(model, request=request)
+            self.assertEqual(packet.source_kind, "parameters")
+            self.assertTrue(packet.capabilities["rerender_scene"])
+            self.assertEqual(packet.objects[0]["name"], "face")
+            extended = observer.render(packet, request=kasane.RawInspectionRequest(
+                (38, 38, 62, 62), (128, 96), padding_canvas=1,
+            ))
+            self.assertEqual(extended.capture_id, packet.capture_id)
+            self.assertEqual(extended.scene_digest, packet.scene_digest)
+            self.assertEqual(len(extended.views), 2)
+            with TemporaryDirectory() as temporary:
+                root = Path(temporary).resolve()
+                for profile in ("report", "analysis", "scene"):
+                    directory = root / profile
+                    receipt = extended.save(directory, profile=profile)
+                    self.assertEqual(receipt.directory, directory)
+                    self.assertEqual(len(receipt.manifest_sha256), 64)
+                    reopened = observer.open(directory)
+                    self.assertEqual(reopened.capture_id, packet.capture_id)
+                    self.assertEqual(reopened.scene_digest, packet.scene_digest)
+                    self.assertEqual(reopened.views[0].png, extended.views[0].png)
+                    self.assertEqual(reopened.capabilities["rerender_scene"], profile == "scene")
+                    self.assertEqual(reopened.capabilities["raw_pixel_data"], profile != "report")
+                    if profile == "report":
+                        self.assertIsNone(reopened.evaluated_frame)
+                    else:
+                        self.assertEqual(reopened.evaluated_frame, packet.evaluated_frame)
+                        self.assertEqual(reopened.views[0].rgba, packet.views[0].rgba)
+                    if profile == "scene":
+                        added = observer.render(reopened, request=request)
+                        self.assertEqual(added.views[-1].rgba, packet.views[0].rgba)
+                        child = subprocess.run(
+                            [sys.executable, "-c", """
+import sys
+from pathlib import Path
+import kasane
+request = kasane.RawInspectionRequest((35, 35, 65, 65), (96, 80))
+with kasane.Observer(64, 64, 64) as observer:
+    packet = observer.open(Path(sys.argv[1]))
+    assert observer.render(packet, request=request).views[-1].rgba == packet.views[0].rgba
+print('PACKET_REOPEN_OK')
+""", str(directory)], capture_output=True, text=True,
+                        )
+                        self.assertEqual(child.returncode, 0, child.stderr)
+                        self.assertIn("PACKET_REOPEN_OK", child.stdout)
+                    else:
+                        with self.assertRaises(kasane.ObservationFailure) as unavailable:
+                            observer.render(reopened, request=request)
+                        self.assertEqual(unavailable.exception.code, "CAPTURE_NOT_AVAILABLE")
+                original_png = (root / "report/views/000.png").read_bytes()
+                (root / "report/views/000.png").write_bytes(b"corrupted")
+                with self.assertRaises(ValueError):
+                    observer.open(root / "report")
+                (root / "report/views/000.png").write_bytes(original_png)
+                manifest_path = root / "report/packet.json"
+                original_manifest = manifest_path.read_bytes()
+                tampered = json.loads(original_manifest)
+                tampered["files"]["../outside"] = "0" * 64
+                manifest_path.write_text(json.dumps(tampered), encoding="utf-8")
+                with self.assertRaises(ValueError):
+                    observer.open(root / "report")
+                manifest_path.write_bytes(original_manifest)
+            packet.close()
+            self.assertTrue(packet.closed)
+            self.assertTrue(extended.capabilities["rerender_scene"])
+
     def test_animation_capture_preserves_pose_part_opacity(self):
         model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
         with model.edit("two pose parts") as edit:
@@ -53,6 +144,9 @@ class GpuWheelTests(unittest.TestCase):
             )
             self.assertNotEqual(actual.frame.rgba, static.frame.rgba)
             self.assertEqual(animated.source["snapshot"]["part_opacities"][PART_B], 0)
+            self.assertEqual(animated.source["operation"]["sequence"], 0)
+            self.assertEqual(animated.source["operation"]["kind"]["operation"], "created")
+            self.assertEqual(animated.source["operation"], preview.operation)
             self.assertEqual(preview.snapshot().part_opacities[PART_B], 0)
 
     def test_frozen_scene_roi_reopens_without_live_session(self):
@@ -60,8 +154,14 @@ class GpuWheelTests(unittest.TestCase):
         with model.edit("base") as edit:
             edit.add_png_asset(ASSET, "texture", TEXTURE)
             edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+            edit.create_parameter(PARAMETER, "Shift", -1, 1, 0)
         with kasane.Observer(64, 64, 64) as observer:
             scene = observer.capture_scene(model)
+            self.assertGreaterEqual(scene.metadata["snapshot_clone_ns"], 0)
+            samples = observer.capture_scenes(model, [{"Shift": 0}, {"Shift": 0.5}])
+            self.assertEqual(samples[0].capture_id, samples[1].capture_id)
+            self.assertNotEqual(samples[0].scene_digest, samples[1].scene_digest)
+            self.assertEqual(samples[0].source, samples[1].source)
             self.assertEqual(len(scene.scene_digest), 64)
             self.assertEqual(scene.scene_digest, observer.capture_scene(model).scene_digest)
             self.assertNotEqual(scene.capture_id, observer.capture_scene(model).capture_id)

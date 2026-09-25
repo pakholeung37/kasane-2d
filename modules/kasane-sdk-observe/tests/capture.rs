@@ -1,4 +1,4 @@
-use kasane_core::{Canvas, PreviewValues, Vec2};
+use kasane_core::{Canvas, Parameter, PreviewValues, Vec2};
 use kasane_sdk::{prepare_png_asset, rectangle_mesh, AuthoringSession};
 use kasane_sdk_observe::{
     CanvasRoi, HistoryStatus, ObservationInput, ObservationSource, Observer, ObserverConfig,
@@ -8,6 +8,78 @@ use kasane_sdk_observe::{
 const DOCUMENT: &str = "00000000-0000-4000-8000-000000000001";
 const ASSET: &str = "00000000-0000-4000-8000-000000000002";
 const MESH: &str = "00000000-0000-4000-8000-000000000003";
+const PARAMETER: &str = "00000000-0000-4000-8000-000000000004";
+
+#[test]
+fn batch_samples_one_document_snapshot_and_reuses_capture_identity() {
+    let mut session = AuthoringSession::new(
+        DOCUMENT,
+        Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
+    )
+    .unwrap();
+    let png =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
+    let asset = prepare_png_asset(ASSET, "texture", &png).unwrap();
+    let mesh = rectangle_mesh(
+        MESH,
+        "face",
+        ASSET,
+        Vec2::new(40.0, 40.0),
+        Vec2::new(60.0, 60.0),
+    )
+    .unwrap();
+    session
+        .edit("fixture", None, |edit| {
+            edit.create_asset(asset)?;
+            edit.create_mesh(mesh)?;
+            edit.create_parameter(Parameter {
+                id: PARAMETER.into(),
+                name: "Shift".into(),
+                ..Parameter::default()
+            })
+        })
+        .unwrap();
+    let snapshot = session.read_snapshot();
+    let requested = [
+        ObservationInput::resolve_requested(
+            &snapshot,
+            &PreviewValues::from([("Shift".into(), 0.0)]),
+        )
+        .unwrap(),
+        ObservationInput::resolve_requested(
+            &snapshot,
+            &PreviewValues::from([("Shift".into(), 0.5)]),
+        )
+        .unwrap(),
+    ];
+    session
+        .edit("change after snapshot", None, |edit| {
+            edit.update_positions(MESH, &[0], &[Vec2::new(50.0, 40.0)])
+        })
+        .unwrap();
+    let inputs = ObservationInput::capture_samples(&snapshot, &requested).unwrap();
+    assert_eq!(inputs[0].version(), inputs[1].version());
+    assert_ne!(inputs[0].version(), session.version());
+    assert_eq!(
+        inputs[0].frame().drawables[0].positions[0],
+        Vec2::new(-1.0, 1.0)
+    );
+    assert_eq!(inputs[1].frame().parameters[0].value, 0.5);
+    let scenes = ResolvedObservation::capture_many(inputs).unwrap();
+    assert_eq!(scenes[0].capture_id(), scenes[1].capture_id());
+    assert_ne!(scenes[0].scene_digest(), scenes[1].scene_digest());
+    assert_eq!(
+        scenes[0].textures()[0].data.sha256,
+        scenes[1].textures()[0].data.sha256
+    );
+    let fresh = ObservationInput::capture(&session, &PreviewValues::new()).unwrap();
+    assert_eq!(
+        ResolvedObservation::capture_many(vec![scenes[0].input().clone(), fresh])
+            .unwrap_err()
+            .code,
+        "MIXED_DOCUMENT_SNAPSHOTS"
+    );
+}
 
 #[test]
 fn captures_unpublished_project_and_keeps_old_frame_after_edit() {
@@ -82,7 +154,7 @@ fn captures_animation_frame_and_rejects_stale_preview() {
             edit.create_mesh(mesh)
         })
         .unwrap();
-    let preview = session.motion_preview();
+    let mut preview = session.motion_preview();
     let input = ObservationInput::capture_motion(&session, &preview).unwrap();
     assert_eq!(input.frame(), &preview.evaluate_drawables().unwrap());
     assert!(matches!(
@@ -91,9 +163,30 @@ fn captures_animation_frame_and_rejects_stale_preview() {
             apply_model_opacity: false,
             history_status,
             snapshot,
-        } if *history_status == HistoryStatus::NotRecorded && snapshot.as_ref() == preview.snapshot()
+            operation: Some(operation),
+        } if *history_status == HistoryStatus::NotRecorded
+            && snapshot.as_ref() == preview.snapshot()
+            && operation == preview.operation()
     ));
     let scene = ResolvedObservation::capture(input.clone()).unwrap();
+    let second_preview = session.motion_preview();
+    let second = ResolvedObservation::capture(
+        ObservationInput::capture_motion(&session, &second_preview).unwrap(),
+    )
+    .unwrap();
+    assert_ne!(
+        preview.operation().preview_id,
+        second_preview.operation().preview_id
+    );
+    assert_ne!(scene.capture_id(), second.capture_id());
+    assert_eq!(scene.scene_digest(), second.scene_digest());
+
+    preview.reset();
+    let reset =
+        ResolvedObservation::capture(ObservationInput::capture_motion(&session, &preview).unwrap())
+            .unwrap();
+    assert_ne!(input.source(), reset.input().source());
+    assert_eq!(scene.scene_digest(), reset.scene_digest());
     let bundle_directory = std::env::temp_dir().join(format!(
         "kasane-observe-animation-{}-{}",
         std::process::id(),

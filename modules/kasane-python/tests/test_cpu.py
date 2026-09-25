@@ -55,6 +55,23 @@ def session():
 
 
 class CpuWheelTests(unittest.TestCase):
+    def test_motion_operation_identity_is_read_only_and_tracks_success(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        preview = model.motion_preview()
+        preview_id = preview.operation["preview_id"]
+        self.assertEqual(preview.operation["sequence"], 0)
+        preview.reset()
+        self.assertEqual(preview.operation["kind"]["operation"], "reset")
+        preview.advance(0)
+        self.assertEqual(preview.operation["kind"]["operation"], "advance")
+        preview.seek(0)
+        self.assertEqual(preview.operation["kind"]["operation"], "seek")
+        self.assertEqual(preview.operation["sequence"], 3)
+        self.assertEqual(preview.operation["preview_id"], preview_id)
+        with self.assertRaises(kasane.SdkFailure):
+            preview.seek(float("nan"))
+        self.assertEqual(preview.operation["sequence"], 3)
+
     def test_motion_registration_and_transactional_seek_cache(self):
         model = session()
         with model.edit("registration cache fixture") as edit:

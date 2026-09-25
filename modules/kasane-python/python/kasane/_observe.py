@@ -15,6 +15,10 @@ import zlib
 from . import _native as _native_module
 from ._animation import MotionPreview
 from ._session import Session
+from ._inspection import (
+    InspectionPacket, RawInspectionRequest, append_view, check_next_view,
+    open_inspection_packet, packet_from_scene,
+)
 
 try:
     from ._native import NativeCapturedScene, NativeObserver, ObservationFailure
@@ -70,9 +74,22 @@ class Observer:
     ) -> CapturedScene:
         """Freeze one evaluated scene and its decoded textures for later views."""
         native = self._native.capture_scene(
-            session._native, session._parameter_values(values or {})
+            session._native, dict(values or {})
         )
         return CapturedScene(native)
+
+    def capture_scenes(
+        self, session: Session, samples: Sequence[Mapping[str, float]],
+    ) -> tuple[CapturedScene, ...]:
+        """Freeze 1–64 parameter samples from one document snapshot.
+
+        Names resolve against that snapshot. Decoded texture bytes are shared
+        across samples, including assets used by only one sample.
+        """
+        if not 1 <= len(samples) <= 64:
+            raise ValueError("capture_scenes requires 1–64 samples")
+        return tuple(CapturedScene(native) for native in
+                     self._native.capture_scenes(session._native, [dict(item) for item in samples]))
 
     def capture_animation_scene(
         self, session: Session, preview: MotionPreview, *,
@@ -105,6 +122,51 @@ class Observer:
         return RenderedSceneView(
             _frame_from_native(raw), requested, padded, visible, render_digest,
         )
+
+    def inspect_scene(
+        self, scene: CapturedScene, *, request: RawInspectionRequest,
+    ) -> InspectionPacket:
+        """Create a raw O1 packet from a frozen scene without live session reads."""
+        rendered = self.render_scene(
+            scene, roi=request.roi, resolution=request.resolution,
+            padding_canvas=request.padding_canvas,
+        )
+        return packet_from_scene(scene, rendered)
+
+    def inspect(
+        self, session: Session, values: Mapping[str, float] | None = None, *,
+        request: RawInspectionRequest,
+    ) -> InspectionPacket:
+        """Freeze one parameter frame and return its raw inspection packet."""
+        return self.inspect_scene(self.capture_scene(session, values), request=request)
+
+    def inspect_animation(
+        self, session: Session, preview: MotionPreview, *,
+        request: RawInspectionRequest, apply_model_opacity: bool = False,
+    ) -> InspectionPacket:
+        """Freeze the preview's actual current frame without advancing it."""
+        scene = self.capture_animation_scene(
+            session, preview, apply_model_opacity=apply_model_opacity,
+        )
+        return self.inspect_scene(scene, request=request)
+
+    def render(
+        self, packet: InspectionPacket, *, request: RawInspectionRequest,
+    ) -> InspectionPacket:
+        """Append a raw view while preserving the packet's capture identity."""
+        if packet.closed or packet._scene is None:
+            from ._inspection import _unavailable
+            raise _unavailable("Packet has no open scene for another render")
+        check_next_view(packet, request)
+        rendered = self.render_scene(
+            packet._scene, roi=request.roi, resolution=request.resolution,
+            padding_canvas=request.padding_canvas,
+        )
+        return append_view(packet, rendered)
+
+    def open(self, absolute_directory: Path) -> InspectionPacket:
+        """Open and validate a saved report, analysis, or scene packet."""
+        return open_inspection_packet(absolute_directory)
 
 
     def observe_run(
@@ -267,6 +329,16 @@ class CapturedScene:
     def authoring(self) -> dict:
         """Frozen object names, topology, hierarchy and mesh binding records."""
         return json.loads(self._native.authoring_json())
+
+    @property
+    def metadata(self) -> dict:
+        """Frozen capture identity, document version, request and textures."""
+        return json.loads(self._native.metadata_json())
+
+    @property
+    def evaluated_frame(self) -> dict:
+        """The evaluated geometry and draw plan used by the renderer."""
+        return json.loads(self._native.evaluated_frame_json())
 
     def save_scene(self, absolute_directory: Path) -> Path:
         """Write a new data-only scene bundle and return its directory."""

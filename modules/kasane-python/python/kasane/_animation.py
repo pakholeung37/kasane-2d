@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import json
 
 from ._types import DrawableSample, Evaluation, ExpressionSnapshot, MotionSnapshot, ParameterSample, SeekCacheStats
 
@@ -97,6 +98,11 @@ class MotionPreview:
     def snapshot(self) -> MotionSnapshot:
         """Return detached current values and last-update events without advancing playback."""
         return self._snapshot(self._native.snapshot())
+
+    @property
+    def operation(self) -> dict:
+        """Last successful operation identity; this is not a replay recipe."""
+        return json.loads(self._native.operation_json())
 
     def set_base_parameter(self, parameter_id: str, value: float) -> None:
         """Set a finite parameter UUID baseline, clamped to its range, then reset.

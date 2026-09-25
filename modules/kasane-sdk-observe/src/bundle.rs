@@ -30,6 +30,8 @@ struct SceneBundle {
     scene_digest: String,
     version: [u64; 3],
     evaluation_revision: u64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    snapshot_clone_ns: u64,
     document_id: String,
     requested: BTreeMap<String, f32>,
     source: ObservationSource,
@@ -51,6 +53,10 @@ fn failure(code: &'static str, message: impl Into<String>) -> ObservationError {
         message: message.into(),
         asset_id: None,
     }
+}
+
+fn is_zero(value: &u64) -> bool {
+    *value == 0
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), ObservationError> {
@@ -132,8 +138,14 @@ fn scene_hash(bundle: &SceneBundle) -> Result<String, ObservationError> {
         "scene_digest",
         "version",
         "evaluation_revision",
+        "snapshot_clone_ns",
     ] {
         fields.remove(identity);
+    }
+    if let Some(source) = fields.get_mut("source").and_then(Value::as_object_mut) {
+        // A live preview's operation ID distinguishes evidence acquisitions,
+        // but does not change frozen geometry, source snapshot or textures.
+        source.remove("operation");
     }
     let mut bytes = b"kasane-observe-scene-digest-v1\0".to_vec();
     canonical_json(&value, &mut bytes)?;
@@ -154,6 +166,7 @@ impl ResolvedObservation {
                 input.version.revision,
             ],
             evaluation_revision: input.evaluation_revision,
+            snapshot_clone_ns: input.snapshot_clone_ns,
             document_id: input.document_id.clone(),
             requested: input
                 .requested
@@ -208,7 +221,7 @@ impl ResolvedObservation {
         }
         fs::create_dir(directory).map_err(|e| failure("BUNDLE_IO", e.to_string()))?;
         let bundle = self.scene_bundle();
-        for (entry, texture) in bundle.textures.iter().zip(&self.textures) {
+        for (entry, texture) in bundle.textures.iter().zip(self.textures.iter()) {
             write_atomically(&directory.join(&entry.path), &texture.data.bytes)?;
         }
         let content = serde_json::to_vec_pretty(&bundle)
@@ -355,6 +368,7 @@ impl ResolvedObservation {
                     revision: bundle.version[2],
                 },
                 evaluation_revision: bundle.evaluation_revision,
+                snapshot_clone_ns: bundle.snapshot_clone_ns,
                 document_id: bundle.document_id,
                 requested: bundle.requested.into_iter().collect(),
                 source: bundle.source,
@@ -363,7 +377,7 @@ impl ResolvedObservation {
                 assets,
                 root: directory.to_path_buf(),
             },
-            textures,
+            textures: textures.into(),
             capture_id,
             scene_digest: String::new(),
         };
@@ -390,6 +404,7 @@ mod tests {
             scene_digest: String::new(),
             version: [1, 2, 3],
             evaluation_revision: 4,
+            snapshot_clone_ns: 0,
             document_id: "document".into(),
             requested: BTreeMap::new(),
             source: ObservationSource::Parameters,
@@ -398,6 +413,15 @@ mod tests {
                 parts: vec![],
                 transforms: vec![],
                 bindings: vec![],
+                parameters: vec![],
+                assets: vec![],
+                draw_order_groups: vec![],
+                scene_bindings: vec![],
+                offscreens: vec![],
+                glues: vec![],
+                blend_key_tables: vec![],
+                blend_constraints: vec![],
+                blend_bindings: vec![],
             },
             frame: DrawableFrame::default(),
             textures: vec![],

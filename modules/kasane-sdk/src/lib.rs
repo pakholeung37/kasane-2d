@@ -18,7 +18,7 @@ pub use kasane_animation::{
 pub use kasane_project::{
     FileSystem, ImportReport, NativeFileSystem, ProjectResult, PsdImportReport, ResourceDiagnostic,
 };
-pub use session::AuthoringSession;
+pub use session::{AuthoringSession, AuthoringSnapshot};
 pub use types::{
     EditReceipt, GeometrySnapshot, HistoryLimits, HistoryState, ImportReceipt, MeshProperties,
     ObjectHandle, ObjectKind, PsdImportReceipt, SaveReceipt, SdkError, SourceSpace,

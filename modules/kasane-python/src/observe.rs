@@ -121,6 +121,28 @@ impl NativeCapturedScene {
             .map_err(|error| PyException::new_err(error.to_string()))
     }
 
+    fn metadata_json(&self) -> PyResult<String> {
+        let input = self.inner.input();
+        let version = input.version();
+        serde_json::to_string(&serde_json::json!({
+            "capture_id": self.inner.capture_id(),
+            "scene_digest": self.inner.scene_digest(),
+            "document_id": input.document_id(),
+            "version": [version.session_id, version.generation, version.revision],
+            "evaluation_revision": input.evaluation_revision(),
+            "snapshot_clone_ns": input.snapshot_clone_ns(),
+            "source_revision": input.frame().source_revision,
+            "requested": input.requested(),
+            "textures": self.inner.textures().iter().map(|texture| &texture.asset).collect::<Vec<_>>(),
+        }))
+        .map_err(|error| PyException::new_err(error.to_string()))
+    }
+
+    fn evaluated_frame_json(&self) -> PyResult<String> {
+        serde_json::to_string(self.inner.input().frame())
+            .map_err(|error| PyException::new_err(error.to_string()))
+    }
+
     #[staticmethod]
     fn open_scene(py: Python<'_>, absolute_directory: &str) -> PyResult<Self> {
         let scene = py
@@ -228,10 +250,14 @@ impl NativeObserver {
     ) -> PyResult<NativeCapturedScene> {
         let session = session.inner.clone();
         let result = py.detach(|| {
-            let input = {
+            let snapshot = {
                 let session = session.lock().map_err(|_| None)?;
-                ObservationInput::capture(&session, &values).map_err(Some)?
+                session.read_snapshot()
             };
+            let requested =
+                ObservationInput::resolve_requested(&snapshot, &values).map_err(Some)?;
+            let input =
+                ObservationInput::capture_from_snapshot(&snapshot, &requested).map_err(Some)?;
             ResolvedObservation::capture(input).map_err(Some)
         });
         match result {
@@ -239,6 +265,37 @@ impl NativeObserver {
             Err(Some(error)) => Err(observation_failure(py, error)),
             Err(None) => Err(poisoned()),
         }
+    }
+
+    fn capture_scenes(
+        &self,
+        py: Python<'_>,
+        session: &NativeSession,
+        samples: Vec<HashMap<String, f32>>,
+    ) -> PyResult<Vec<Py<NativeCapturedScene>>> {
+        let session = session.inner.clone();
+        let result = py.detach(|| {
+            let snapshot = {
+                let session = session.lock().map_err(|_| None)?;
+                session.read_snapshot()
+            };
+            let requested = samples
+                .iter()
+                .map(|values| ObservationInput::resolve_requested(&snapshot, values))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(Some)?;
+            let inputs = ObservationInput::capture_samples(&snapshot, &requested).map_err(Some)?;
+            ResolvedObservation::capture_many(inputs).map_err(Some)
+        });
+        let scenes = match result {
+            Ok(scenes) => scenes,
+            Err(Some(error)) => return Err(observation_failure(py, error)),
+            Err(None) => return Err(poisoned()),
+        };
+        scenes
+            .into_iter()
+            .map(|inner| Py::new(py, NativeCapturedScene { inner }))
+            .collect()
     }
 
     fn capture_animation_scene(
@@ -250,15 +307,16 @@ impl NativeObserver {
     ) -> PyResult<NativeCapturedScene> {
         let session = session.inner.clone();
         let result = py.detach(|| {
-            let input = {
+            let snapshot = {
                 let session = session.lock().map_err(|_| None)?;
-                ObservationInput::capture_motion_with_renderer_opacity(
-                    &session,
-                    preview.inner(),
-                    apply_model_opacity,
-                )
-                .map_err(Some)?
+                session.read_snapshot()
             };
+            let input = ObservationInput::capture_motion_from_snapshot(
+                &snapshot,
+                preview.inner(),
+                apply_model_opacity,
+            )
+            .map_err(Some)?;
             ResolvedObservation::capture(input).map_err(Some)
         });
         match result {

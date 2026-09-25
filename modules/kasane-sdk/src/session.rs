@@ -1,5 +1,6 @@
 //! Authoring session lifecycle, project IO, reads, history and preview.
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -39,7 +40,57 @@ pub struct AuthoringSession {
     pub(crate) next_incarnation: u64,
 }
 
+/// Read-only document snapshot for bounded work outside an authoring lock.
+/// The clone cost belongs to the capture step; later evaluation cannot observe edits.
+#[derive(Debug, Clone)]
+pub struct AuthoringSnapshot {
+    document: Document,
+    version: Version,
+    project_path: Option<PathBuf>,
+    clone_elapsed_ns: u64,
+}
+
+impl AuthoringSnapshot {
+    pub fn document(&self) -> &Document {
+        &self.document
+    }
+
+    pub fn version(&self) -> Version {
+        self.version
+    }
+
+    pub fn project_path(&self) -> Option<&std::path::Path> {
+        self.project_path.as_deref()
+    }
+
+    pub fn clone_elapsed_ns(&self) -> u64 {
+        self.clone_elapsed_ns
+    }
+
+    pub fn evaluate(&self, values: &PreviewValues) -> Result<DrawableFrame, SdkError> {
+        let mut frame = DrawableFrame::default();
+        let status = evaluate_frame(&self.document, values, &mut frame);
+        if status.is_ok() {
+            Ok(frame)
+        } else {
+            Err(SdkError::from_status(status, "evaluate", Vec::new()))
+        }
+    }
+}
+
 impl AuthoringSession {
+    /// Clone the committed document and source path under the caller's lock.
+    /// History, events, and mutable preview state are not copied or changed.
+    pub fn read_snapshot(&self) -> AuthoringSnapshot {
+        let started = std::time::Instant::now();
+        let document = self.project.document().clone();
+        AuthoringSnapshot {
+            document,
+            version: self.version(),
+            project_path: self.project_path().map(std::path::Path::to_path_buf),
+            clone_elapsed_ns: started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64,
+        }
+    }
     /// The caller supplies a canonical, nonzero, lowercase document UUID.
     pub fn new(document_id: &str, canvas: Canvas) -> Result<Self, SdkError> {
         Self::with_history_limits(document_id, canvas, HistoryLimits::default())

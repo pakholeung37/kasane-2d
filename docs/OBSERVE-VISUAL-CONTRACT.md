@@ -2,8 +2,9 @@
 
 Date: 2026-09-25. Contract version: `inspection-v2-draft-1`. This fixes the O0
 interface and semantics for implementation. The basic Rust/Python frozen
-capture, ROI rerender, scene bundle, and canonical digest slice is available;
-the inspection packet API and report v2 below remain delivery targets. The existing
+capture, ROI rerender, scene bundle, canonical digest, raw packet, and bounded
+save-profile slice is available; the full presentation/query packet and report
+v2 below remain delivery targets. The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -111,6 +112,16 @@ profile reopens for artifact reading, `analysis` adds CPU geometry/probe data,
 and `scene` adds frozen render scene and decoded textures for new GPU views.
 Uncaptured capability returns `CAPTURE_NOT_AVAILABLE`, never a fresh snapshot.
 
+The O1 public subset uses `RawInspectionRequest(roi, resolution,
+padding_canvas)` and exposes `inspect`, `inspect_animation`, `render`,
+`InspectionPacket.save`, and `open_inspection_packet` for raw context views.
+Its manifest is `kasane-inspection-packet` schema 2, with explicit capability
+flags. The full `InspectionRequest`/`InspectionView` contract above, label and
+presentation channels, CPU queries after analysis reopen, batch layout and
+complete run report v2 are implemented in O2/O3. A live preview capture keeps
+the last successful operation identity while reporting history as
+`not_recorded`; it does not claim a playback recipe or resumable runtime.
+
 ## Capture identity and evidence
 
 One capture freezes document version, evaluated frame, object metadata,
@@ -122,7 +133,8 @@ Motion/Expression/Physics/Pose frame and retains its host Model opacity policy;
 it must never reconstruct the frame from final parameter values.
 
 `capture_id` identifies an acquisition. `scene_digest` hashes canonical scene,
-metadata, and texture content; `render_digest` adds view, mode, background,
+metadata, and texture content, excluding live animation operation identity;
+`render_digest` adds view, mode, background,
 sampling and renderer policy; `artifact_sha256` hashes actual output bytes.
 The current scene/render digest v1 uses UTF-8 canonical JSON with sorted object
 keys, array order preserved, negative zero normalized, and NaN/Inf rejected.

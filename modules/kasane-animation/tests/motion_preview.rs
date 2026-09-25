@@ -1,4 +1,4 @@
-use kasane_animation::MotionPreview;
+use kasane_animation::{MotionOperationKind, MotionPreview};
 use kasane_core::{Canvas, Document, ImageAsset, Mesh, Parameter, Part, Vec2};
 use kasane_project::{import_expression3, import_motion3, import_physics3, import_pose3};
 
@@ -24,6 +24,47 @@ fn document() -> Document {
         .status
         .is_ok());
     document
+}
+
+#[test]
+fn operation_identity_distinguishes_zero_time_actions_and_failed_seek() {
+    let mut preview = MotionPreview::new(&document());
+    let preview_id = preview.operation().preview_id.clone();
+    assert_eq!(preview.operation().sequence, 0);
+    assert!(matches!(
+        preview.operation().kind,
+        MotionOperationKind::Created
+    ));
+    preview.reset();
+    assert_eq!(preview.operation().sequence, 1);
+    assert!(matches!(
+        preview.operation().kind,
+        MotionOperationKind::Reset
+    ));
+    preview.advance(0.0).unwrap();
+    assert_eq!(preview.operation().sequence, 2);
+    assert!(matches!(
+        preview.operation().kind,
+        MotionOperationKind::Advance { dt: 0.0 }
+    ));
+    preview.seek(0.0).unwrap();
+    assert_eq!(preview.operation().sequence, 3);
+    assert!(matches!(
+        preview.operation().kind,
+        MotionOperationKind::Seek {
+            requested_time: 0.0
+        }
+    ));
+    let before_failure = preview.operation().clone();
+    assert!(preview.seek(f32::NAN).is_err());
+    assert_eq!(preview.operation(), &before_failure);
+    preview.stabilize_physics();
+    assert_eq!(preview.operation().sequence, 4);
+    assert_eq!(preview.operation().preview_id, preview_id);
+    assert!(matches!(
+        preview.operation().kind,
+        MotionOperationKind::StabilizePhysics
+    ));
 }
 
 #[test]
