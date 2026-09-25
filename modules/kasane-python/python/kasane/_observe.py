@@ -99,11 +99,11 @@ class Observer:
         resolution: tuple[int, int], padding_canvas: float = 0,
     ) -> RenderedSceneView:
         """Rerender a frozen scene at an explicit source-canvas ROI."""
-        raw, (requested, padded, visible) = scene._native.render(
+        raw, (requested, padded, visible), render_digest = scene._native.render(
             self._native, resolution[0], resolution[1], roi, padding_canvas
         )
         return RenderedSceneView(
-            _frame_from_native(raw), requested, padded, visible,
+            _frame_from_native(raw), requested, padded, visible, render_digest,
         )
 
 
@@ -249,6 +249,16 @@ class CapturedScene:
         self._native = native
 
     @property
+    def capture_id(self) -> str:
+        """Stable ID for this acquisition, including after save and reopen."""
+        return self._native.capture_id
+
+    @property
+    def scene_digest(self) -> str:
+        """Canonical digest of frozen scene metadata, geometry and textures."""
+        return self._native.scene_digest
+
+    @property
     def source(self) -> dict:
         """Captured parameter/animation source and available snapshot metadata."""
         return json.loads(self._native.source_json())
@@ -274,6 +284,7 @@ class RenderedSceneView:
     requested_roi: tuple[float, float, float, float]
     padded_roi: tuple[float, float, float, float]
     visible_roi: tuple[float, float, float, float]
+    render_digest: str
 
     def canvas_to_image(self, point: tuple[float, float]) -> tuple[float, float]:
         scale, (ox, oy) = self.frame.view_scale, self.frame.view_offset

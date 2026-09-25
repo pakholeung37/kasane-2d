@@ -8,20 +8,26 @@ use kasane_core::{DrawableFrame, ImageAsset};
 use kasane_project::{decode_png, AssetData};
 use kasane_sdk::Version;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::{
-    CapturedAuthoring, ObservationError, ObservationInput, ObservationSource, ResolvedObservation,
-    ResolvedTexture, MAX_CAPTURE_TEXTURE_BYTES,
+    CapturedAuthoring, ObservationError, ObservationInput, ObservationSource, RenderRequest,
+    ResolvedObservation, ResolvedTexture, MAX_CAPTURE_TEXTURE_BYTES,
 };
 
 const MANIFEST_LIMIT: u64 = 64 * 1024 * 1024;
 const TEXTURE_FILE_LIMIT: u64 = 64 * 1024 * 1024;
 
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SceneBundle {
     schema_version: u32,
     kind: String,
+    #[serde(default)]
+    capture_id: String,
+    #[serde(default)]
+    scene_digest: String,
     version: [u64; 3],
     evaluation_revision: u64,
     document_id: String,
@@ -32,7 +38,7 @@ struct SceneBundle {
     textures: Vec<BundleTexture>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct BundleTexture {
     asset: ImageAsset,
@@ -64,33 +70,84 @@ fn regular_file_size(path: &Path) -> Result<u64, ObservationError> {
     Ok(metadata.len())
 }
 
+fn canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), ObservationError> {
+    match value {
+        Value::Null => output.extend_from_slice(b"null"),
+        Value::Bool(value) => output.extend_from_slice(if *value { b"true" } else { b"false" }),
+        Value::Number(number) => {
+            if number.is_f64() && number.as_f64() == Some(0.0) {
+                output.extend_from_slice(b"0.0");
+            } else {
+                output.extend_from_slice(number.to_string().as_bytes());
+            }
+        }
+        Value::String(value) => output.extend_from_slice(
+            serde_json::to_string(value)
+                .map_err(|e| failure("BUNDLE_ENCODE", e.to_string()))?
+                .as_bytes(),
+        ),
+        Value::Array(items) => {
+            output.push(b'[');
+            for (index, item) in items.iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                canonical_json(item, output)?;
+            }
+            output.push(b']');
+        }
+        Value::Object(fields) => {
+            output.push(b'{');
+            let sorted: BTreeMap<_, _> = fields.iter().collect();
+            for (index, (key, item)) in sorted.into_iter().enumerate() {
+                if index != 0 {
+                    output.push(b',');
+                }
+                canonical_json(&Value::String(key.clone()), output)?;
+                output.push(b':');
+                canonical_json(item, output)?;
+            }
+            output.push(b'}');
+        }
+    }
+    Ok(())
+}
+
+fn scene_hash(bundle: &SceneBundle) -> Result<String, ObservationError> {
+    let mut value =
+        serde_json::to_value(bundle).map_err(|e| failure("BUNDLE_ENCODE", e.to_string()))?;
+    let decoded: SceneBundle = serde_json::from_value(value.clone())
+        .map_err(|e| failure("NONFINITE_SCENE", e.to_string()))?;
+    if decoded != *bundle {
+        return Err(failure(
+            "NONFINITE_SCENE",
+            "Scene has a nonfinite or non-roundtrippable value",
+        ));
+    }
+    let fields = value.as_object_mut().expect("scene bundle is an object");
+    for identity in [
+        "schema_version",
+        "kind",
+        "capture_id",
+        "scene_digest",
+        "version",
+        "evaluation_revision",
+    ] {
+        fields.remove(identity);
+    }
+    let mut bytes = b"kasane-observe-scene-digest-v1\0".to_vec();
+    canonical_json(&value, &mut bytes)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
 impl ResolvedObservation {
-    /// Save an evaluated scene and its exact source PNG bytes to a new absolute
-    /// directory. The output is data only and cannot continue animation state.
-    pub fn save_scene(&self, directory: &Path) -> Result<(), ObservationError> {
-        if !directory.is_absolute() {
-            return Err(failure(
-                "INVALID_BUNDLE_PATH",
-                "Scene path must be absolute",
-            ));
-        }
-        fs::create_dir(directory).map_err(|e| failure("BUNDLE_IO", e.to_string()))?;
-        let textures: Vec<_> = self
-            .textures
-            .iter()
-            .enumerate()
-            .map(|(index, texture)| BundleTexture {
-                asset: texture.asset.clone(),
-                path: format!("texture-{index:03}.png"),
-            })
-            .collect();
-        for (entry, texture) in textures.iter().zip(&self.textures) {
-            write_atomically(&directory.join(&entry.path), &texture.data.bytes)?;
-        }
+    fn scene_bundle(&self) -> SceneBundle {
         let input = &self.input;
-        let bundle = SceneBundle {
-            schema_version: 1,
+        SceneBundle {
+            schema_version: 2,
             kind: "kasane-observe-scene".into(),
+            capture_id: self.capture_id.clone(),
+            scene_digest: self.scene_digest.clone(),
             version: [
                 input.version.session_id,
                 input.version.generation,
@@ -106,8 +163,54 @@ impl ResolvedObservation {
             source: input.source.clone(),
             authoring: input.authoring.clone(),
             frame: input.frame.clone(),
-            textures,
-        };
+            textures: self
+                .textures
+                .iter()
+                .enumerate()
+                .map(|(index, texture)| BundleTexture {
+                    asset: texture.asset.clone(),
+                    path: format!("texture-{index:03}.png"),
+                })
+                .collect(),
+        }
+    }
+
+    pub(crate) fn compute_scene_digest(&self) -> Result<String, ObservationError> {
+        scene_hash(&self.scene_bundle())
+    }
+
+    /// Digest of the captured scene and explicit raw context render settings.
+    pub fn render_digest(&self, request: RenderRequest) -> Result<String, ObservationError> {
+        request.mapping()?;
+        let mut bytes = b"kasane-observe-render-digest-v1\0".to_vec();
+        let request = serde_json::json!({
+            "scene_digest": self.scene_digest,
+            "width": request.width,
+            "height": request.height,
+            "roi": [request.roi.x0, request.roi.y0, request.roi.x1, request.roi.y1],
+            "padding_canvas": request.padding_canvas,
+            "mode": "context",
+            "output": "raw_rgba8_renderer_default",
+            "sample_policy": "single_evaluated_frame",
+        });
+        canonical_json(&request, &mut bytes)?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+
+    /// Save an evaluated scene and its exact source PNG bytes to a new absolute
+    /// directory. The output is data only and cannot continue animation state.
+    pub fn save_scene(&self, directory: &Path) -> Result<(), ObservationError> {
+        if !directory.is_absolute() {
+            return Err(failure(
+                "INVALID_BUNDLE_PATH",
+                "Scene path must be absolute",
+            ));
+        }
+        fs::create_dir(directory).map_err(|e| failure("BUNDLE_IO", e.to_string()))?;
+        let bundle = self.scene_bundle();
+        for (entry, texture) in bundle.textures.iter().zip(&self.textures) {
+            write_atomically(&directory.join(&entry.path), &texture.data.bytes)?;
+        }
         let content = serde_json::to_vec_pretty(&bundle)
             .map_err(|e| failure("BUNDLE_ENCODE", e.to_string()))?;
         if content.len() as u64 > MANIFEST_LIMIT {
@@ -143,7 +246,7 @@ impl ResolvedObservation {
         }
         let bundle: SceneBundle = serde_json::from_slice(&content)
             .map_err(|e| failure("BUNDLE_FORMAT", e.to_string()))?;
-        if bundle.schema_version != 1 || bundle.kind != "kasane-observe-scene" {
+        if !matches!(bundle.schema_version, 1 | 2) || bundle.kind != "kasane-observe-scene" {
             return Err(failure(
                 "UNSUPPORTED_BUNDLE_VERSION",
                 "Unknown scene bundle version",
@@ -236,7 +339,15 @@ impl ResolvedObservation {
                 "Frame references a missing texture",
             ));
         }
-        Ok(Self {
+        let declared_digest = bundle.scene_digest.clone();
+        let capture_id = if bundle.schema_version == 1 {
+            uuid::Uuid::new_v4().to_string()
+        } else {
+            uuid::Uuid::parse_str(&bundle.capture_id)
+                .map_err(|_| failure("BUNDLE_FORMAT", "Invalid capture ID"))?;
+            bundle.capture_id.clone()
+        };
+        let mut capture = Self {
             input: ObservationInput {
                 version: Version {
                     session_id: bundle.version[0],
@@ -253,6 +364,62 @@ impl ResolvedObservation {
                 root: directory.to_path_buf(),
             },
             textures,
-        })
+            capture_id,
+            scene_digest: String::new(),
+        };
+        capture.scene_digest = capture.compute_scene_digest()?;
+        if bundle.schema_version == 2 && capture.scene_digest != declared_digest {
+            return Err(failure(
+                "BUNDLE_HASH_MISMATCH",
+                "Saved scene does not match its digest",
+            ));
+        }
+        Ok(capture)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_bundle() -> SceneBundle {
+        SceneBundle {
+            schema_version: 2,
+            kind: "kasane-observe-scene".into(),
+            capture_id: String::new(),
+            scene_digest: String::new(),
+            version: [1, 2, 3],
+            evaluation_revision: 4,
+            document_id: "document".into(),
+            requested: BTreeMap::new(),
+            source: ObservationSource::Parameters,
+            authoring: CapturedAuthoring {
+                meshes: vec![],
+                parts: vec![],
+                transforms: vec![],
+                bindings: vec![],
+            },
+            frame: DrawableFrame::default(),
+            textures: vec![],
+        }
+    }
+
+    #[test]
+    fn scene_hash_ignores_acquisition_identity_and_normalizes_negative_zero() {
+        let mut first = empty_bundle();
+        first.requested.insert("parameter".into(), -0.0);
+        let mut second = empty_bundle();
+        second.requested.insert("parameter".into(), 0.0);
+        second.capture_id = "another-capture".into();
+        second.version = [9, 8, 7];
+        second.evaluation_revision = 20;
+        assert_eq!(scene_hash(&first).unwrap(), scene_hash(&second).unwrap());
+    }
+
+    #[test]
+    fn scene_hash_rejects_nonfinite_values() {
+        let mut bundle = empty_bundle();
+        bundle.requested.insert("parameter".into(), f32::NAN);
+        assert_eq!(scene_hash(&bundle).unwrap_err().code, "NONFINITE_SCENE");
     }
 }

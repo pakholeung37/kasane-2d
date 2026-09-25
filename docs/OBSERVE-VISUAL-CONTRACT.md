@@ -1,9 +1,9 @@
 # Observe visual inspection contract
 
 Date: 2026-09-25. Contract version: `inspection-v2-draft-1`. This fixes the O0
-interface and semantics for implementation. Only the explicitly marked Rust
-capture/ROI slice is available today; the Python API and report v2 below are
-the delivery target, not a claim of shipped functionality. The existing
+interface and semantics for implementation. The basic Rust/Python frozen
+capture, ROI rerender, scene bundle, and canonical digest slice is available;
+the inspection packet API and report v2 below remain delivery targets. The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -124,8 +124,10 @@ it must never reconstruct the frame from final parameter values.
 `capture_id` identifies an acquisition. `scene_digest` hashes canonical scene,
 metadata, and texture content; `render_digest` adds view, mode, background,
 sampling and renderer policy; `artifact_sha256` hashes actual output bytes.
-Canonical encoding fixes field order, sorted ID maps, little-endian numeric
-arrays, negative zero normalization, and rejects NaN/Inf. GPU pixel bytes may
+The current scene/render digest v1 uses UTF-8 canonical JSON with sorted object
+keys, array order preserved, negative zero normalized, and NaN/Inf rejected.
+Future binary array payloads must declare dtype, shape, and little-endian byte
+order in their own format version. GPU pixel bytes may
 differ between adapters. The legacy `input_sha256` stays unchanged and is not
 the new canonical digest. Report records adapter/backend and SDK build.
 

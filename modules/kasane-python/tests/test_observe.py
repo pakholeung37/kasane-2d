@@ -62,6 +62,9 @@ class GpuWheelTests(unittest.TestCase):
             edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
         with kasane.Observer(64, 64, 64) as observer:
             scene = observer.capture_scene(model)
+            self.assertEqual(len(scene.scene_digest), 64)
+            self.assertEqual(scene.scene_digest, observer.capture_scene(model).scene_digest)
+            self.assertNotEqual(scene.capture_id, observer.capture_scene(model).capture_id)
             captured_positions = scene.authoring["meshes"][0]["base_positions"]
             preview = model.motion_preview()
             before_preview = preview.snapshot()
@@ -102,12 +105,15 @@ class GpuWheelTests(unittest.TestCase):
                 bundle = Path(directory).resolve() / "scene"
                 scene.save_scene(bundle)
                 reopened = observer.open_scene(bundle)
+                self.assertEqual(reopened.capture_id, scene.capture_id)
+                self.assertEqual(reopened.scene_digest, scene.scene_digest)
                 self.assertEqual(reopened.authoring, scene.authoring)
                 again = observer.render_scene(
                     reopened, roi=(38.25, 39.5, 61.75, 60.5),
                     resolution=(128, 96), padding_canvas=2,
                 )
                 self.assertEqual(again.frame.rgba, view.frame.rgba)
+                self.assertEqual(again.render_digest, view.render_digest)
                 animated_bundle = Path(directory).resolve() / "animated"
                 animated.save_scene(animated_bundle)
                 self.assertEqual(observer.open_scene(animated_bundle).source, animated.source)

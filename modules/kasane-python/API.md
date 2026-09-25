@@ -464,11 +464,20 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.observe_run(session, samples, output, focus=())` | Render one or more parameter maps into a unique child of absolute `output`; optionally crop visible drawable IDs. Return `ObservationRun`. |
 | `observer.capture_scene(session, values=None)` | Freeze one evaluated frame and all decoded texture bytes in `CapturedScene`; later edits and asset changes do not change it. |
 | `observer.capture_animation_scene(session, preview, apply_model_opacity=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; reject a stale preview. |
-| `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame` and requested/padded/visible ROI. |
+| `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
 
 The capture/ROI methods are the first O1 slice of the visual inspection plan.
+`CapturedScene.capture_id` is unique to an acquisition and survives a v2 scene
+bundle round trip. `CapturedScene.scene_digest` hashes canonical frozen scene
+content, including metadata and texture descriptors/content hashes, while
+excluding the acquisition ID and session/evaluation revision counters.
+`RenderedSceneView.render_digest` adds the explicit ROI, dimensions, padding,
+and fixed raw context render policy. The digest identifies inputs and policy,
+not GPU pixel equivalence across adapters. The legacy `ObservedFrame.input_sha256`
+keeps its original behavior and is separate from these digests. Opening a v1
+bundle computes the scene digest and assigns a new capture ID.
 They currently render the legacy raw transparent pixel policy. The planned
 `inspect` packet, labels, display backgrounds, query and comparison APIs are
 not yet provided by these methods. A saved scene contains an evaluated frame,
@@ -490,6 +499,8 @@ with kasane.Observer(256, 256, 256) as observer:
     scene.save_scene(Path("/absolute/path/to/new-scene"))
     point_on_canvas = view.image_to_canvas((512.5, 384.5))
     reopened = observer.open_scene(Path("/absolute/path/to/new-scene"))
+    assert reopened.capture_id == scene.capture_id
+    assert reopened.scene_digest == scene.scene_digest
     assert observer.render_scene(
         reopened, roi=(20, 20, 60, 60), resolution=(1024, 768),
         padding_canvas=4,

@@ -250,6 +250,9 @@ fn resolved_capture_rerenders_roi_after_source_disappears_and_restores_legacy_vi
         .unwrap();
     let input = ObservationInput::capture(&session, &PreviewValues::new()).unwrap();
     let captured = ResolvedObservation::capture(input).unwrap();
+    let duplicate = ResolvedObservation::capture(captured.input().clone()).unwrap();
+    assert_ne!(captured.capture_id(), duplicate.capture_id());
+    assert_eq!(captured.scene_digest(), duplicate.scene_digest());
     let scene_directory = temporary.with_extension("scene");
     captured.save_scene(&scene_directory).unwrap();
     let mut observer = Observer::new(ObserverConfig {
@@ -279,6 +282,21 @@ fn resolved_capture_rerenders_roi_after_source_disappears_and_restores_legacy_vi
     let repeated = observer.render(&captured, request).unwrap();
     assert_eq!(repeated.rgba, enlarged.rgba);
     let reopened = ResolvedObservation::open_scene(&scene_directory).unwrap();
+    assert_eq!(reopened.capture_id(), captured.capture_id());
+    assert_eq!(reopened.scene_digest(), captured.scene_digest());
+    assert_eq!(
+        reopened.render_digest(request).unwrap(),
+        captured.render_digest(request).unwrap()
+    );
+    assert_ne!(
+        captured.render_digest(request).unwrap(),
+        captured
+            .render_digest(RenderRequest {
+                width: 129,
+                ..request
+            })
+            .unwrap()
+    );
     assert_eq!(
         observer.render(&reopened, request).unwrap().rgba,
         enlarged.rgba
@@ -307,9 +325,18 @@ fn resolved_capture_rerenders_roi_after_source_disappears_and_restores_legacy_vi
     std::fs::remove_file(temporary).unwrap();
     let manifest_path = scene_directory.join("scene.json");
     let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+    let mut previous: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    previous["schema_version"] = serde_json::json!(1);
+    previous.as_object_mut().unwrap().remove("capture_id");
+    previous.as_object_mut().unwrap().remove("scene_digest");
+    std::fs::write(&manifest_path, serde_json::to_vec(&previous).unwrap()).unwrap();
+    let reopened_v1 = ResolvedObservation::open_scene(&scene_directory).unwrap();
+    assert_eq!(reopened_v1.scene_digest(), captured.scene_digest());
+    assert_ne!(reopened_v1.capture_id(), captured.capture_id());
+    std::fs::write(&manifest_path, &manifest).unwrap();
     std::fs::write(
         &manifest_path,
-        manifest.replace("\"schema_version\": 1", "\"schema_version\": 99"),
+        manifest.replace("\"schema_version\": 2", "\"schema_version\": 99"),
     )
     .unwrap();
     assert_eq!(
@@ -328,6 +355,15 @@ fn resolved_capture_rerenders_roi_after_source_disappears_and_restores_legacy_vi
             .unwrap_err()
             .code,
         "BUNDLE_FORMAT"
+    );
+    let mut changed: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    changed["document_id"] = serde_json::json!("changed-document");
+    std::fs::write(&manifest_path, serde_json::to_vec(&changed).unwrap()).unwrap();
+    assert_eq!(
+        ResolvedObservation::open_scene(&scene_directory)
+            .unwrap_err()
+            .code,
+        "BUNDLE_HASH_MISMATCH"
     );
     std::fs::write(&manifest_path, manifest).unwrap();
     let texture_path = scene_directory.join("texture-000.png");

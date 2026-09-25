@@ -101,6 +101,16 @@ pub(crate) struct NativeCapturedScene {
 
 #[pymethods]
 impl NativeCapturedScene {
+    #[getter]
+    fn capture_id(&self) -> &str {
+        self.inner.capture_id()
+    }
+
+    #[getter]
+    fn scene_digest(&self) -> &str {
+        self.inner.scene_digest()
+    }
+
     fn authoring_json(&self) -> PyResult<String> {
         serde_json::to_string(self.inner.input().authoring())
             .map_err(|error| PyException::new_err(error.to_string()))
@@ -135,7 +145,7 @@ impl NativeCapturedScene {
         height: u32,
         roi: (f32, f32, f32, f32),
         padding_canvas: f32,
-    ) -> PyResult<(NativeFrameTuple, RenderMappingTuple)> {
+    ) -> PyResult<(NativeFrameTuple, RenderMappingTuple, String)> {
         let request = RenderRequest {
             width,
             height,
@@ -147,6 +157,10 @@ impl NativeCapturedScene {
             },
             padding_canvas,
         };
+        let render_digest = self
+            .inner
+            .render_digest(request)
+            .map_err(|error| observation_failure(py, error))?;
         let frame = py.detach(|| {
             observer
                 .inner
@@ -171,6 +185,7 @@ impl NativeCapturedScene {
                 roi_tuple(mapping.padded_roi),
                 roi_tuple(mapping.visible_roi),
             ),
+            render_digest,
         ))
     }
 }

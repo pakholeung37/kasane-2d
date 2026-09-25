@@ -71,6 +71,8 @@ pub struct ResolvedTexture {
 pub struct ResolvedObservation {
     input: ObservationInput,
     textures: Vec<ResolvedTexture>,
+    capture_id: String,
+    scene_digest: String,
 }
 
 pub(crate) const MAX_CAPTURE_TEXTURE_BYTES: u64 = 256 * 1024 * 1024;
@@ -100,7 +102,14 @@ impl ResolvedObservation {
                 asset_id: None,
             });
         }
-        Ok(Self { input, textures })
+        let mut capture = Self {
+            input,
+            textures,
+            capture_id: uuid::Uuid::new_v4().to_string(),
+            scene_digest: String::new(),
+        };
+        capture.scene_digest = capture.compute_scene_digest()?;
+        Ok(capture)
     }
 
     pub fn input(&self) -> &ObservationInput {
@@ -109,6 +118,14 @@ impl ResolvedObservation {
 
     pub fn textures(&self) -> &[ResolvedTexture] {
         &self.textures
+    }
+
+    pub fn capture_id(&self) -> &str {
+        &self.capture_id
+    }
+
+    pub fn scene_digest(&self) -> &str {
+        &self.scene_digest
     }
 }
 

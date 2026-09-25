@@ -71,6 +71,8 @@ class NativeObserver:
 
 
 class NativeCapturedScene:
+    capture_id: str
+    scene_digest: str
     def authoring_json(self) -> str: ...
     def source_json(self) -> str: ...
     @staticmethod
@@ -79,7 +81,7 @@ class NativeCapturedScene:
     def render(
         self, observer: NativeObserver, width: int, height: int,
         roi: tuple[float, float, float, float], padding_canvas: float,
-    ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]]]: ...
+    ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]], str]: ...
 
 
 class ObjectHandle:
