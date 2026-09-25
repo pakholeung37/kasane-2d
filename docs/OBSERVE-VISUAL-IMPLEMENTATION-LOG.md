@@ -54,3 +54,17 @@ distinguishes reset/advance(0)/seek(0), but the unrecorded live history is not
 a replay recipe or resumable runtime state. Operation identity is excluded from
 the scene digest: separate previews of an identical frozen scene have the same
 scene digest and distinct capture IDs.
+
+## Mao real-model integration
+
+`tools/run_mao_observe_o1_integration.py` exercises the optional local Mao
+model at `models/local/mao/runtime/mao_pro.model3.json`. It imports 260
+drawables, captures one frozen scene, renders the full 5800×8400 canvas and a
+head ROI `(1300, 500, 4500, 3100)` at 1280×1040, and checks ROI coordinate
+mapping. It saves both a scene bundle and a scene-profile inspection packet,
+then requires exact RGBA equality after reopening each. The packet is also
+reopened and rerendered in a separate Python process. On Apple M4/Metal, the
+head PNG SHA-256 was
+`aba4b82868e0c90bfded1eb16fc562d24eb07c7ee24b384f1f562e0a84c32b80`.
+The script writes a new output directory under `target/mao-observe-o1` for
+each run. This local model is not part of the checked-in fixture suite.
