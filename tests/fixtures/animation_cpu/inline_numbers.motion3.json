@@ -1,0 +1,23 @@
+{
+  "Version": 3,
+  "Meta": {
+    "Duration": 1,
+    "Fps": 30,
+    "Loop": false,
+    "AreBeziersRestricted": true,
+    "CurveCount": 4,
+    "TotalSegmentCount": 4,
+    "TotalPointCount": 8,
+    "UserDataCount": 0,
+    "TotalUserDataSize": 0,
+    "FadeInTime": 0,
+    "FadeOutTime": 0
+  },
+  "Curves": [
+    {"Target": "Model", "Id": "Opacity", "Segments": [0, 0.3, 0, 1, 0.7]},
+    {"Target": "Parameter", "Id": "ParamX", "Segments": [0, 0, 0, 1, 1]},
+    {"Target": "PartOpacity", "Id": "Part0", "Segments": [0, 0, 0, 1, 0]},
+    {"Target": "PartOpacity", "Id": "Part1", "Segments": [0, 1, 0, 1, 1]}
+  ],
+  "UserData": []
+}

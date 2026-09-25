@@ -1,4 +1,5 @@
 //! CPython bridge for the Kasane authoring SDK.
+mod animation;
 mod conversion;
 mod edit;
 mod error;
@@ -8,6 +9,7 @@ mod handle;
 mod observe;
 mod session;
 
+use animation::{NativeExpressionPreview, NativeMotionPreview, NativePhysicsPreview};
 use edit::NativeEdit;
 use error::SdkFailure;
 use handle::NativeHandle;
@@ -46,6 +48,9 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("SdkFailure", module.py().get_type::<SdkFailure>())?;
     module.add_class::<NativeSession>()?;
     module.add_class::<NativeEdit>()?;
+    module.add_class::<NativeExpressionPreview>()?;
+    module.add_class::<NativeMotionPreview>()?;
+    module.add_class::<NativePhysicsPreview>()?;
     module.add_class::<NativeHandle>()?;
     #[cfg(feature = "observe")]
     {

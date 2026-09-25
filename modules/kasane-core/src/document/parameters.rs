@@ -28,6 +28,11 @@ impl Document {
                 );
             }
         }
+        if self.display_info.parameters.as_ref().is_some_and(|entries| entries.iter().any(|entry| {
+            matches!(entry, CdiParameterEntry::Unresolved { runtime_id, .. } if runtime_id == &p.runtime_id)
+        })) {
+            return Status::error("DUPLICATE_RUNTIME_ID", format!("{}.runtime_id collides with unresolved CDI parameter", p.id));
+        }
         if !p.minimum.is_finite()
             || !p.maximum.is_finite()
             || !p.default_value.is_finite()
@@ -76,6 +81,17 @@ impl Document {
         let id = p.id.clone();
         self.parameters.insert(id.clone(), p);
         self.parameter_order.push(id.clone());
+        // An edited generated CDI table is explicit. Keep newly authored
+        // parameters visible there; imported tables retain their file scope.
+        if self.display_info.origin == DisplayInfoOrigin::Generated {
+            if let Some(entries) = &mut self.display_info.parameters {
+                entries.push(CdiParameterEntry::Resolved {
+                    parameter_id: id.clone(),
+                    group_id: None,
+                    extensions: Default::default(),
+                });
+            }
+        }
         self.changed(ChangeKind::Structure, Vec::new(), vec![id])
     }
 

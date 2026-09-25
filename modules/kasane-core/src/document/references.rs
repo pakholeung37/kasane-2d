@@ -89,6 +89,78 @@ impl Document {
                 refs.push(key.clone());
             }
         }
+        if let Some(groups) = &self.display_info.parameter_groups {
+            for group in groups {
+                if group.parent_id.as_deref() == Some(id) {
+                    refs.push(group.id.clone());
+                }
+            }
+        }
+        if let Some(entries) = &self.display_info.parameters {
+            for (index, entry) in entries.iter().enumerate() {
+                if entry.group_id() == Some(id)
+                    || matches!(entry, CdiParameterEntry::Resolved { parameter_id, .. } if parameter_id == id)
+                {
+                    refs.push(format!("display_info.Parameters[{index}]"));
+                }
+            }
+        }
+        if let Some(entries) = &self.display_info.parts {
+            for (index, entry) in entries.iter().enumerate() {
+                if matches!(entry, CdiPartEntry::Resolved { part_id, .. } if part_id == id) {
+                    refs.push(format!("display_info.Parts[{index}]"));
+                }
+            }
+        }
+        if let Some(sets) = &self.display_info.combined_parameters {
+            for set in sets {
+                if set.members.iter().any(|member| matches!(member, CdiParameterRef::Resolved { parameter_id } if parameter_id == id)) {
+                    refs.push(set.id.clone());
+                }
+            }
+        }
+        for expression in self.expressions.values() {
+            for (index, entry) in expression.entries.iter().enumerate() {
+                if matches!(&entry.target, ExpressionTarget::Resolved { parameter_id } if parameter_id == id)
+                {
+                    refs.push(format!("expression {} entry {index}", expression.id));
+                }
+            }
+        }
+        for motion in self.motions.values() {
+            for (index, track) in motion.tracks.iter().enumerate() {
+                if matches!(&track.target, MotionTrackTarget::Parameter { parameter_id } if parameter_id == id)
+                    || matches!(&track.target, MotionTrackTarget::PartOpacity { part_id } if part_id == id)
+                {
+                    refs.push(format!("motion {} track {index}", motion.id));
+                }
+            }
+        }
+        for group in &self.motion_groups {
+            if group.entries.iter().any(|entry| entry.clip_id == id) {
+                refs.push(format!("motion group {}", group.name));
+            }
+        }
+        if let Some(pose) = &self.pose {
+            for (group_index, group) in pose.groups.iter().enumerate() {
+                for (entry_index, entry) in group.iter().enumerate() {
+                    if matches!(&entry.part, PosePartRef::Resolved { part_id } if part_id == id)
+                        || entry.links.as_ref().is_some_and(|links| links.iter().any(|target| matches!(target, PosePartRef::Resolved { part_id } if part_id == id))) {
+                        refs.push(format!("pose {} group {group_index} entry {entry_index}", pose.id));
+                    }
+                }
+            }
+        }
+        if let Some(physics) = &self.physics {
+            for (runtime_id, parameter_id) in &physics.parameter_bindings {
+                if parameter_id == id {
+                    refs.push(format!("physics {} parameter {runtime_id}", physics.id));
+                }
+            }
+        }
+        if self.model3_settings.references_to(id) {
+            refs.push("model3 settings".into());
+        }
         refs.sort();
         refs.dedup();
         refs
@@ -104,6 +176,23 @@ impl Document {
         if id == self.id || !self.contains_id(id) {
             return self.failed(Status::error("MISSING_OBJECT", id));
         }
+        let metadata_only = self.expressions.contains_key(id)
+            || self.motions.contains_key(id)
+            || self.pose.as_ref().is_some_and(|pose| pose.id == id)
+            || self
+                .physics
+                .as_ref()
+                .is_some_and(|physics| physics.id == id)
+            || self
+                .display_info
+                .parameter_groups
+                .as_ref()
+                .is_some_and(|groups| groups.iter().any(|group| group.id == id))
+            || self
+                .display_info
+                .combined_parameters
+                .as_ref()
+                .is_some_and(|sets| sets.iter().any(|set| set.id == id));
         let refs = self.references_to(id);
         if !refs.is_empty() {
             let mut e = self.failed(Status::error(
@@ -167,9 +256,37 @@ impl Document {
         self.glue_order.retain(|k| k != id);
         self.offscreens.remove(id);
         self.offscreen_order.retain(|k| k != id);
+        self.expressions.remove(id);
+        self.expression_order.retain(|key| key != id);
+        self.motions.remove(id);
+        self.motion_order.retain(|key| key != id);
+        if self.pose.as_ref().is_some_and(|pose| pose.id == id) {
+            self.pose = None;
+        }
+        if self
+            .physics
+            .as_ref()
+            .is_some_and(|physics| physics.id == id)
+        {
+            self.physics = None;
+        }
+        if let Some(groups) = &mut self.display_info.parameter_groups {
+            groups.retain(|group| group.id != id);
+        }
+        if let Some(sets) = &mut self.display_info.combined_parameters {
+            sets.retain(|set| set.id != id);
+        }
 
         meshes.sort();
         meshes.dedup();
-        self.changed(ChangeKind::Structure, meshes, vec![id.to_string()])
+        self.changed(
+            if metadata_only {
+                ChangeKind::Metadata
+            } else {
+                ChangeKind::Structure
+            },
+            meshes,
+            vec![id.to_string()],
+        )
     }
 }

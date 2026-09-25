@@ -9,16 +9,7 @@ impl NativeSession {
         path: String,
         destination: String,
         expected_version: Option<VersionTuple>,
-    ) -> PyResult<(
-        VersionTuple,
-        String,
-        u32,
-        u32,
-        usize,
-        usize,
-        bool,
-        Vec<String>,
-    )> {
+    ) -> PyResult<PsdImportTuple> {
         self.ensure_idle(py, "import_psd")?;
         let active = self.active_edit.clone();
         let session = self.inner.clone();

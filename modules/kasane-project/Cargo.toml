@@ -12,6 +12,7 @@ binary-prototype = ["dep:ciborium"]
 
 [dependencies]
 kasane-core = { path = "../kasane-core" }
+kasane-live2d = { path = "../kasane-live2d" }
 kasane-moc3 = { path = "../kasane-moc3" }
 kasane-psd = { path = "../kasane-psd" }
 serde = { workspace = true }

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Mapping, Sequence
 from ._types import (
     Axis,
@@ -9,6 +10,11 @@ from ._types import (
     BlendBindingSpec,
     BlendConstraintSnapshot,
     BlendConstraintSpec,
+    CdiDiagnostic,
+    ExpressionDiagnostic,
+    MotionDiagnostic,
+    PoseDiagnostic,
+    PhysicsDiagnostic,
     BlendKeyTableSnapshot,
     BlendKeyTableSpec,
     DrawOrderGroup,
@@ -63,6 +69,211 @@ class Edit:
         """Read a parameter after preceding edit operations, or None if absent."""
         raw = self._native.parameter(parameter_id)
         return ParameterSnapshot(*raw) if raw is not None else None
+
+    def set_parameter_display_name(self, parameter_id: str, name: str) -> None:
+        """Change the CDI display name without changing the runtime ID."""
+        self._call(lambda: self._native.set_parameter_display_name(parameter_id, name))
+
+    def set_part_display_name(self, part_id: str, name: str) -> None:
+        """Change a Part's CDI display name without changing its runtime ID."""
+        self._call(lambda: self._native.set_part_display_name(part_id, name))
+
+    def create_parameter_group(
+        self, group_id: str, runtime_id: str, name: str, parent_id: str | None = None
+    ) -> None:
+        """Create a CDI group. ``group_id`` is a project UUID."""
+        self._call(lambda: self._native.create_parameter_group(
+            group_id, runtime_id, name, parent_id
+        ))
+
+    def replace_parameter_group(
+        self, group_id: str, runtime_id: str, name: str, parent_id: str | None = None
+    ) -> None:
+        """Change a CDI group's runtime ID, name, or parent."""
+        self._call(lambda: self._native.replace_parameter_group(
+            group_id, runtime_id, name, parent_id
+        ))
+
+    def set_parameter_group(self, parameter_id: str, group_id: str | None) -> None:
+        """Assign a parameter to a CDI group or to the root level."""
+        self._call(lambda: self._native.set_parameter_group(parameter_id, group_id))
+
+    def set_combined_parameters(self, set_id: str, parameter_ids: Sequence[str]) -> None:
+        """Create or replace an ordered CDI combined-parameter set."""
+        self._call(lambda: self._native.set_combined_parameters(set_id, list(parameter_ids)))
+
+    def import_cdi3(self, text: str) -> list[CdiDiagnostic]:
+        """Import CDI into this edit; unresolved model IDs return diagnostics."""
+        try:
+            return [CdiDiagnostic(*item) for item in self._native.import_cdi3(text)]
+        except BaseException:
+            self._native.abort()
+            raise
+
+    def create_expression(
+        self,
+        expression_id: str,
+        name: str,
+        entries: Sequence[tuple[str, float, str]],
+        fade_in: float | None = None,
+        fade_out: float | None = None,
+    ) -> None:
+        """Create an expression from project parameter UUID, value, blend triples.
+
+        Blend is ``add``, ``multiply``, ``overwrite``, or ``default``.
+        """
+        self._call(lambda: self._native.create_expression(
+            expression_id, name, list(entries), fade_in, fade_out
+        ))
+
+    def import_expression3(
+        self, expression_id: str, name: str, text: str
+    ) -> list[ExpressionDiagnostic]:
+        """Import exp3 into this edit; unresolved parameter IDs return diagnostics."""
+        try:
+            return [ExpressionDiagnostic(*item) for item in
+                    self._native.import_expression3(expression_id, name, text)]
+        except BaseException:
+            self._native.abort()
+            raise
+
+    def replace_expression(
+        self,
+        expression_id: str,
+        name: str,
+        entries: Sequence[tuple[str, float, str]],
+        fade_in: float | None = None,
+        fade_out: float | None = None,
+    ) -> None:
+        """Replace a known-field expression within the current transaction."""
+        self._call(lambda: self._native.replace_expression(
+            expression_id, name, list(entries), fade_in, fade_out
+        ))
+
+    def create_motion(self, motion_id: str, name: str, duration: float, fps: float,
+                      looping: bool = False, restricted_beziers: bool = True,
+                      fade_in: float | None = None, fade_out: float | None = None) -> None:
+        """Create an empty motion clip; tracks and events can be added in this edit."""
+        self._call(lambda: self._native.create_motion(
+            motion_id, name, duration, fps, looping, restricted_beziers, fade_in, fade_out
+        ))
+
+    def import_motion3(self, motion_id: str, name: str, text: str) -> list[MotionDiagnostic]:
+        """Import motion3; missing parameter or Part targets return diagnostics."""
+        try:
+            return [MotionDiagnostic(*item) for item in self._native.import_motion3(motion_id, name, text)]
+        except BaseException:
+            self._native.abort()
+            raise
+
+    def replace_motion(self, clip: Mapping[str, object]) -> None:
+        """Replace a known-field clip using a detached motion snapshot."""
+        self._call(lambda: self._native.replace_motion_json(json.dumps(dict(clip))))
+
+    def set_motion_groups(self, groups: Sequence[Mapping[str, object]]) -> None:
+        """Replace model3 motion registrations; one clip may occur in several groups."""
+        self._call(lambda: self._native.set_motion_groups_json(json.dumps(list(groups))))
+
+    def create_motion_track(self, motion_id: str, track: Mapping[str, object]) -> None:
+        """Append a track with a stable UUID and typed segment list."""
+        self._call(lambda: self._native.create_motion_track_json(motion_id, json.dumps(dict(track))))
+
+    def replace_motion_track(self, motion_id: str, track: Mapping[str, object]) -> None:
+        """Replace one track while preserving its UUID."""
+        self._call(lambda: self._native.replace_motion_track_json(motion_id, json.dumps(dict(track))))
+
+    def set_motion_segment(self, motion_id: str, track_id: str, index: int,
+                           segment: Mapping[str, object]) -> None:
+        self._call(lambda: self._native.set_motion_segment_json(motion_id, track_id, index, json.dumps(dict(segment))))
+
+    def insert_motion_segment(self, motion_id: str, track_id: str, index: int,
+                              segment: Mapping[str, object]) -> None:
+        self._call(lambda: self._native.insert_motion_segment_json(motion_id, track_id, index, json.dumps(dict(segment))))
+
+    def move_motion_key(self, motion_id: str, track_id: str, index: int, time: float, value: float) -> None:
+        """Move the initial point (index 0) or a segment endpoint."""
+        self._call(lambda: self._native.move_motion_key(motion_id, track_id, index, time, value))
+
+    def set_motion_event(self, motion_id: str, event: Mapping[str, object]) -> None:
+        self._call(lambda: self._native.set_motion_event_json(motion_id, json.dumps(dict(event))))
+
+    def remove_motion_track(self, motion_id: str, track_id: str) -> None:
+        self._call(lambda: self._native.remove_motion_track(motion_id, track_id))
+
+    def remove_motion_event(self, motion_id: str, event_id: str) -> None:
+        self._call(lambda: self._native.remove_motion_event(motion_id, event_id))
+
+    def set_motion_timing(self, motion_id: str, duration: float, fps: float, looping: bool,
+                          fade_in: float | None = None, fade_out: float | None = None) -> None:
+        self._call(lambda: self._native.set_motion_timing(motion_id, duration, fps, looping, fade_in, fade_out))
+
+    def create_pose(self, pose_id: str, groups: Sequence[Sequence[tuple[str, Sequence[str]]]],
+                    fade_in: float | None = None) -> None:
+        """Create a Pose asset from ordered Part UUID groups and linked Part UUIDs."""
+        entries = [[{"part": {"kind": "resolved", "part_id": part_id},
+                     "links": [{"kind": "resolved", "part_id": linked} for linked in links],
+                     "extensions": {}} for part_id, links in group] for group in groups]
+        self._call(lambda: self._native.set_pose_json(json.dumps({
+            "id": pose_id, "file_type": "Live2D Pose", "fade_in": fade_in,
+            "groups": entries, "extensions": {}, "opaque_source_ids": None,
+            "opaque_source_content_hash": None,
+        })))
+
+    def replace_pose(self, pose: Mapping[str, object]) -> None:
+        """Replace a known-field Pose asset from its detached snapshot."""
+        self._call(lambda: self._native.set_pose_json(json.dumps(dict(pose))))
+
+    def import_pose3(self, pose_id: str, text: str) -> list[PoseDiagnostic]:
+        """Import pose3; missing Part runtime IDs return diagnostics."""
+        try:
+            return [PoseDiagnostic(*item) for item in self._native.import_pose3(pose_id, text)]
+        except BaseException:
+            self._native.abort()
+            raise
+
+    def create_physics(self, physics_id: str, physics3: Mapping[str, object],
+                       parameter_bindings: Mapping[str, str]) -> None:
+        """Store typed physics3 rigs with runtime-ID to parameter-UUID bindings."""
+        self._call(lambda: self._native.set_physics_json(json.dumps({
+            "id": physics_id, "data": dict(physics3),
+            "parameter_bindings": dict(parameter_bindings),
+            "opaque_source_ids": None, "opaque_source_content_hash": None,
+        })))
+
+    def replace_physics(self, physics: Mapping[str, object]) -> None:
+        """Replace a known-field Physics asset from a detached snapshot."""
+        self._call(lambda: self._native.set_physics_json(json.dumps(dict(physics))))
+
+    def import_physics3(self, physics_id: str, text: str) -> list[PhysicsDiagnostic]:
+        """Import physics3; missing parameter runtime IDs return diagnostics."""
+        try:
+            return [PhysicsDiagnostic(*item) for item in self._native.import_physics3(physics_id, text)]
+        except BaseException:
+            self._native.abort()
+            raise
+
+    def discard_missing_attachment(self, path: str) -> None:
+        """Explicitly omit one missing model3 attachment from future package exports."""
+        self._call(lambda: self._native.discard_missing_attachment(path))
+
+    def set_model3_settings(self, *, groups: object | None = None,
+                            layout: object | None = None,
+                            hit_areas: object | None = None,
+                            user_data: str | None = None) -> None:
+        """Set typed model3 metadata; group parameters and hit-area meshes use UUID references."""
+        self._call(lambda: self._native.set_model3_settings_json(json.dumps({
+            "groups": groups, "layout": layout, "hit_areas": hit_areas,
+            "user_data": user_data,
+            "extensions": {}, "source_runtime_ids": None, "source_content": None,
+        })))
+
+    def replace_model3_settings(self, settings: Mapping[str, object]) -> None:
+        """Replace the detached model3 metadata snapshot."""
+        self._call(lambda: self._native.set_model3_settings_json(json.dumps(dict(settings))))
+
+    def set_package_attachments(self, attachments: Mapping[str, bytes]) -> None:
+        """Store Sound/UserData file bytes in the project for standalone export."""
+        self._call(lambda: self._native.set_package_attachments(list(attachments.items())))
 
     def mesh(self, mesh_id: str) -> MeshSnapshot | None:
         """Read a mesh after preceding edit operations, or None if absent."""

@@ -140,7 +140,7 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if !(1..=4).contains(&root.format_version) {
+    if !(1..=6).contains(&root.format_version) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -149,6 +149,53 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
             ),
         ));
     }
+
+    let display_info = if root.format_version >= 5 {
+        if !root.extra.is_empty() || !root.document.extra.is_empty() {
+            return Err(Status::error(
+                "UNSUPPORTED_VERSION",
+                "v5+ root/document contains unrecognized fields",
+            ));
+        }
+        match &root.document.display_info {
+            Present::Present(Some(info)) => Some(info.clone()),
+            Present::Present(None) | Present::Absent => {
+                return Err(Status::error(
+                    "INVALID_PROJECT",
+                    "v5+ requires non-null display_info",
+                ))
+            }
+        }
+    } else {
+        if !root.document.display_info.is_absent()
+            || root.document.extra.contains_key("animation_assets")
+        {
+            return Err(Status::error(
+                "UNSUPPORTED_VERSION",
+                "v5 display_info/animation_assets cannot appear in v1-v4",
+            ));
+        }
+        None
+    };
+    let animation_assets = if root.format_version >= 5 {
+        match &root.document.animation_assets {
+            Present::Present(Some(assets)) => assets.clone(),
+            Present::Present(None) | Present::Absent => {
+                return Err(Status::error(
+                    "INVALID_PROJECT",
+                    "v5+ requires non-null animation_assets",
+                ));
+            }
+        }
+    } else {
+        if !root.document.animation_assets.is_absent() {
+            return Err(Status::error(
+                "UNSUPPORTED_VERSION",
+                "v5 animation_assets cannot appear in v1-v4",
+            ));
+        }
+        AnimationAssetsWire::default()
+    };
 
     let doc = root.document;
 
@@ -510,6 +557,60 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         }
     }
 
+    if let Some(info) = display_info {
+        let result = candidate.replace_display_info(info);
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
+    for expression in animation_assets.expressions {
+        let result = candidate.create_expression(expression);
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
+    for motion in animation_assets.motions {
+        let result = candidate.create_motion(motion);
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
+    let result = candidate.set_motion_groups(animation_assets.motion_groups);
+    if !result.status.is_ok() {
+        return Err(result.status);
+    }
+    if let Some(pose) = animation_assets.pose {
+        let result = candidate.set_pose(pose);
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
+    if let Some(physics) = animation_assets.physics {
+        let result = candidate.set_physics(physics);
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
+    let result = candidate.set_missing_attachments(animation_assets.missing_attachments);
+    if !result.status.is_ok() {
+        return Err(result.status);
+    }
+    let settings = if root.format_version == 5 {
+        crate::model3::migrate_v5_settings(&candidate, animation_assets.model3_settings)?
+    } else if root.format_version >= 6 {
+        serde_json::from_value(animation_assets.model3_settings)
+            .map_err(|e| Status::error("INVALID_PROJECT", e.to_string()))?
+    } else {
+        kasane_core::document::Model3Settings::default()
+    };
+    let result = candidate.set_model3_settings(settings);
+    if !result.status.is_ok() {
+        return Err(result.status);
+    }
+    let result = candidate.set_package_attachments(animation_assets.package_attachments);
+    if !result.status.is_ok() {
+        return Err(result.status);
+    }
     let status = candidate.finish_batch_build();
     if !status.is_ok() {
         return Err(status);

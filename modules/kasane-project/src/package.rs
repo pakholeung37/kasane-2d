@@ -1,12 +1,11 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::PathBuf;
 
 use kasane_core::types::Status;
 use kasane_core::Document;
-use kasane_moc3::{encode_moc3, Moc3Artifact};
 
 use crate::filesystem::{self as io, FileSystem, NativeFileSystem, Publication};
-use crate::store::{asset_path, read_project_asset};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeValidation {
@@ -26,29 +25,37 @@ impl RuntimeValidation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct ArtifactValidation {
+pub struct PackageValidation {
     pub structural: bool,
     pub runtime: RuntimeValidation,
+    pub model3_loader: RuntimeValidation,
+    pub animation: RuntimeValidation,
+    pub render: RuntimeValidation,
 }
 
-impl ArtifactValidation {
+impl PackageValidation {
     pub const fn structural(runtime: RuntimeValidation) -> Self {
         Self {
             structural: true,
             runtime,
+            model3_loader: RuntimeValidation::NotPerformed,
+            animation: RuntimeValidation::NotPerformed,
+            render: RuntimeValidation::NotPerformed,
         }
     }
 }
 
-pub type ArtifactValidator = Box<dyn Fn(&Moc3Artifact) -> Result<ArtifactValidation, Status>>;
+pub type PackageValidator = Box<dyn Fn(&ExportPlan) -> Result<PackageValidation, Status>>;
 
 pub struct PackageOptions {
     pub asset_root: PathBuf,
     pub destination: PathBuf,
-    pub validate: Option<ArtifactValidator>,
+    pub validate: Option<PackageValidator>,
 }
 
-/// Publish only verified source bytes; callers must inspect publication warnings.
+mod plan;
+pub use plan::{build_export_plan, ExportFile, ExportFileKind, ExportPlan, PackageReference};
+
 pub fn publish_package(doc: &Document, options: &PackageOptions) -> Result<Publication, Status> {
     publish_with_filesystem(doc, options, &NativeFileSystem)
 }
@@ -58,63 +65,65 @@ pub(crate) fn publish_with_filesystem(
     options: &PackageOptions,
     files: &dyn FileSystem,
 ) -> Result<Publication, Status> {
-    if doc.transaction_active() {
-        return Err(Status::error(
-            "TRANSACTION_ACTIVE",
-            "Commit or cancel edits first",
-        ));
-    }
-    let validator = options.validate.as_ref().ok_or_else(|| {
+    let validate = options.validate.as_ref().ok_or_else(|| {
         Status::error(
             "MISSING_VALIDATOR",
             "Package publication requires an explicit validation gate",
         )
     })?;
-    io::reject_symlink(&options.destination)?;
-    let destination = io::local_path(&options.destination)?;
+    let plan = build_export_plan(doc, &options.asset_root)?;
+    publish_plan_with_filesystem(&plan, &options.destination, validate.as_ref(), files)
+}
+
+/// Validate and publish the exact captured bytes; source files are never reopened.
+pub fn publish_export_plan(
+    plan: &ExportPlan,
+    destination: &std::path::Path,
+    validate: &dyn Fn(&ExportPlan) -> Result<PackageValidation, Status>,
+) -> Result<Publication, Status> {
+    publish_plan_with_filesystem(plan, destination, validate, &NativeFileSystem)
+}
+
+fn publish_plan_with_filesystem(
+    plan: &ExportPlan,
+    destination: &std::path::Path,
+    validate: &dyn Fn(&ExportPlan) -> Result<PackageValidation, Status>,
+    files: &dyn FileSystem,
+) -> Result<Publication, Status> {
+    io::reject_symlink(destination)?;
+    let destination = io::local_path(destination)?;
     let parent = destination
         .parent()
         .filter(|_| destination.file_name().is_some())
         .ok_or_else(|| Status::error("INVALID_DESTINATION", "Cannot replace a filesystem root"))?;
-    if !options.asset_root.as_os_str().is_empty()
-        && io::local_path(&options.asset_root)?.starts_with(&destination)
+    if plan
+        .source_paths
+        .iter()
+        .any(|source| source.starts_with(&destination))
     {
         return Err(Status::error(
             "INVALID_DESTINATION",
-            "Export would replace the source project",
+            "Export would replace source project or assets",
         ));
     }
-    for id in doc.asset_order() {
-        if asset_path(&options.asset_root, doc.get_asset(id).unwrap())?.starts_with(&destination) {
-            return Err(Status::error(
-                "INVALID_DESTINATION",
-                "Export would replace a source asset",
-            ));
-        }
-    }
-
-    let artifact = encode_moc3(doc)?;
-    // Structural validity is an invariant of publication, not something a
-    // caller-supplied validator may accidentally omit or mislabel.
-    kasane_moc3::inspect_moc3_safety(&artifact.bytes)?;
-    // Verify even unused project assets, as in the existing DocumentSession contract.
-    // The bytes checked here are the exact bytes written below; never reopen after validation.
-    let mut verified = std::collections::HashMap::new();
-    for id in doc.asset_order() {
-        let data = read_project_asset(&options.asset_root, doc.get_asset(id).unwrap())?;
-        verified.insert(id.as_str(), data.bytes);
-    }
-    let validation = validator(&artifact)?;
+    let validation = validate(plan)?;
     if !validation.structural {
         return Err(Status::error(
             "INVALID_VALIDATION_RESULT",
             "Publication requires successful structural validation",
         ));
     }
-    let moc_version =
-        artifact.bytes.get(4).copied().ok_or_else(|| {
-            Status::error("EMPTY_MOC3", "Encoder returned no versioned MOC3 bytes")
-        })?;
+    let mut report = plan.report.clone();
+    report["runtime_validation"] = validation.runtime.report_value().into();
+    report["framework_model3_loader_validation"] = validation.model3_loader.report_value().into();
+    report["framework_animation_validation"] = validation.animation.report_value().into();
+    report["framework_render_validation"] = validation.render.report_value().into();
+    let directories = validate_package_paths(
+        plan.files
+            .keys()
+            .map(String::as_str)
+            .chain(["export-report.json"]),
+    )?;
     fs::create_dir_all(parent).map_err(io::io_error)?;
     let _lock = io::lock(parent)?;
     io::reject_symlink(&destination)?;
@@ -125,45 +134,29 @@ pub(crate) fn publish_with_filesystem(
         ));
     }
     let stage = io::Stage::new(parent)?;
-    fs::create_dir(stage.0.join("textures")).map_err(io::io_error)?;
-    files
-        .write_new(&stage.0.join("model.moc3"), &artifact.bytes)
-        .map_err(io::io_error)?;
-    files
-        .write_new(
-            &stage.0.join("model.model3.json"),
-            artifact.model3_json.as_bytes(),
-        )
-        .map_err(io::io_error)?;
-    for slot in &artifact.textures {
+    for directory in &directories {
+        fs::create_dir_all(stage.0.join(directory)).map_err(io::io_error)?;
+    }
+    for (path, file) in &plan.files {
         files
-            .write_new(
-                &stage.0.join(&slot.package_path),
-                &verified[slot.asset_id.as_str()],
-            )
+            .write_new(&stage.0.join(path), file.bytes())
             .map_err(io::io_error)?;
     }
-    let report = serde_json::json!({
-        "status": "published",
-        "encoding": "passed",
-        "structural_validation": "passed",
-        "runtime_validation": validation.runtime.report_value(),
-        "moc_version": moc_version,
-        "source_revision": doc.revision(),
-        "textures": artifact.textures.iter().map(|slot| serde_json::json!({
-            "asset_id": slot.asset_id, "source": slot.source,
-            "path": slot.package_path, "width": slot.width, "height": slot.height,
-        })).collect::<Vec<_>>(),
-    });
     files
         .write_new(
             &stage.0.join("export-report.json"),
             report.to_string().as_bytes(),
         )
         .map_err(io::io_error)?;
-    files
-        .sync_directory(&stage.0.join("textures"))
-        .map_err(io::io_error)?;
+    // Sync every ancestor of managed files too, deepest first. File fsync
+    // alone does not make newly created nested directory entries durable.
+    let mut directories = directories.into_iter().collect::<Vec<_>>();
+    directories.sort_by_key(|path| std::cmp::Reverse(path.split('/').count()));
+    for directory in directories {
+        files
+            .sync_directory(&stage.0.join(directory))
+            .map_err(io::io_error)?;
+    }
     files.sync_directory(&stage.0).map_err(io::io_error)?;
 
     // Reserve a separate directory so a failed rollback leaves a named recovery copy.
@@ -199,4 +192,58 @@ pub(crate) fn publish_with_filesystem(
         ));
     }
     Ok(publication)
+}
+
+/// Validate the entire file namespace before writing anything. Use folded names
+/// for collision checks so a package is portable to case-insensitive volumes.
+/// Return the original directory spellings for creation/durability operations.
+fn validate_package_paths<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+) -> Result<BTreeSet<String>, Status> {
+    let mut files = BTreeSet::new();
+    let mut directories = BTreeSet::from(["textures".to_string()]);
+    for path in paths {
+        if !kasane_core::document::valid_attachment_path(path) || !files.insert(path.to_lowercase())
+        {
+            return Err(Status::error("ATTACHMENT_PATH_COLLISION", path));
+        }
+        let mut parent = path;
+        while let Some((directory, _)) = parent.rsplit_once('/') {
+            directories.insert(directory.to_string());
+            parent = directory;
+        }
+    }
+    for directory in &directories {
+        if files.contains(&directory.to_lowercase()) {
+            return Err(Status::error("ATTACHMENT_PATH_COLLISION", directory));
+        }
+    }
+    Ok(directories)
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::validate_package_paths;
+
+    #[test]
+    fn rejects_portability_and_file_directory_collisions() {
+        for paths in [
+            vec!["model.moc3", "MODEL.MOC3"],
+            vec!["sounds", "sounds/a.wav"],
+            vec!["SOUNDS", "sounds/a.wav"],
+            vec!["textures"],
+            vec!["sounds/./a.wav"],
+            vec!["sounds//a.wav"],
+            vec!["sounds/a.wav/"],
+        ] {
+            assert_eq!(
+                validate_package_paths(paths).unwrap_err().code,
+                "ATTACHMENT_PATH_COLLISION"
+            );
+        }
+        let directories =
+            validate_package_paths(["motions/clip.motion3.json", "motions/audio/a.wav"]).unwrap();
+        assert!(directories.contains("motions"));
+        assert!(directories.contains("motions/audio"));
+    }
 }

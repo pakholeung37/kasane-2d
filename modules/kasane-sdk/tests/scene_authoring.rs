@@ -17,8 +17,8 @@ fn session() -> AuthoringSession {
         Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
     )
     .unwrap();
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/asymmetric-2x2.png");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(&id(2), "texture", &path).unwrap();
     let mesh = rectangle_mesh(
         &id(3),

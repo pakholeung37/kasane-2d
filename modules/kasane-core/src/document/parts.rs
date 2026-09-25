@@ -20,6 +20,11 @@ impl Document {
                 return Status::error("DUPLICATE_RUNTIME_ID", &p.id);
             }
         }
+        if self.display_info.parts.as_ref().is_some_and(|entries| entries.iter().any(|entry| {
+            matches!(entry, CdiPartEntry::Unresolved { runtime_id, .. } if runtime_id == &p.runtime_id)
+        })) {
+            return Status::error("DUPLICATE_RUNTIME_ID", format!("{}.runtime_id collides with unresolved CDI part", p.id));
+        }
         let mut seen = HashSet::new();
         seen.insert(p.id.clone());
         let mut parent_id = p.parent_id.clone();

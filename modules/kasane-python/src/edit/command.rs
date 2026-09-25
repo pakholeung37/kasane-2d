@@ -106,6 +106,38 @@ pub(super) fn apply_command(
         Command::CreateSceneBinding(binding) => edit.create_scene_binding(binding)?,
         Command::ReplaceSceneBinding(binding) => edit.replace_scene_binding(binding)?,
         Command::SetSceneKeyform(id, form) => edit.set_scene_keyform(&id, form)?,
+        Command::SetParameterDisplayName(id, name) => edit.set_parameter_display_name(&id, name)?,
+        Command::SetPartDisplayName(id, name) => edit.set_part_display_name(&id, name)?,
+        Command::CreateCdiGroup(group) => edit.create_parameter_group(group)?,
+        Command::ReplaceCdiGroup(group) => edit.replace_parameter_group(group)?,
+        Command::SetParameterGroup(id, group) => edit.set_parameter_group(&id, group.as_deref())?,
+        Command::SetCombinedParameters(set) => edit.set_combined_parameters(set)?,
+        Command::CreateExpression(expression) => edit.create_expression(expression)?,
+        Command::ReplaceExpression(expression) => edit.replace_expression(expression)?,
+        Command::CreateMotion(clip) => edit.create_motion(clip)?,
+        Command::ReplaceMotion(clip) => edit.replace_motion(clip)?,
+        Command::SetMotionGroups(groups) => edit.set_motion_groups(groups)?,
+        Command::CreateMotionTrack(id, track) => edit.create_motion_track(&id, track)?,
+        Command::ReplaceMotionTrack(id, track) => edit.replace_motion_track(&id, track)?,
+        Command::SetMotionSegment(id, track_id, index, segment) => {
+            edit.set_motion_segment(&id, &track_id, index, segment)?
+        }
+        Command::InsertMotionSegment(id, track_id, index, segment) => {
+            edit.insert_motion_segment(&id, &track_id, index, segment)?
+        }
+        Command::MoveMotionKey(id, track_id, index, point) => {
+            edit.move_motion_key(&id, &track_id, index, point)?
+        }
+        Command::SetMotionEvent(id, event) => edit.set_motion_event(&id, event)?,
+        Command::RemoveMotionTrack(id, track_id) => edit.remove_motion_track(&id, &track_id)?,
+        Command::RemoveMotionEvent(id, event_id) => edit.remove_motion_event(&id, &event_id)?,
+        Command::SetMotionTiming(id, duration, fps, looping, fade_in, fade_out) => {
+            edit.set_motion_timing(&id, duration, fps, looping, fade_in, fade_out)?
+        }
+        Command::SetPose(pose) => edit.set_pose(pose)?,
+        Command::SetPhysics(physics) => edit.set_physics(physics)?,
+        Command::SetModel3Settings(settings) => edit.set_model3_settings(settings)?,
+        Command::SetPackageAttachments(attachments) => edit.set_package_attachments(attachments)?,
     }
     Ok(())
 }

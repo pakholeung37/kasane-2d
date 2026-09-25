@@ -49,10 +49,16 @@ fn active_edit_error(operation: &'static str) -> SdkError {
     }
 }
 
+mod cdi;
 mod diagnostics;
 mod editing;
 mod evaluation;
+mod expression;
 mod ids;
 mod lifecycle;
+mod model3;
+mod motion;
 mod objects;
+mod physics;
+mod pose;
 mod project_io;

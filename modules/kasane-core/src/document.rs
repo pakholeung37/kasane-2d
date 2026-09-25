@@ -1,13 +1,20 @@
 mod assets;
+mod attachments;
 mod bindings;
 mod blendshapes;
 mod canvas;
 mod checkpoint;
+mod display_info;
+mod expressions;
 mod glue;
 mod meshes;
+mod model3;
+mod motions;
 mod offscreen;
 mod parameters;
 mod parts;
+mod physics;
+mod pose;
 mod references;
 mod structure;
 mod transactions;
@@ -15,7 +22,20 @@ mod transforms;
 mod validation;
 mod vertices;
 
+pub use attachments::{valid_attachment_path, PackageAttachment};
 pub use checkpoint::DocumentCheckpoint;
+pub use display_info::{
+    CdiCombinedSet, CdiNamespaceIds, CdiParameterEntry, CdiParameterGroup, CdiParameterRef,
+    CdiPartEntry, DisplayInfo, DisplayInfoOrigin,
+};
+pub use expressions::{ExpressionAsset, ExpressionBlend, ExpressionEntry, ExpressionTarget};
+pub use model3::{Model3Settings, ModelHitArea, ModelParameterGroup, ModelTargetRef};
+pub use motions::{
+    MotionClip, MotionEvent, MotionGroup, MotionPoint, MotionRegistration, MotionSegment,
+    MotionTrack, MotionTrackTarget,
+};
+pub use physics::PhysicsAsset;
+pub use pose::{PoseAsset, PoseEntry, PosePartRef};
 pub use structure::StructureIssue;
 pub use validation::*;
 
@@ -87,6 +107,17 @@ pub struct Document {
 
     offscreens: HashMap<String, Offscreen>,
     offscreen_order: Vec<String>,
+    display_info: DisplayInfo,
+    expressions: HashMap<String, ExpressionAsset>,
+    expression_order: Vec<String>,
+    motions: HashMap<String, std::sync::Arc<MotionClip>>,
+    motion_order: Vec<String>,
+    motion_groups: Vec<MotionGroup>,
+    pose: Option<PoseAsset>,
+    physics: Option<PhysicsAsset>,
+    missing_attachments: Vec<String>,
+    model3_settings: Model3Settings,
+    package_attachments: Vec<PackageAttachment>,
 
     saved_content: Option<Arc<DocumentContent>>,
     lookup: OnceLock<DocumentLookup>,
@@ -129,6 +160,17 @@ struct DocumentContent {
     glue_order: Vec<String>,
     offscreens: HashMap<String, Offscreen>,
     offscreen_order: Vec<String>,
+    display_info: DisplayInfo,
+    expressions: HashMap<String, ExpressionAsset>,
+    expression_order: Vec<String>,
+    motions: HashMap<String, std::sync::Arc<MotionClip>>,
+    motion_order: Vec<String>,
+    motion_groups: Vec<MotionGroup>,
+    pose: Option<PoseAsset>,
+    physics: Option<PhysicsAsset>,
+    missing_attachments: Vec<String>,
+    model3_settings: Model3Settings,
+    package_attachments: Vec<PackageAttachment>,
 }
 
 #[derive(PartialEq)]
@@ -160,6 +202,17 @@ struct ContentRef<'a> {
     glue_order: &'a Vec<String>,
     offscreens: &'a HashMap<String, Offscreen>,
     offscreen_order: &'a Vec<String>,
+    display_info: &'a DisplayInfo,
+    expressions: &'a HashMap<String, ExpressionAsset>,
+    expression_order: &'a Vec<String>,
+    motions: &'a HashMap<String, std::sync::Arc<MotionClip>>,
+    motion_order: &'a Vec<String>,
+    motion_groups: &'a Vec<MotionGroup>,
+    pose: &'a Option<PoseAsset>,
+    physics: &'a Option<PhysicsAsset>,
+    missing_attachments: &'a Vec<String>,
+    model3_settings: &'a Model3Settings,
+    package_attachments: &'a Vec<PackageAttachment>,
 }
 
 impl DocumentContent {
@@ -192,6 +245,17 @@ impl DocumentContent {
             glue_order: &self.glue_order,
             offscreens: &self.offscreens,
             offscreen_order: &self.offscreen_order,
+            display_info: &self.display_info,
+            expressions: &self.expressions,
+            expression_order: &self.expression_order,
+            motions: &self.motions,
+            motion_order: &self.motion_order,
+            motion_groups: &self.motion_groups,
+            pose: &self.pose,
+            physics: &self.physics,
+            missing_attachments: &self.missing_attachments,
+            model3_settings: &self.model3_settings,
+            package_attachments: &self.package_attachments,
         }
     }
 }
@@ -245,6 +309,34 @@ impl Document {
         self.canvas
     }
 
+    pub fn missing_attachments(&self) -> &[String] {
+        &self.missing_attachments
+    }
+
+    /// Record unresolved model3 files in persistent project state. An editor
+    /// must explicitly clear each entry after repairing or discarding it.
+    pub fn set_missing_attachments(&mut self, mut paths: Vec<String>) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error(
+                "TRANSACTION_ACTIVE",
+                "Commit or cancel first",
+            ));
+        }
+        paths.sort();
+        paths.dedup();
+        if paths.iter().any(|path| path.is_empty()) {
+            return self.failed(Status::error(
+                "INVALID_ATTACHMENT",
+                "Attachment path is empty",
+            ));
+        }
+        if self.missing_attachments == paths {
+            return self.failed(Status::ok());
+        }
+        self.missing_attachments = paths;
+        self.changed(ChangeKind::Metadata, Vec::new(), Vec::new())
+    }
+
     /// Last document revision that changed visual inputs. Names do not affect frames.
     pub fn evaluation_revision(&self) -> u64 {
         self.evaluation_revision
@@ -283,6 +375,17 @@ impl Document {
             glue_order: &self.glue_order,
             offscreens: &self.offscreens,
             offscreen_order: &self.offscreen_order,
+            display_info: &self.display_info,
+            expressions: &self.expressions,
+            expression_order: &self.expression_order,
+            motions: &self.motions,
+            motion_order: &self.motion_order,
+            motion_groups: &self.motion_groups,
+            pose: &self.pose,
+            physics: &self.physics,
+            missing_attachments: &self.missing_attachments,
+            model3_settings: &self.model3_settings,
+            package_attachments: &self.package_attachments,
         }
     }
 
@@ -315,6 +418,17 @@ impl Document {
             glue_order: self.glue_order.clone(),
             offscreens: self.offscreens.clone(),
             offscreen_order: self.offscreen_order.clone(),
+            display_info: self.display_info.clone(),
+            expressions: self.expressions.clone(),
+            expression_order: self.expression_order.clone(),
+            motions: self.motions.clone(),
+            motion_order: self.motion_order.clone(),
+            motion_groups: self.motion_groups.clone(),
+            pose: self.pose.clone(),
+            physics: self.physics.clone(),
+            missing_attachments: self.missing_attachments.clone(),
+            model3_settings: self.model3_settings.clone(),
+            package_attachments: self.package_attachments.clone(),
         }
     }
 
@@ -481,6 +595,23 @@ impl Document {
             || self.blend_bindings.contains_key(id)
             || self.glues.contains_key(id)
             || self.offscreens.contains_key(id)
+            || self
+                .display_info
+                .parameter_groups
+                .as_ref()
+                .is_some_and(|groups| groups.iter().any(|group| group.id == id))
+            || self
+                .display_info
+                .combined_parameters
+                .as_ref()
+                .is_some_and(|sets| sets.iter().any(|set| set.id == id))
+            || self.expressions.contains_key(id)
+            || self.motions.contains_key(id)
+            || self.pose.as_ref().is_some_and(|pose| pose.id == id)
+            || self
+                .physics
+                .as_ref()
+                .is_some_and(|physics| physics.id == id)
     }
 
     pub(super) fn failed(&self, status: Status) -> EditResult {

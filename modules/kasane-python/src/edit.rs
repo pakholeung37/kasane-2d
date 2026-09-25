@@ -61,6 +61,30 @@ enum Command {
     CreateSceneBinding(SceneBinding),
     ReplaceSceneBinding(SceneBinding),
     SetSceneKeyform(String, SceneKeyform),
+    SetParameterDisplayName(String, String),
+    SetPartDisplayName(String, String),
+    CreateCdiGroup(kasane_core::document::CdiParameterGroup),
+    ReplaceCdiGroup(kasane_core::document::CdiParameterGroup),
+    SetParameterGroup(String, Option<String>),
+    SetCombinedParameters(kasane_core::document::CdiCombinedSet),
+    CreateExpression(kasane_core::document::ExpressionAsset),
+    ReplaceExpression(kasane_core::document::ExpressionAsset),
+    CreateMotion(kasane_core::document::MotionClip),
+    ReplaceMotion(kasane_core::document::MotionClip),
+    SetMotionGroups(Vec<kasane_core::document::MotionGroup>),
+    CreateMotionTrack(String, kasane_core::document::MotionTrack),
+    ReplaceMotionTrack(String, kasane_core::document::MotionTrack),
+    SetMotionSegment(String, String, usize, kasane_core::document::MotionSegment),
+    InsertMotionSegment(String, String, usize, kasane_core::document::MotionSegment),
+    MoveMotionKey(String, String, usize, kasane_core::document::MotionPoint),
+    SetMotionEvent(String, kasane_core::document::MotionEvent),
+    RemoveMotionTrack(String, String),
+    RemoveMotionEvent(String, String),
+    SetMotionTiming(String, f32, f32, bool, Option<f32>, Option<f32>),
+    SetPose(kasane_core::document::PoseAsset),
+    SetPhysics(kasane_core::document::PhysicsAsset),
+    SetModel3Settings(kasane_core::document::Model3Settings),
+    SetPackageAttachments(Vec<kasane_core::document::PackageAttachment>),
 }
 
 struct PendingCommands {
@@ -158,11 +182,17 @@ impl NativeEdit {
 
 mod assets;
 mod bindings;
+mod cdi;
 mod command;
 mod document;
 mod effects;
+mod expression;
 mod lifecycle;
 mod meshes;
+mod model3;
+mod motion;
+mod physics;
+mod pose;
 mod transforms;
 
 impl Drop for NativeEdit {

@@ -1,0 +1,9 @@
+{
+  "Type": "Live2D Expression",
+  "Parameters": [
+    {
+      "Id": "ParamX",
+      "Value": 0.125
+    }
+  ]
+}

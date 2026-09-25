@@ -1,8 +1,40 @@
+use kasane_core::document::{
+    ExpressionAsset, MotionClip, MotionGroup, PackageAttachment, PhysicsAsset, PoseAsset,
+};
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::types::{
     Appearance, BindingAxis, BlendShapeTargetKind, ImageAsset, OffscreenKeyform, Part, RotationPose,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+
+#[derive(Debug, Default)]
+pub(super) enum Present<T> {
+    #[default]
+    Absent,
+    Present(T),
+}
+
+impl<T> Present<T> {
+    pub(super) fn is_absent(&self) -> bool {
+        matches!(self, Self::Absent)
+    }
+}
+
+impl<T: Serialize> Serialize for Present<T> {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Absent => serializer.serialize_none(),
+            Self::Present(value) => value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Present<T> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        T::deserialize(deserializer).map(Self::Present)
+    }
+}
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct MeshPropertiesWire {
@@ -367,12 +399,39 @@ pub(super) struct DocumentWire {
     pub(super) glues: Vec<GlueWire>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) offscreens: Vec<OffscreenWire>,
+    #[serde(default, skip_serializing_if = "Present::is_absent")]
+    pub(super) display_info: Present<Option<kasane_core::document::DisplayInfo>>,
+    #[serde(default, skip_serializing_if = "Present::is_absent")]
+    pub(super) animation_assets: Present<Option<AnimationAssetsWire>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) deformers: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) deformation_links: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) organization_links: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub(super) extra: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+pub(super) struct AnimationAssetsWire {
+    #[serde(default)]
+    pub(super) expressions: Vec<ExpressionAsset>,
+    #[serde(default)]
+    pub(super) motions: Vec<MotionClip>,
+    #[serde(default)]
+    pub(super) motion_groups: Vec<MotionGroup>,
+    #[serde(default)]
+    pub(super) pose: Option<PoseAsset>,
+    #[serde(default)]
+    pub(super) physics: Option<PhysicsAsset>,
+    #[serde(default)]
+    pub(super) missing_attachments: Vec<String>,
+    #[serde(default = "empty_model3_settings")]
+    pub(super) model3_settings: serde_json::Value,
+    #[serde(default)]
+    pub(super) package_attachments: Vec<PackageAttachment>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -380,4 +439,10 @@ pub(super) struct ProjectWire {
     pub(super) format: String,
     pub(super) format_version: u32,
     pub(super) document: DocumentWire,
+    #[serde(flatten)]
+    pub(super) extra: BTreeMap<String, serde_json::Value>,
+}
+
+fn empty_model3_settings() -> serde_json::Value {
+    serde_json::json!({})
 }

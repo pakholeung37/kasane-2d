@@ -84,6 +84,11 @@ pub(crate) fn object_kind(value: &str) -> PyResult<ObjectKind> {
         "blend_binding" => Ok(ObjectKind::BlendBinding),
         "glue" => Ok(ObjectKind::Glue),
         "offscreen" => Ok(ObjectKind::Offscreen),
+        "cdi_parameter_group" => Ok(ObjectKind::CdiParameterGroup),
+        "cdi_combined_set" => Ok(ObjectKind::CdiCombinedSet),
+        "expression" => Ok(ObjectKind::Expression),
+        "motion" => Ok(ObjectKind::Motion),
+        "pose" => Ok(ObjectKind::Pose),
         _ => Err(PyValueError::new_err(format!(
             "Unknown object kind: {value}"
         ))),
@@ -104,6 +109,12 @@ pub(crate) fn object_kind_name(kind: ObjectKind) -> &'static str {
         ObjectKind::BlendBinding => "blend_binding",
         ObjectKind::Glue => "glue",
         ObjectKind::Offscreen => "offscreen",
+        ObjectKind::CdiParameterGroup => "cdi_parameter_group",
+        ObjectKind::CdiCombinedSet => "cdi_combined_set",
+        ObjectKind::Expression => "expression",
+        ObjectKind::Motion => "motion",
+        ObjectKind::Pose => "pose",
+        ObjectKind::Physics => "physics",
     }
 }
 

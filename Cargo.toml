@@ -2,6 +2,8 @@
 resolver = "2"
 members = [
     "modules/kasane-core",
+    "modules/kasane-live2d",
+    "modules/kasane-animation",
     "modules/kasane-render",
     "modules/kasane-render-wgpu",
     "modules/kasane-moc3",
@@ -21,7 +23,7 @@ license = "MIT"
 authors = ["Kasane 2D Contributors"]
 
 [workspace.dependencies]
-serde = { version = "1.0", features = ["derive"] }
+serde = { version = "1.0", features = ["derive", "rc"] }
 serde_json = { version = "1.0", features = ["float_roundtrip"] }
 thiserror = "2.0"
 sha2 = "0.10"

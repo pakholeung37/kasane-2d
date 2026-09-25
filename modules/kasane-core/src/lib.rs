@@ -6,6 +6,7 @@ pub mod geometry;
 pub mod history;
 pub mod image;
 pub mod keyforms;
+pub mod physics;
 pub mod preview;
 pub mod types;
 

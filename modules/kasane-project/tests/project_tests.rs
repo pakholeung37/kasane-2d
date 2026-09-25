@@ -299,7 +299,7 @@ fn test_project_encode_decode_roundtrip() {
     assert_eq!(encoded.bytes().filter(|&byte| byte == b'\n').count(), 1);
     let root: serde_json::Value = serde_json::from_str(&encoded).unwrap();
     assert_eq!(root["format"], "kasane-directory-project");
-    assert_eq!(root["format_version"], 4);
+    assert_eq!(root["format_version"], 6);
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(before.same_content(&decoded));
@@ -1187,7 +1187,7 @@ fn package_writes_the_same_bytes_that_were_verified() {
         destination: destination.clone(),
         validate: Some(Box::new(move |_| {
             fs::write(&source, b"changed after verification").unwrap();
-            Ok(kasane_project::ArtifactValidation::structural(
+            Ok(kasane_project::PackageValidation::structural(
                 kasane_project::RuntimeValidation::NotPerformed,
             ))
         })),
@@ -1305,6 +1305,15 @@ fn test_project_detachment_lifecycle() {
 
     // 7. Re-export MOC3 package from reopened session
     let export_dir = tmp.0.join("re_exported_package");
+    assert_eq!(
+        reopened_session.export_package(&export_dir).status.code,
+        "MISSING_PACKAGE_ATTACHMENT"
+    );
+    assert!(reopened_session
+        .document_mut()
+        .set_missing_attachments(Vec::new())
+        .status
+        .is_ok());
     let exp_res = reopened_session.export_package(&export_dir);
     assert!(exp_res.status.is_ok(), "{:?}", exp_res);
 
@@ -1653,7 +1662,7 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
 
     let encoded = encode_project(&doc).expect("encode_project failed");
     let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(wire["format_version"], 4);
+    assert_eq!(wire["format_version"], 6);
     for field in [
         "blend_key_tables",
         "blend_constraints",
@@ -1672,15 +1681,23 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
 }
 
 #[test]
-fn test_project_v1_v2_v3_migration_to_v4() {
+fn test_project_v1_v2_v3_v4_migration_to_v6() {
     let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
     let doc = fixture_doc(sha1, sha2);
 
-    for old_ver in [1, 2, 3] {
+    for old_ver in [1, 2, 3, 4] {
         let mut wire: serde_json::Value =
             serde_json::from_str(&encode_project(&doc).unwrap()).unwrap();
         wire["format_version"] = old_ver.into();
+        wire["document"]
+            .as_object_mut()
+            .unwrap()
+            .remove("display_info");
+        wire["document"]
+            .as_object_mut()
+            .unwrap()
+            .remove("animation_assets");
         if old_ver == 1 {
             // v1 had no blend or glue fields
             let fields = wire["document"].as_object_mut().unwrap();
@@ -1707,25 +1724,25 @@ fn test_project_v1_v2_v3_migration_to_v4() {
             );
         }
 
-        // Saving automatically upgrades to v4
+        // Saving automatically upgrades to v6.
         let re_encoded = encode_project(&decoded).expect("Failed to re-encode project");
         let re_wire: serde_json::Value = serde_json::from_str(&re_encoded).unwrap();
-        assert_eq!(re_wire["format_version"], 4);
+        assert_eq!(re_wire["format_version"], 6);
     }
 }
 
 #[test]
-fn test_legacy_reader_rejects_v4() {
+fn test_v5_reader_rejects_v6() {
     let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
     let doc = fixture_doc(sha1, sha2);
-    let encoded_v4 = encode_project(&doc).unwrap();
+    let encoded_v6 = encode_project(&doc).unwrap();
 
-    // Simulate an older reader that only accepts 1..=3
-    let v: serde_json::Value = serde_json::from_str(&encoded_v4).unwrap();
+    // Simulate an older reader that only accepts 1..=4.
+    let v: serde_json::Value = serde_json::from_str(&encoded_v6).unwrap();
     let ver = v["format_version"].as_u64().unwrap() as u32;
-    let accepted_by_legacy = (1..=3).contains(&ver);
-    assert!(!accepted_by_legacy, "Legacy reader (1..=3) must reject v4");
+    let accepted_by_legacy = (1..=5).contains(&ver);
+    assert!(!accepted_by_legacy, "Legacy reader (1..=5) must reject v6");
 }
 
 #[test]
@@ -1815,7 +1832,7 @@ fn test_project_v4_preserves_repeat_parameter() {
 
     let encoded = encode_project(&doc).expect("encode_project failed");
     let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
-    assert_eq!(wire["format_version"], 4);
+    assert_eq!(wire["format_version"], 6);
     assert_eq!(wire["document"]["parameters"][0]["repeat"], true);
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
@@ -2053,4 +2070,100 @@ fn failed_save_keeps_delta_history_and_save_as_preserves_replay() {
     assert!(session.diagnose().is_empty());
     assert!(session.redo().status.is_ok());
     assert!(!session.document().modified());
+}
+
+#[test]
+fn export_plan_is_inspectable_and_publication_never_reopens_sources() {
+    use kasane_project::{
+        build_export_plan, publish_export_plan, PackageValidation, RuntimeValidation,
+    };
+    let tmp = TestDirectory::new();
+    let session = tmp.saved_session();
+    let plan = build_export_plan(session.document(), &session.root()).unwrap();
+    let destination = tmp.0.join("planned-package");
+    assert!(!destination.exists());
+    assert_eq!(plan.source_revision(), session.document().revision());
+    for reference in plan.references() {
+        assert!(plan.files().contains_key(&reference.from));
+        assert!(plan.files().contains_key(&reference.to));
+    }
+    let source = session
+        .root()
+        .join(&session.document().get_asset(&id(2)).unwrap().source);
+    fs::remove_file(source).unwrap();
+    fs::create_dir(&destination).unwrap();
+    fs::write(destination.join("old"), b"preserve").unwrap();
+    let error = publish_export_plan(&plan, &destination, &|_| {
+        Err(kasane_core::Status::error("PACKAGE_REJECTED", "fixture"))
+    })
+    .unwrap_err();
+    assert_eq!(error.code, "PACKAGE_REJECTED");
+    assert_eq!(fs::read(destination.join("old")).unwrap(), b"preserve");
+    publish_export_plan(&plan, &destination, &|candidate| {
+        let model: serde_json::Value =
+            serde_json::from_slice(candidate.files()["model.model3.json"].bytes()).unwrap();
+        assert_eq!(model["FileReferences"]["DisplayInfo"], "model.cdi3.json");
+        for file in candidate.files().values() {
+            assert_eq!(content_sha256(file.bytes()), file.sha256());
+        }
+        Ok(PackageValidation::structural(
+            RuntimeValidation::NotPerformed,
+        ))
+    })
+    .unwrap();
+    for (path, file) in plan.files() {
+        assert_eq!(fs::read(destination.join(path)).unwrap(), file.bytes());
+    }
+    assert!(!destination.join("old").exists());
+}
+
+#[test]
+fn v5_model3_migrates_to_uuid_references_and_survives_runtime_renames() {
+    let tmp = TestDirectory::new();
+    let session = tmp.saved_session();
+    let parameter = session.document().get_parameter(&id(6)).unwrap();
+    let mesh = session.document().get_mesh(&id(4)).unwrap();
+    let mut wire: serde_json::Value =
+        serde_json::from_str(&encode_project(session.document()).unwrap()).unwrap();
+    wire["format_version"] = 5.into();
+    wire["document"]["animation_assets"]["model3_settings"] = serde_json::json!({
+        "groups": [{"Target":"Parameter", "Name":"EyeBlink", "Ids":[parameter.runtime_id]}],
+        "layout": {"Width": 2},
+        "hit_areas": [{"Name":"Head", "Id":mesh.runtime_id}],
+        "extensions": {},
+        "source_runtime_ids": kasane_project::model3::runtime_namespace(session.document())
+    });
+    let mut migrated = decode_project(&wire.to_string()).unwrap();
+    assert_eq!(
+        migrated.model3_settings().groups.as_ref().unwrap()[0].parameters[0].object_id(),
+        Some(id(6).as_str())
+    );
+    assert!(migrated
+        .references_to(&id(4))
+        .contains(&"model3 settings".to_string()));
+    assert!(!migrated.erase_object(&id(4)).status.is_ok());
+    let mut renamed = migrated.get_parameter(&id(6)).unwrap().clone();
+    renamed.runtime_id = "RenamedParameter".into();
+    assert!(migrated.replace_parameter(renamed).status.is_ok());
+    let mut renamed = migrated.get_mesh(&id(4)).unwrap().clone();
+    renamed.runtime_id = "RenamedMesh".into();
+    assert!(migrated.replace_mesh(renamed).status.is_ok());
+    let encoded = encode_project(&migrated).unwrap();
+    let new_wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(new_wire["format_version"], 6);
+    let reopened = decode_project(&encoded).unwrap();
+    let model = kasane_project::model3::export_settings(&reopened).unwrap();
+    assert_eq!(model["Groups"][0]["Ids"][0], "RenamedParameter");
+    assert_eq!(model["HitAreas"][0]["Id"], "RenamedMesh");
+    let before = migrated.clone();
+    let mut invalid = migrated.model3_settings().clone();
+    invalid.groups.as_mut().unwrap()[0].parameters[0] =
+        kasane_core::document::ModelTargetRef::Resolved {
+            object_id: id(99999),
+        };
+    assert_eq!(
+        migrated.set_model3_settings(invalid).status.code,
+        "INVALID_MODEL3_GROUPS"
+    );
+    assert!(migrated.same_content(&before));
 }

@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 from typing import Mapping
 from uuid import UUID
 from weakref import WeakSet
 from ._native import NativeSession, ObjectHandle, SdkFailure
 from ._edit import Edit
+from ._animation import ExpressionPreview, MotionPreview, PhysicsPreview
 from ._mesh_edit import remesh_rectangle_grid as _remesh_rectangle_grid
 from ._types import (
     Appearance,
@@ -124,6 +126,86 @@ class Session:
     def edit(self, label: str, expected_version: Version | None = None) -> Edit:
         """Start an atomic edit, optionally requiring the current version to match."""
         return Edit(self._native.start_edit(label, expected_version))
+
+    def display_info(self) -> dict[str, object]:
+        """Return a detached snapshot of CDI metadata and UUID references."""
+        return json.loads(self._native.display_info_json())
+
+    def export_cdi3(self) -> str:
+        """Encode CDI using current display names and runtime IDs."""
+        return self._native.export_cdi3()
+
+    def expression_ids(self) -> list[str]:
+        """Return expression UUIDs in model3 registration order."""
+        return self._native.expression_ids()
+
+    def expression(self, expression_id: str) -> dict[str, object] | None:
+        """Return a detached expression asset snapshot, including unknown fields."""
+        raw = self._native.expression_json(expression_id)
+        return json.loads(raw) if raw is not None else None
+
+    def export_expression3(self, expression_id: str) -> str:
+        """Encode one expression using current parameter runtime IDs."""
+        return self._native.export_expression3(expression_id)
+
+    def expression_preview(self) -> ExpressionPreview:
+        """Capture an independent CPU Expression preview for scheduling and seek."""
+        return ExpressionPreview(self._native.expression_preview())
+
+    def motion_ids(self) -> list[str]:
+        """Return persistent Motion clip UUIDs."""
+        return self._native.motion_ids()
+
+    def motion_preview(self) -> MotionPreview:
+        """Capture an independent CPU Motion preview for scheduling and seek."""
+        return MotionPreview(self._native.motion_preview())
+
+    def physics_preview(self) -> PhysicsPreview:
+        """Create a detached Physics rig preview from the current document."""
+        return PhysicsPreview(self._native.physics_preview())
+
+    def motion(self, motion_id: str) -> dict[str, object] | None:
+        """Return a detached Motion clip snapshot."""
+        raw = self._native.motion_json(motion_id)
+        return json.loads(raw) if raw is not None else None
+
+    def motion_groups(self) -> list[dict[str, object]]:
+        """Return model3 Motion registrations and per-entry overrides."""
+        return json.loads(self._native.motion_groups_json())
+
+    def export_motion3(self, motion_id: str) -> str:
+        """Encode a clip with current runtime IDs, rejecting unresolved targets."""
+        return self._native.export_motion3(motion_id)
+
+    def pose(self) -> dict[str, object] | None:
+        """Return the detached Pose asset, if present."""
+        raw = self._native.pose_json()
+        return json.loads(raw) if raw is not None else None
+
+    def export_pose3(self) -> str | None:
+        """Encode Pose using current Part runtime IDs."""
+        return self._native.export_pose3()
+
+    def physics(self) -> dict[str, object] | None:
+        """Return the detached Physics asset, if present."""
+        raw = self._native.physics_json()
+        return json.loads(raw) if raw is not None else None
+
+    def missing_attachments(self) -> list[str]:
+        """Return imported references that must be repaired or explicitly discarded."""
+        return self._native.missing_attachments()
+
+    def model3_settings(self) -> dict[str, object]:
+        """Return Groups, Layout, HitAreas, and unsupported extension fields."""
+        return json.loads(self._native.model3_settings_json())
+
+    def package_attachments(self) -> dict[str, bytes]:
+        """Return detached managed Sound/UserData bytes keyed by package path."""
+        return dict(self._native.package_attachments())
+
+    def export_physics3(self) -> str | None:
+        """Encode Physics using current parameter runtime IDs."""
+        return self._native.export_physics3()
 
     def remesh_rectangle_grid(
         self, mesh_id: str, columns: int, rows: int,

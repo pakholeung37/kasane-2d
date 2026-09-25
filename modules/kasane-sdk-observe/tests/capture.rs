@@ -13,8 +13,8 @@ fn captures_unpublished_project_and_keeps_old_frame_after_edit() {
         Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
     )
     .unwrap();
-    let png = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/asymmetric-2x2.png");
+    let png =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(ASSET, "texture", &png).unwrap();
     let mesh = rectangle_mesh(
         MESH,
@@ -56,14 +56,66 @@ fn captures_unpublished_project_and_keeps_old_frame_after_edit() {
 }
 
 #[test]
+fn captures_animation_frame_and_rejects_stale_preview() {
+    let mut session = AuthoringSession::new(
+        DOCUMENT,
+        Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
+    )
+    .unwrap();
+    let png =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
+    let asset = prepare_png_asset(ASSET, "texture", &png).unwrap();
+    let mesh = rectangle_mesh(
+        MESH,
+        "face",
+        ASSET,
+        Vec2::new(40.0, 40.0),
+        Vec2::new(60.0, 60.0),
+    )
+    .unwrap();
+    session
+        .edit("create", None, |edit| {
+            edit.create_asset(asset)?;
+            edit.create_mesh(mesh)
+        })
+        .unwrap();
+    let preview = session.motion_preview();
+    let input = ObservationInput::capture_motion(&session, &preview).unwrap();
+    assert_eq!(input.frame(), &preview.evaluate_drawables().unwrap());
+    let mut observer = Observer::new(ObserverConfig {
+        width: 64,
+        height: 64,
+        fit_long_side: 64.0,
+    })
+    .unwrap();
+    let animated = observer.observe(&input).unwrap();
+    let static_frame = observer
+        .observe(&ObservationInput::capture(&session, &PreviewValues::new()).unwrap())
+        .unwrap();
+    assert_eq!(animated.rgba, static_frame.rgba);
+
+    session
+        .edit("move", None, |edit| {
+            edit.update_positions(MESH, &[0], &[Vec2::new(50.0, 40.0)])
+        })
+        .unwrap();
+    assert_eq!(
+        ObservationInput::capture_motion(&session, &preview)
+            .unwrap_err()
+            .code,
+        "STALE_ANIMATION_PREVIEW"
+    );
+}
+
+#[test]
 fn renders_unsaved_session_and_reuses_gpu_across_changes() {
     let mut session = AuthoringSession::new(
         DOCUMENT,
         Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
     )
     .unwrap();
-    let png = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/asymmetric-2x2.png");
+    let png =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(ASSET, "texture", &png).unwrap();
     let mesh = rectangle_mesh(
         MESH,
@@ -120,8 +172,8 @@ fn renders_unsaved_session_and_reuses_gpu_across_changes() {
     );
     assert_ne!(second.version, first.version);
 
-    let new_png = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/texture_00.png");
+    let new_png =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/texture_00.png");
     let replacement = prepare_png_asset(ASSET, "texture", &new_png).unwrap();
     session
         .edit("texture", None, |edit| edit.replace_asset(replacement))

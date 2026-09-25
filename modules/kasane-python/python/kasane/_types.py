@@ -719,3 +719,65 @@ class ExportResult(NamedTuple):
     published: bool
     durable: bool
     warnings: list[str]
+
+
+class CdiDiagnostic(NamedTuple):
+    """A CDI import finding that can be repaired before strict export."""
+
+    code: str
+    path: str
+    message: str
+
+
+class ExpressionDiagnostic(NamedTuple):
+    """An expression import target that needs model repair."""
+
+    code: str
+    path: str
+    message: str
+
+
+class MotionDiagnostic(NamedTuple):
+    """A motion3 import issue that needs repair before strict export."""
+
+    code: str
+    path: str
+    message: str
+
+
+class PoseDiagnostic(NamedTuple):
+    """A pose3 import Part reference that needs repair."""
+
+    code: str
+    path: str
+    message: str
+
+
+class PhysicsDiagnostic(NamedTuple):
+    """A physics3 parameter reference that needs repair."""
+
+    code: str
+    path: str
+    message: str
+
+
+class ExpressionSnapshot(NamedTuple):
+    """Values from a detached Expression preview at one animation time."""
+
+    time: float
+    parameters: dict[str, float]
+    active_expressions: list[str]
+
+
+class MotionSnapshot(NamedTuple):
+    """Detached Motion preview values and events at one animation time."""
+
+    time: float
+    parameters: dict[str, float]
+    part_opacity_channels: dict[str, float]
+    part_opacities: dict[str, float]
+    model_opacity: float
+    active_motions: list[str]
+    active_expressions: list[str]
+    fired_events: list[tuple[str, str, str]]
+    coverage: list[str]

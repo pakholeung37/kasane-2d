@@ -130,6 +130,12 @@ pub enum ObjectKind {
     BlendBinding,
     Glue,
     Offscreen,
+    CdiParameterGroup,
+    CdiCombinedSet,
+    Expression,
+    Motion,
+    Pose,
+    Physics,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

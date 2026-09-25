@@ -71,6 +71,16 @@ pub(crate) type FullEvaluationTuple = (
 
 pub(crate) type DiagnosticTuple = (String, String, String);
 pub(crate) type ImportTuple = (VersionTuple, u8, Vec<DiagnosticTuple>, Vec<String>);
+pub(crate) type PsdImportTuple = (
+    VersionTuple,
+    String,
+    u32,
+    u32,
+    usize,
+    usize,
+    bool,
+    Vec<String>,
+);
 pub(crate) type BindingForm = (Vec<f32>, Vec<PointTuple>, AppearanceTuple, Option<f32>);
 pub(crate) type MeshBindingTuple = (
     String,

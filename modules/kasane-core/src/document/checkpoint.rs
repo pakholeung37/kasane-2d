@@ -1,4 +1,4 @@
-use super::{Document, DocumentContent};
+use super::{ContentRef, Document, DocumentContent};
 use crate::types::{ChangeKind, ImageAsset, Status};
 use std::collections::HashMap;
 
@@ -84,11 +84,13 @@ impl Document {
         if !identity_changed && self.same_content(&candidate) {
             return Ok(false);
         }
-        // A declared metadata edit only keeps evaluation caches when the
-        // persistent difference is provably limited to mesh display names.
-        let metadata_only = !identity_changed
-            && declared_kind == ChangeKind::Metadata
-            && self.same_content_except_mesh_names(&candidate);
+        // Preserve geometry caches only when all persistent changes are known
+        // display metadata; identity and runtime inputs must still invalidate.
+        let metadata_only = if !identity_changed && declared_kind == ChangeKind::Metadata {
+            self.same_content_except_visual_metadata(candidate.content_ref())
+        } else {
+            false
+        };
         let mut candidate = candidate;
         let mut content = DocumentCheckpoint(DocumentContent::default());
         candidate.swap_checkpoint(&mut content, true);
@@ -97,15 +99,89 @@ impl Document {
         Ok(true)
     }
 
-    fn same_content_except_mesh_names(&self, candidate: &Document) -> bool {
-        let mut normalized = candidate.content();
-        for (id, mesh) in &mut normalized.meshes {
-            let Some(existing) = self.meshes.get(id) else {
-                return false;
-            };
-            mesh.name.clone_from(&existing.name);
-        }
-        self.content_ref() == normalized.content_ref()
+    fn same_content_except_visual_metadata(&self, content: ContentRef<'_>) -> bool {
+        let original = self.content_ref();
+        // Compare borrowed data directly: metadata commits must not clone mesh
+        // geometry merely to decide whether the prepared frame remains valid.
+        original.id == content.id
+            && original.canvas == content.canvas
+            && original.assets == content.assets
+            && original.asset_order == content.asset_order
+            && original.part_order == content.part_order
+            && original.transform_order == content.transform_order
+            && original.transforms == content.transforms
+            && original.mesh_order == content.mesh_order
+            && original.parameter_order == content.parameter_order
+            && original.bindings == content.bindings
+            && original.binding_order == content.binding_order
+            && original.scene_bindings == content.scene_bindings
+            && original.scene_binding_order == content.scene_binding_order
+            && original.draw_order_groups == content.draw_order_groups
+            && original.blend_key_tables == content.blend_key_tables
+            && original.blend_key_table_order == content.blend_key_table_order
+            && original.blend_constraints == content.blend_constraints
+            && original.blend_constraint_order == content.blend_constraint_order
+            && original.blend_bindings == content.blend_bindings
+            && original.blend_binding_order == content.blend_binding_order
+            && original.glues == content.glues
+            && original.glue_order == content.glue_order
+            && original.offscreens == content.offscreens
+            && original.offscreen_order == content.offscreen_order
+            && original.expressions == content.expressions
+            && original.expression_order == content.expression_order
+            && original.motions == content.motions
+            && original.motion_order == content.motion_order
+            && original.motion_groups == content.motion_groups
+            && original.pose == content.pose
+            && original.physics == content.physics
+            && original.missing_attachments == content.missing_attachments
+            && original.model3_settings == content.model3_settings
+            && original.package_attachments == content.package_attachments
+            && original.meshes.len() == content.meshes.len()
+            && original.meshes.iter().all(|(id, old)| {
+                content.meshes.get(id).is_some_and(|new| {
+                    old.id == new.id
+                        && old.texture_asset_id == new.texture_asset_id
+                        && old.vertex_ids == new.vertex_ids
+                        && old.base_positions == new.base_positions
+                        && old.uvs == new.uvs
+                        && old.triangles == new.triangles
+                        && old.runtime_id == new.runtime_id
+                        && old.part_id == new.part_id
+                        && old.deformer_id == new.deformer_id
+                        && old.appearance == new.appearance
+                        && old.draw_order == new.draw_order
+                        && old.blend_mode == new.blend_mode
+                        && old.enabled == new.enabled
+                        && old.double_sided == new.double_sided
+                        && old.inverted_mask == new.inverted_mask
+                        && old.masks == new.masks
+                        && old.raw_blend_mode == new.raw_blend_mode
+                })
+            })
+            && original.parameters.len() == content.parameters.len()
+            && original.parameters.iter().all(|(id, old)| {
+                content.parameters.get(id).is_some_and(|new| {
+                    old.id == new.id
+                        && old.runtime_id == new.runtime_id
+                        && old.minimum == new.minimum
+                        && old.maximum == new.maximum
+                        && old.default_value == new.default_value
+                        && old.decimal_places == new.decimal_places
+                        && old.kind == new.kind
+                        && old.repeat == new.repeat
+                })
+            })
+            && original.parts.len() == content.parts.len()
+            && original.parts.iter().all(|(id, old)| {
+                content.parts.get(id).is_some_and(|new| {
+                    old.id == new.id
+                        && old.runtime_id == new.runtime_id
+                        && old.parent_id == new.parent_id
+                        && old.enabled == new.enabled
+                        && old.draw_order == new.draw_order
+                })
+            })
     }
 
     /// Exchange persistent content with a checkpoint from this document, then
@@ -123,8 +199,9 @@ impl Document {
                 "Checkpoint document ID differs",
             ));
         }
-        self.swap_checkpoint(checkpoint, true);
-        self.advance_checkpoint_revision(true);
+        let metadata_only = self.same_content_except_visual_metadata(checkpoint.0.content_ref());
+        self.swap_checkpoint(checkpoint, !metadata_only);
+        self.advance_checkpoint_revision(!metadata_only);
         Ok(())
     }
 
@@ -168,6 +245,17 @@ impl Document {
         swap_field!(glue_order);
         swap_field!(offscreens);
         swap_field!(offscreen_order);
+        swap_field!(display_info);
+        swap_field!(expressions);
+        swap_field!(expression_order);
+        swap_field!(motions);
+        swap_field!(motion_order);
+        swap_field!(motion_groups);
+        swap_field!(pose);
+        swap_field!(physics);
+        swap_field!(missing_attachments);
+        swap_field!(model3_settings);
+        swap_field!(package_attachments);
         self.vertex_slots = self
             .meshes
             .iter()

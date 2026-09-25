@@ -90,11 +90,19 @@ int main(int argc, char** argv) {
         if (!moc) throw std::runtime_error("Official Core rejected MOC");
         auto* model = moc->CreateModel();
         float camera_x=0, camera_y=0, camera_scale=0;
+        float model_opacity=1.0f, renderer_opacity=1.0f;
         for (int i = 7; i + 1 < argc;) {
             if (std::string(argv[i]) == "--camera" && i+3<argc) {
                 camera_x=std::stof(argv[i+1]);camera_y=std::stof(argv[i+2]);camera_scale=std::stof(argv[i+3]);i+=4;
+            } else if (std::string(argv[i]) == "--model-opacity") {
+                model_opacity=std::stof(argv[i+1]);i+=2;
+            } else if (std::string(argv[i]) == "--renderer-opacity") {
+                renderer_opacity=std::stof(argv[i+1]);i+=2;
+            } else if (std::string(argv[i]) == "--part-opacity" && i+2<argc) {
+                model->SetPartOpacity(std::stoi(argv[i+1]),std::stof(argv[i+2]));i+=3;
             } else { model->SetParameterValue(std::stoi(argv[i]),std::stof(argv[i+1]));i+=2; }
         }
+        model->SetModelOpacity(model_opacity);
         model->Update();
         int tw, th, channels; auto* texels = stbi_load(argv[3], &tw, &th, &channels, 4);
         if (!texels) throw std::runtime_error("Texture decode failed");
@@ -113,6 +121,7 @@ int main(int argc, char** argv) {
         auto* renderer = static_cast<CubismRenderer_OpenGLES2*>(Csm::Rendering::CubismRenderer::Create(width, height));
         renderer->Initialize(model); renderer->SetRenderTargetSize(width, height); renderer->BindTexture(0, atlas);
         renderer->IsPremultipliedAlpha(false);
+        renderer->SetModelColor(1.0f, 1.0f, 1.0f, renderer_opacity);
         Core::csmVector2 canvas, origin; float ppu; Core::csmReadCanvasInfo(model->GetModel(), &canvas, &origin, &ppu);
         float scale = fit / std::max(canvas.X, canvas.Y);
         Csm::CubismMatrix44 matrix;

@@ -7,6 +7,7 @@ license.workspace = true
 description = "Immutable observation inputs and wgpu harness for Kasane SDK"
 
 [dependencies]
+kasane-animation = { path = "../kasane-animation" }
 kasane-core = { path = "../kasane-core" }
 kasane-sdk = { path = "../kasane-sdk" }
 kasane-project = { path = "../kasane-project" }

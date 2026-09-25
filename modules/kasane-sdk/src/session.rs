@@ -5,13 +5,22 @@ use std::sync::Arc;
 
 use crate::edit::EditSession;
 use crate::types::*;
-use kasane_core::document::StructureIssue;
+use kasane_animation::{ExpressionPreview, MotionPreview, PhysicsPreview};
+use kasane_core::document::{
+    DisplayInfo, ExpressionAsset, Model3Settings, MotionClip, MotionGroup, PackageAttachment,
+    PhysicsAsset, PoseAsset, StructureIssue,
+};
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::preview::PreviewState;
 use kasane_core::{
     evaluate_frame, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, Canvas,
     ChangeKind, Document, DrawableFrame, Glue, ImageAsset, Mesh, MeshBinding, Offscreen, Parameter,
     Part, PreviewValues, SceneBinding, Transform,
+};
+use kasane_project::{
+    export_cdi3, export_expression3, export_motion3, export_physics3, export_pose3,
+    CdiProjectError, ExpressionProjectError, MotionProjectError, PhysicsProjectError,
+    PoseProjectError,
 };
 use kasane_project::{DocumentSession, FileSystem, NativeFileSystem};
 
@@ -144,6 +153,88 @@ impl AuthoringSession {
     }
     pub fn offscreen_ids(&self) -> &[String] {
         self.project.document().offscreen_order()
+    }
+    pub fn display_info(&self) -> DisplayInfo {
+        self.project.document().display_info().clone()
+    }
+    pub fn expression_ids(&self) -> &[String] {
+        self.project.document().expression_order()
+    }
+    pub fn expression(&self, id: &str) -> Option<ExpressionAsset> {
+        self.project.document().get_expression(id).cloned()
+    }
+    pub fn motion_ids(&self) -> &[String] {
+        self.project.document().motion_order()
+    }
+    pub fn motion(&self, id: &str) -> Option<MotionClip> {
+        self.project.document().get_motion(id).cloned()
+    }
+    pub fn motion_groups(&self) -> Vec<MotionGroup> {
+        self.project.document().motion_groups().to_vec()
+    }
+    pub fn export_motion3(&self, id: &str) -> Result<String, SdkError> {
+        export_motion3(self.project.document(), id).map_err(|error: MotionProjectError| {
+            let mut result = SdkError::new(&error.code, &error.message, "export_motion3");
+            result.field_path = Some(error.path.into());
+            result.object_ids.push(id.into());
+            result
+        })
+    }
+    /// Capture an isolated expression runtime with deterministic seek/replay.
+    pub fn expression_preview(&self) -> ExpressionPreview {
+        ExpressionPreview::new(self.project.document())
+    }
+    pub fn motion_preview(&self) -> MotionPreview {
+        let mut preview = MotionPreview::new(self.project.document());
+        preview.bind_session_identity(self.session_id, self.generation);
+        preview
+    }
+    pub fn physics_preview(&self) -> PhysicsPreview {
+        PhysicsPreview::new(self.project.document())
+    }
+    pub fn pose(&self) -> Option<PoseAsset> {
+        self.project.document().pose().cloned()
+    }
+    pub fn export_pose3(&self) -> Result<Option<String>, SdkError> {
+        export_pose3(self.project.document()).map_err(|error: PoseProjectError| {
+            let mut result = SdkError::new(&error.code, &error.message, "export_pose3");
+            result.field_path = Some(error.path.into());
+            result
+        })
+    }
+    pub fn physics(&self) -> Option<PhysicsAsset> {
+        self.project.document().physics().cloned()
+    }
+    pub fn missing_attachments(&self) -> Vec<String> {
+        self.project.document().missing_attachments().to_vec()
+    }
+    pub fn model3_settings(&self) -> Model3Settings {
+        self.project.document().model3_settings().clone()
+    }
+    pub fn package_attachments(&self) -> Vec<PackageAttachment> {
+        self.project.document().package_attachments().to_vec()
+    }
+    pub fn export_physics3(&self) -> Result<Option<String>, SdkError> {
+        export_physics3(self.project.document()).map_err(|error: PhysicsProjectError| {
+            let mut result = SdkError::new(&error.code, &error.message, "export_physics3");
+            result.field_path = Some(error.path.into());
+            result
+        })
+    }
+    pub fn export_expression3(&self, id: &str) -> Result<String, SdkError> {
+        export_expression3(self.project.document(), id).map_err(|error: ExpressionProjectError| {
+            let mut result = SdkError::new(&error.code, &error.message, "export_expression3");
+            result.field_path = Some(error.path.into());
+            result.object_ids.push(id.into());
+            result
+        })
+    }
+    pub fn export_cdi3(&self) -> Result<String, SdkError> {
+        export_cdi3(self.project.document()).map_err(|error: CdiProjectError| {
+            let mut result = SdkError::new(&error.code, &error.message, "export_cdi3");
+            result.field_path = Some(error.path.into());
+            result
+        })
     }
     pub fn asset(&self, id: &str) -> Option<ImageAsset> {
         self.project.document().get_asset(id).cloned()
@@ -481,7 +572,7 @@ impl AuthoringSession {
 
     pub(crate) fn object_keys(&self) -> HashSet<ObjectKey> {
         let doc = self.project.document();
-        [
+        let mut keys: HashSet<_> = [
             (ObjectKind::Asset, doc.asset_order()),
             (ObjectKind::Mesh, doc.mesh_order()),
             (ObjectKind::Parameter, doc.parameter_order()),
@@ -502,7 +593,40 @@ impl AuthoringSession {
                 id: id.clone(),
             })
         })
-        .collect()
+        .collect();
+        if let Some(groups) = &doc.display_info().parameter_groups {
+            keys.extend(groups.iter().map(|group| ObjectKey {
+                kind: ObjectKind::CdiParameterGroup,
+                id: group.id.clone(),
+            }));
+        }
+        if let Some(sets) = &doc.display_info().combined_parameters {
+            keys.extend(sets.iter().map(|set| ObjectKey {
+                kind: ObjectKind::CdiCombinedSet,
+                id: set.id.clone(),
+            }));
+        }
+        keys.extend(doc.expression_order().iter().map(|id| ObjectKey {
+            kind: ObjectKind::Expression,
+            id: id.clone(),
+        }));
+        keys.extend(doc.motion_order().iter().map(|id| ObjectKey {
+            kind: ObjectKind::Motion,
+            id: id.clone(),
+        }));
+        if let Some(pose) = doc.pose() {
+            keys.insert(ObjectKey {
+                kind: ObjectKind::Pose,
+                id: pose.id.clone(),
+            });
+        }
+        if let Some(physics) = doc.physics() {
+            keys.insert(ObjectKey {
+                kind: ObjectKind::Physics,
+                id: physics.id.clone(),
+            });
+        }
+        keys
     }
 
     fn object_exists(&self, kind: ObjectKind, id: &str) -> bool {
@@ -546,5 +670,19 @@ pub(crate) fn object_exists_in(doc: &Document, kind: ObjectKind, id: &str) -> bo
         ObjectKind::BlendBinding => doc.get_blend_binding(id).is_some(),
         ObjectKind::Glue => doc.get_glue(id).is_some(),
         ObjectKind::Offscreen => doc.get_offscreen(id).is_some(),
+        ObjectKind::CdiParameterGroup => doc
+            .display_info()
+            .parameter_groups
+            .as_ref()
+            .is_some_and(|groups| groups.iter().any(|group| group.id == id)),
+        ObjectKind::CdiCombinedSet => doc
+            .display_info()
+            .combined_parameters
+            .as_ref()
+            .is_some_and(|sets| sets.iter().any(|set| set.id == id)),
+        ObjectKind::Expression => doc.get_expression(id).is_some(),
+        ObjectKind::Motion => doc.get_motion(id).is_some(),
+        ObjectKind::Pose => doc.pose().is_some_and(|pose| pose.id == id),
+        ObjectKind::Physics => doc.physics().is_some_and(|physics| physics.id == id),
     }
 }

@@ -15,8 +15,8 @@ fn session(limits: HistoryLimits) -> AuthoringSession {
 }
 
 fn asset() -> kasane_core::ImageAsset {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/asymmetric-2x2.png");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
     prepare_png_asset(ASSET_ID, "fixture", &path).unwrap()
 }
 

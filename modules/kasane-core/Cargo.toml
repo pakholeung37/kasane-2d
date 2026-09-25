@@ -9,6 +9,7 @@ description = "Core document model, geometry, deformers and evaluation for Kasan
 [dependencies]
 png = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

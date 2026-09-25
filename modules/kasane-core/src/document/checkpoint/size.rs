@@ -1,6 +1,6 @@
 //! Capacity-aware estimate of persistent content allocations. Keep this in
 //! sync with DocumentContent and the value types stored in its collections.
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::mem::size_of;
 
 use crate::draw_order::DrawOrderGroup;
@@ -12,12 +12,33 @@ use crate::types::{
     RotationKeyform, SceneBinding, SceneTrack, Transform, TransformData, Vec2, WarpKeyform,
 };
 
+use super::super::PackageAttachment;
+use super::super::PhysicsAsset;
+use super::super::{
+    CdiCombinedSet, CdiNamespaceIds, CdiParameterEntry, CdiParameterGroup, CdiParameterRef,
+    CdiPartEntry, DisplayInfo,
+};
 use super::super::{ContentRef, DocumentContent};
+use super::super::{ExpressionAsset, ExpressionEntry, ExpressionTarget};
+use super::super::{Model3Settings, ModelHitArea, ModelParameterGroup, ModelTargetRef};
+use super::super::{
+    MotionClip, MotionEvent, MotionGroup, MotionPoint, MotionRegistration, MotionSegment,
+    MotionTrack, MotionTrackTarget,
+};
+use super::super::{PoseAsset, PoseEntry, PosePartRef};
+use serde_json::Value;
 
 trait ExtraBytes {
     fn extra_bytes(&self) -> usize;
 }
 
+impl<T: ExtraBytes> ExtraBytes for std::sync::Arc<T> {
+    fn extra_bytes(&self) -> usize {
+        // Charge shared allocations in each checkpoint conservatively. This
+        // keeps the existing budget a safe upper bound instead of undercounting.
+        2 * size_of::<usize>() + size_of::<T>() + self.as_ref().extra_bytes()
+    }
+}
 impl ExtraBytes for String {
     fn extra_bytes(&self) -> usize {
         self.capacity()
@@ -43,6 +64,40 @@ impl<T: ExtraBytes> ExtraBytes for HashMap<String, T> {
                 .sum::<usize>()
     }
 }
+impl<T: ExtraBytes> ExtraBytes for BTreeMap<String, T> {
+    fn extra_bytes(&self) -> usize {
+        // Charge a full 11-entry B-tree node for every occupied entry. This
+        // deliberately overestimates small and nested maps, including a map
+        // with one item, rather than undercounting spare node slots.
+        let nodes = self
+            .len()
+            .saturating_mul(11 * size_of::<(String, T)>() + 12 * size_of::<usize>() + 64);
+        nodes
+            + self
+                .iter()
+                .map(|(key, value)| key.capacity() + value.extra_bytes())
+                .sum::<usize>()
+    }
+}
+impl ExtraBytes for Value {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::String(value) => value.capacity(),
+            Self::Array(items) => items.extra_bytes(),
+            Self::Object(items) => {
+                let nodes = items.len().saturating_mul(
+                    11 * size_of::<(String, Value)>() + 12 * size_of::<usize>() + 64,
+                );
+                nodes
+                    + items
+                        .iter()
+                        .map(|(key, value)| key.capacity() + value.extra_bytes())
+                        .sum::<usize>()
+            }
+            _ => 0,
+        }
+    }
+}
 
 macro_rules! no_extra {
     ($($ty:ty),+ $(,)?) => {$(
@@ -51,6 +106,7 @@ macro_rules! no_extra {
 }
 no_extra!(
     f32,
+    f64,
     i32,
     u32,
     Vec2,
@@ -60,7 +116,9 @@ no_extra!(
     DeltaRotationKeyform,
     DeltaPartKeyform,
     DeltaGlueKeyform,
-    DeltaOffscreenKeyform
+    DeltaOffscreenKeyform,
+    MotionPoint,
+    MotionSegment
 );
 
 impl ExtraBytes for ImageAsset {
@@ -107,6 +165,223 @@ impl ExtraBytes for Mesh {
 impl ExtraBytes for Parameter {
     fn extra_bytes(&self) -> usize {
         self.id.capacity() + self.runtime_id.capacity() + self.name.capacity()
+    }
+}
+impl ExtraBytes for CdiParameterGroup {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity()
+            + self.runtime_id.capacity()
+            + self.name.capacity()
+            + self.parent_id.extra_bytes()
+            + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for CdiParameterEntry {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Resolved {
+                parameter_id,
+                group_id,
+                extensions,
+            } => parameter_id.capacity() + group_id.extra_bytes() + extensions.extra_bytes(),
+            Self::Unresolved {
+                runtime_id,
+                name,
+                group_id,
+                extensions,
+            } => {
+                runtime_id.capacity()
+                    + name.capacity()
+                    + group_id.extra_bytes()
+                    + extensions.extra_bytes()
+            }
+        }
+    }
+}
+impl ExtraBytes for CdiPartEntry {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Resolved {
+                part_id,
+                extensions,
+            } => part_id.capacity() + extensions.extra_bytes(),
+            Self::Unresolved {
+                runtime_id,
+                name,
+                extensions,
+            } => runtime_id.capacity() + name.capacity() + extensions.extra_bytes(),
+        }
+    }
+}
+impl ExtraBytes for CdiParameterRef {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Resolved { parameter_id } => parameter_id.capacity(),
+            Self::Unresolved { runtime_id } => runtime_id.capacity(),
+        }
+    }
+}
+impl ExtraBytes for CdiCombinedSet {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity() + self.members.extra_bytes()
+    }
+}
+impl ExtraBytes for CdiNamespaceIds {
+    fn extra_bytes(&self) -> usize {
+        self.parameters.extra_bytes() + self.parts.extra_bytes() + self.groups.extra_bytes()
+    }
+}
+impl ExtraBytes for DisplayInfo {
+    fn extra_bytes(&self) -> usize {
+        self.parameters.extra_bytes()
+            + self.parameter_groups.extra_bytes()
+            + self.parts.extra_bytes()
+            + self.combined_parameters.extra_bytes()
+            + self.extensions.extra_bytes()
+            + self.opaque_source_ids.extra_bytes()
+    }
+}
+impl ExtraBytes for ExpressionTarget {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Resolved { parameter_id } => parameter_id.capacity(),
+            Self::Unresolved { runtime_id } => runtime_id.capacity(),
+        }
+    }
+}
+impl ExtraBytes for ExpressionEntry {
+    fn extra_bytes(&self) -> usize {
+        self.target.extra_bytes() + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for ExpressionAsset {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity()
+            + self.name.capacity()
+            + self.file_type.extra_bytes()
+            + self.entries.extra_bytes()
+            + self.extensions.extra_bytes()
+            + self.opaque_source_ids.extra_bytes()
+            + self.opaque_source_content_hash.extra_bytes()
+    }
+}
+impl ExtraBytes for MotionTrackTarget {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Model { runtime_id } | Self::Unresolved { runtime_id, .. } => {
+                runtime_id.capacity()
+                    + if let Self::Unresolved { category, .. } = self {
+                        category.capacity()
+                    } else {
+                        0
+                    }
+            }
+            Self::Parameter { parameter_id } => parameter_id.capacity(),
+            Self::PartOpacity { part_id } => part_id.capacity(),
+        }
+    }
+}
+impl ExtraBytes for MotionTrack {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity()
+            + self.target.extra_bytes()
+            + self.segments.extra_bytes()
+            + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for MotionEvent {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity() + self.value.capacity() + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for MotionClip {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity()
+            + self.name.capacity()
+            + self.tracks.extra_bytes()
+            + self.events.extra_bytes()
+            + self.extensions.extra_bytes()
+            + self.meta_extensions.extra_bytes()
+            + self.opaque_source_ids.extra_bytes()
+            + self.opaque_source_content_hash.extra_bytes()
+    }
+}
+impl ExtraBytes for MotionRegistration {
+    fn extra_bytes(&self) -> usize {
+        self.clip_id.capacity() + self.sound.extra_bytes() + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for MotionGroup {
+    fn extra_bytes(&self) -> usize {
+        self.name.capacity() + self.entries.extra_bytes()
+    }
+}
+impl ExtraBytes for PosePartRef {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Resolved { part_id } => part_id.capacity(),
+            Self::Unresolved { runtime_id } => runtime_id.capacity(),
+        }
+    }
+}
+impl ExtraBytes for PoseEntry {
+    fn extra_bytes(&self) -> usize {
+        self.part.extra_bytes() + self.links.extra_bytes() + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for PoseAsset {
+    fn extra_bytes(&self) -> usize {
+        self.id.capacity()
+            + self.file_type.extra_bytes()
+            + self.groups.extra_bytes()
+            + self.extensions.extra_bytes()
+            + self.opaque_source_ids.extra_bytes()
+            + self.opaque_source_content_hash.extra_bytes()
+    }
+}
+impl ExtraBytes for PhysicsAsset {
+    fn extra_bytes(&self) -> usize {
+        // Physics vectors and nested extension maps are charged conservatively
+        // against their serialized size, including collection spare capacity.
+        self.id.capacity()
+            + serde_json::to_vec(&self.data).map_or(0, |bytes| bytes.len() * 2)
+            + self.parameter_bindings.extra_bytes()
+            + self.opaque_source_ids.extra_bytes()
+            + self.opaque_source_content_hash.extra_bytes()
+    }
+}
+impl ExtraBytes for ModelTargetRef {
+    fn extra_bytes(&self) -> usize {
+        match self {
+            Self::Resolved { object_id } => object_id.capacity(),
+            Self::Unresolved { runtime_id } => runtime_id.capacity(),
+        }
+    }
+}
+impl ExtraBytes for ModelParameterGroup {
+    fn extra_bytes(&self) -> usize {
+        self.name.capacity() + self.parameters.extra_bytes() + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for ModelHitArea {
+    fn extra_bytes(&self) -> usize {
+        self.name.capacity() + self.mesh.extra_bytes() + self.extensions.extra_bytes()
+    }
+}
+impl ExtraBytes for Model3Settings {
+    fn extra_bytes(&self) -> usize {
+        self.groups.extra_bytes()
+            + self.layout.extra_bytes()
+            + self.hit_areas.extra_bytes()
+            + self.user_data.extra_bytes()
+            + self.extensions.extra_bytes()
+            + self.source_runtime_ids.extra_bytes()
+            + self.source_content.extra_bytes()
+    }
+}
+impl ExtraBytes for PackageAttachment {
+    fn extra_bytes(&self) -> usize {
+        self.path.capacity() + self.bytes.capacity()
     }
 }
 impl ExtraBytes for BindingAxis {
@@ -270,4 +545,15 @@ pub(super) fn estimated_content_bytes(content: ContentRef<'_>) -> usize {
         + content.glue_order.extra_bytes()
         + content.offscreens.extra_bytes()
         + content.offscreen_order.extra_bytes()
+        + content.display_info.extra_bytes()
+        + content.expressions.extra_bytes()
+        + content.expression_order.extra_bytes()
+        + content.motions.extra_bytes()
+        + content.motion_order.extra_bytes()
+        + content.motion_groups.extra_bytes()
+        + content.pose.extra_bytes()
+        + content.physics.extra_bytes()
+        + content.missing_attachments.extra_bytes()
+        + content.model3_settings.extra_bytes()
+        + content.package_attachments.extra_bytes()
 }

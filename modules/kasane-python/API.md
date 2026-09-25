@@ -46,7 +46,7 @@ For installation and runnable recipes, start with the [SDK README](README.md).
 | `Session.import_psd(absolute_path, destination, expected_version=None)` | Publish a layered 8-bit RGB PSD as a new project directory and replace the current session after publication. Both paths are absolute; `destination` must not exist. Unique ASCII identifier layer names become mesh runtime IDs; duplicate or unsuitable names receive stable generated IDs. |
 | `ImportResult` | `version`, `moc_version`, `diagnostics: list[ResourceIssue]`, `warnings`. Imported content has no saved `project_path` until saved. |
 | `PsdImportResult` | `version`, `manifest`, `width`, `height`, `raster_layers`, `groups`, `durable`, `warnings`. The new project is already saved. |
-| `Session.export_package(absolute_path, expected_version=None)` | Publish a MOC3/model3/texture directory; return `ExportResult(published, durable, warnings)`. |
+| `Session.export_package(absolute_path, expected_version=None)` | Publish a standalone MOC3/model3/texture directory with its supported animation, CDI, Sound, and UserData assets; return `ExportResult(published, durable, warnings)`. |
 | `Session.new_project(document_id, width, height, origin, pixels_per_unit, expected_version=None)` | Replace the current in-memory project and return its new `Version`. |
 | `Session.remesh_rectangle_grid(mesh_id, columns, rows, expected_version=None)` | Atomically subdivide a PSD/create_rectangle quad and migrate its ordinary mesh keyforms, mesh BlendShape deltas, and glue references. Bound meshes require equal columns and rows. |
 
@@ -157,6 +157,97 @@ import/export, undo/redo, project reset, and nested edits are rejected with
 | `create_blend_binding(BlendBindingSpec)`, `replace_blend_binding(BlendBindingSnapshot)` | Bind BlendShape deltas to a target. |
 | `replace_canvas(width, height, origin, pixels_per_unit)`, `replace_draw_order_groups(groups)` | Change document-wide settings. |
 | `erase_object(object_id)` | Delete an unreferenced object; referenced objects raise `OBJECT_REFERENCED` with `referrers`. |
+| `set_parameter_display_name(id, name)`, `set_part_display_name(id, name)` | Edit CDI names while retaining runtime IDs. |
+| `create_parameter_group(id, runtime_id, name, parent_id=None)`, `replace_parameter_group(...)`, `set_parameter_group(parameter_id, group_id)` | Edit CDI hierarchy and membership. Group `id` is a project UUID. |
+| `set_combined_parameters(set_id, parameter_ids)`, `import_cdi3(text)` | Edit ordered combined sets or import CDI inside an atomic edit. `import_cdi3` returns `CdiDiagnostic` records. |
+
+`Session.display_info()` returns detached CDI metadata, and
+`Session.export_cdi3()` encodes the current names and runtime IDs. An
+unresolved imported target can be saved for repair; strict CDI export raises
+`SdkFailure` with `field_path`. `export_package()` writes `model.cdi3.json`
+and references it from `model.model3.json`.
+
+`Edit.create_expression(id, name, entries, fade_in=None, fade_out=None)` creates
+an expression from `(parameter_uuid, value, blend)` tuples. Blend is `add`,
+`multiply`, `overwrite`, or `default` (the exp3 omitted Add default).
+`Edit.replace_expression(...)` updates known fields. `Edit.import_expression3(id, name, text)` imports or replaces an exp3 asset and
+returns `ExpressionDiagnostic` records for unresolved runtime IDs. An existing
+expression can be removed with `erase_object(id)`. `Session.expression_ids()`,
+`Session.expression(id)`, and `Session.export_expression3(id)` expose ordered
+assets and strict exp3 output. Unknown JSON fields are retained in the project;
+the exporter blocks content edits or a changed parameter runtime namespace
+while they exist. Reimporting establishes a new baseline for unknown fields.
+Package export writes registered expressions to `expressions/*.exp3.json` and
+references them from `model.model3.json`.
+`Session.expression_preview()` captures a detached Expression stage.
+`ExpressionPreview.schedule_expression(id, time)` records activations;
+`advance(dt)` and `seek(time)` return `ExpressionSnapshot` with UUID keyed
+parameter values and active expression IDs. `frame()` evaluates drawable
+geometry for the current values. `seek` replays from time zero in 1/60 second
+steps and does not change the authoring session.
+
+Motion clips use stable UUIDs. `Edit.create_motion(id, name, duration, fps,
+looping=False, restricted_beziers=True, fade_in=None, fade_out=None)` creates
+an empty clip. `create_motion_track()`, `replace_motion_track()`,
+`set_motion_segment()`, `insert_motion_segment()`, `move_motion_key()`,
+`set_motion_event()`, `remove_motion_track()`, `remove_motion_event()`, and
+`set_motion_timing()` edit its timeline. These methods take detached mapping
+records for tracks, segments, and events; `Session.motion(id)` returns their
+current shape. `Edit.replace_motion()` replaces that detached record.
+`Edit.import_motion3(id, name, text)` returns unresolved target diagnostics.
+`Session.motion_ids()`, `motion_groups()`, and `export_motion3(id)` read the
+assets and registration. `Edit.set_motion_groups(groups)` sets ordered model3
+registrations, including per-entry fade and Sound references.
+
+`Edit.create_pose(id, groups, fade_in=None)` takes ordered groups of
+`(part_uuid, linked_part_uuids)` pairs. `replace_pose()` accepts a detached
+`Session.pose()` mapping; `import_pose3(id, text)` reports unresolved Parts.
+`Session.export_pose3()` returns `None` when no Pose exists.
+
+`Edit.create_physics(id, physics3, parameter_bindings)` stores a typed
+physics3 record and a mapping from runtime parameter IDs to project UUIDs.
+`replace_physics()` accepts `Session.physics()`; `import_physics3(id, text)`
+reports unresolved parameter IDs. `Session.export_physics3()` returns `None`
+when there is no Physics asset. `Session.physics_preview()` captures a
+detached stateful simulator with `set_parameter()`, `advance(dt)`,
+`stabilize()`, `reset()`, `parameters()`, and `diagnostics()`.
+
+`Session.motion_preview()` combines Motion → Expression → Physics → Pose on
+one detached document snapshot. Schedule clips and expressions with
+`schedule_motion(id, time)` and `schedule_expression(id, time)`; use
+`schedule_parameter_input(parameter_uuid, time, value)` for reproducible
+editor input. `advance(dt)` and `seek(time)` return a `MotionSnapshot` with
+parameter values, virtual Part control channels, resulting Part opacities,
+model opacity, active assets, fired events, and coverage diagnostics.
+Loop events are collected across every crossed cycle, including large deltas.
+An estimated event batch above one million is rejected with `EVENT_LIMIT`
+before changing preview state.
+`stabilize_physics()` settles the particle state. `frame()` evaluates drawable
+geometry from real parameter values. Create a new preview after editing the
+document. Dynamic EyeBlink/LipSync model mappings are reported as coverage
+gaps; ordinary Parameter curves work.
+`seek_with_progress(time, callback)` reports `(completed_steps, total_steps)`;
+return `False` to cancel with `SEEK_CANCELLED` while retaining the preceding
+preview state. Exceptions from the callback also leave the state unchanged.
+
+`Session.model3_settings()` exposes Groups, Layout, HitAreas, UserData, and
+unknown model3 fields. Groups use `{"name": "EyeBlink", "parameters":
+[{"kind": "resolved", "object_id": parameter_uuid}]}`; HitAreas use
+`{"name": "Head", "mesh": {"kind": "resolved", "object_id": mesh_uuid}}`.
+Imported unresolved references use `{"kind": "unresolved", "runtime_id": "..."}`
+and block strict export. Layout is a mapping of names to finite numbers.
+Known references follow runtime-ID renames and protect referenced objects from
+deletion. `Edit.set_model3_settings()` changes supported fields;
+`replace_model3_settings()` takes a detached mapping. Managed Sound and
+UserData files are stored as project bytes through
+`Edit.set_package_attachments({relative_path: bytes})` and read through
+`Session.package_attachments()`. Imported missing model3 references appear
+in `Session.missing_attachments()`, survive save/open, and block strict
+`export_package()` with `MISSING_PACKAGE_ATTACHMENT`. Repair the source
+asset or explicitly omit each absent reference using
+`Edit.discard_missing_attachment(path)`. Unknown imported JSON fields are
+preserved; changing their source namespace or content blocks strict export
+until reimport establishes a new baseline.
 
 `Axis(parameter_id, keys)` and `MeshKeyform(keys, positions, appearance,
 draw_order)` describe a mesh binding. Its forms must cover the Cartesian
@@ -226,3 +317,9 @@ fields instead of matching message text. Python argument errors may raise
 runs one script and writes a JSON report containing captured stdout/stderr,
 exception details, and live session versions. The runner does not save a
 project automatically.
+
+Projects now write format v6 and read v1–v6. The v5 migration binds raw model3
+Groups/HitAreas to stable UUIDs using their saved namespace. Older readers must
+reject v6. Python callers that passed capitalized wire-style Groups/HitAreas to
+`set_model3_settings()` must use the typed records shown above; model3 package
+import/export still uses the standard Live2D wire format.

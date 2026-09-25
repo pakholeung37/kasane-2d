@@ -42,10 +42,8 @@ fn owned_workspace_isolated_until_publication_and_checks_source_version() {
 
 #[test]
 fn shared_authoring_contract_matches_expected_results() {
-    let spec: serde_json::Value = serde_json::from_str(include_str!(
-        "fixtures/authoring-contract.json"
-    ))
-    .unwrap();
+    let spec: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/authoring-contract.json")).unwrap();
     let text = |field: &str| spec[field].as_str().unwrap();
     let point = |field: &str| {
         Vec2::new(

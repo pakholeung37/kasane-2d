@@ -1,0 +1,15 @@
+[package]
+name = "kasane-animation"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Deterministic CPU animation state and scheduling for Kasane 2D"
+
+[dependencies]
+kasane-core = { path = "../kasane-core" }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+kasane-project = { path = "../kasane-project" }
+serde_json = { workspace = true }

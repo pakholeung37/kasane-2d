@@ -33,3 +33,16 @@ Python wheel (kasane.Session) → kasane-sdk → kasane-core / kasane-project / 
 正式验收使用仓库外安装的 Python wheel、Rust 契约与 GPU 测试、官方/Purism Core 数值探针，以及仓库内固定的外部 GPU 参考图。参考图的输入哈希和来源记录在 `tests/fixtures/render_reference/`；[验证命令](VALIDATION.md)会检查输入与参考图身份。
 
 Godot 编辑器、Viewer、demo 和 Rust GDExtension 已从当前应用路径移除。`gd-cubism` 仍用于独立的 Cubism benchmark，不参与 SDK 或 WGPU 构建。旧实现方案和里程碑记录见 [archive](archive/)。
+
+
+## 动画与资源包边界
+
+`kasane-core` 持有动画领域数据、typed model3 UUID 引用和共享 Physics 定义；`kasane-live2d` 依赖 Core，处理 JSON codec；`kasane-animation` 只依赖 Core，负责 CPU 求值。工程模块组合 codec、MOC3 编码和资源 IO。
+
+组合预览的文档与编译曲线不可变，由 `Arc` 共享；`MotionRuntime` 和 `ExpressionRuntime` 不拥有时钟或文档，使用预览传入的时间和参数。Motion → Expression → Physics → Pose 的执行顺序在 `MotionPreview::advance` 中明确。独立 Expression 预览复用同一阶段。seek 的绝对 60 Hz 格点由 `ReplaySteps` 统一定义，取消组合 seek 时只丢弃候选可变状态。
+
+文档 Motion 使用共享 clip，轨道 segment 使用写时复制。历史快照和未改动轨道共享存储，预算估算仍保守计入可达内存。编译曲线直接引用不可变 segment，不重复保留 wire 曲线。
+
+发布分为 `build_export_plan`、包级验证和 `publish_export_plan`。计划封装已验证资源的最终字节、SHA-256、文件类型及 model3 引用边；验证器只能读取计划。发布器写入相同字节，并根据验证结果生成报告，再执行同步与原子替换，失败按原契约回滚。
+
+工程格式 v6 保存 typed model3 参数组和 HitArea 引用。v5 原始 JSON 在 codec 边界迁移；v1–v4 补默认空集合。已解析引用统一使用 UUID，导出时才转换 runtime ID。未知扩展与 UserData 内无法安全重写的引用保留严格导出保护。

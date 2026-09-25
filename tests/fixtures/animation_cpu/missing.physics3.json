@@ -1,0 +1,88 @@
+{
+  "Version": 3,
+  "Meta": {
+    "PhysicsSettingCount": 1,
+    "TotalInputCount": 1,
+    "TotalOutputCount": 1,
+    "VertexCount": 2,
+    "EffectiveForces": {
+      "Gravity": {
+        "X": 0,
+        "Y": -1
+      },
+      "Wind": {
+        "X": 0,
+        "Y": 0
+      }
+    },
+    "PhysicsDictionary": [
+      {
+        "Id": "PhysicsProbe",
+        "Name": "Probe"
+      }
+    ]
+  },
+  "PhysicsSettings": [
+    {
+      "Id": "PhysicsProbe",
+      "Input": [
+        {
+          "Source": {
+            "Target": "Parameter",
+            "Id": "ParamX"
+          },
+          "Weight": 100,
+          "Type": "X",
+          "Reflect": false
+        }
+      ],
+      "Output": [
+        {
+          "Destination": {
+            "Target": "Parameter",
+            "Id": "ParamY"
+          },
+          "VertexIndex": 1,
+          "Scale": 1,
+          "Weight": 100,
+          "Type": "Angle",
+          "Reflect": false
+        }
+      ],
+      "Vertices": [
+        {
+          "Position": {
+            "X": 0,
+            "Y": 0
+          },
+          "Mobility": 1,
+          "Delay": 1,
+          "Acceleration": 1,
+          "Radius": 0
+        },
+        {
+          "Position": {
+            "X": 0,
+            "Y": 1
+          },
+          "Mobility": 0.8,
+          "Delay": 0.9,
+          "Acceleration": 1.5,
+          "Radius": 1
+        }
+      ],
+      "Normalization": {
+        "Position": {
+          "Minimum": -1,
+          "Default": 0,
+          "Maximum": 1
+        },
+        "Angle": {
+          "Minimum": -1,
+          "Default": 0,
+          "Maximum": 1
+        }
+      }
+    }
+  ]
+}

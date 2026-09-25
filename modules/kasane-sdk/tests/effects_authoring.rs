@@ -115,8 +115,8 @@ fn effect_families_share_one_publish_and_failed_replacement_preserves_it() {
         Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
     )
     .unwrap();
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/asymmetric-2x2.png");
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
     let asset = prepare_png_asset(&id(2), "texture", &path).unwrap();
     let mesh_a = rectangle_mesh(
         &id(3),

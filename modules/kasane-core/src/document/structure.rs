@@ -80,6 +80,71 @@ impl Document {
         check_collection!(blend_bindings, blend_binding_order);
         check_collection!(glues, glue_order);
         check_collection!(offscreens, offscreen_order);
+        check_collection!(expressions, expression_order);
+        check_collection!(motions, motion_order);
+        if let Some(pose) = &self.pose {
+            if !all_ids.insert(pose.id.clone()) {
+                issues.push(StructureIssue {
+                    object_id: pose.id.clone(),
+                    status: Status::error("DUPLICATE_ID", "Pose ID is used by another object"),
+                });
+            }
+        }
+        if let Some(physics) = &self.physics {
+            if !all_ids.insert(physics.id.clone()) {
+                issues.push(StructureIssue {
+                    object_id: physics.id.clone(),
+                    status: Status::error("DUPLICATE_ID", "Physics ID is used by another object"),
+                });
+            }
+        }
+        for motion in self.motions.values() {
+            for id in motion
+                .tracks
+                .iter()
+                .map(|track| &track.id)
+                .chain(motion.events.iter().map(|event| &event.id))
+            {
+                if !all_ids.insert(id.clone()) {
+                    issues.push(StructureIssue {
+                        object_id: id.clone(),
+                        status: Status::error(
+                            "DUPLICATE_ID",
+                            "Motion child ID is used by another object",
+                        ),
+                    });
+                }
+            }
+        }
+        for id in self
+            .display_info
+            .parameter_groups
+            .as_ref()
+            .into_iter()
+            .flatten()
+            .map(|group| &group.id)
+            .chain(
+                self.display_info
+                    .combined_parameters
+                    .as_ref()
+                    .into_iter()
+                    .flatten()
+                    .map(|set| &set.id),
+            )
+        {
+            if !all_ids.insert(id.clone()) {
+                issues.push(StructureIssue {
+                    object_id: id.clone(),
+                    status: Status::error("DUPLICATE_ID", "CDI identity is used by another object"),
+                });
+            }
+        }
+        issues.extend(self.validate_display_info());
+        issues.extend(self.validate_expressions());
+        issues.extend(self.validate_model3());
+        issues.extend(self.validate_motions());
+        issues.extend(self.validate_pose_asset());
+        issues.extend(self.validate_physics_asset());
 
         let mut add_issue = |id: &str, status: Status| {
             if !status.is_ok() {

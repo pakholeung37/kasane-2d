@@ -8,6 +8,7 @@ description = "Engine-independent authoring SDK for Kasane 2D"
 
 [dependencies]
 kasane-core = { path = "../kasane-core" }
+kasane-animation = { path = "../kasane-animation" }
 kasane-project = { path = "../kasane-project" }
 
 [dev-dependencies]

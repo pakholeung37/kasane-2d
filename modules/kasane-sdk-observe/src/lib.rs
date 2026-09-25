@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
+use kasane_animation::MotionPreview;
 use kasane_core::{DrawableFrame, ImageAsset, PreviewValues};
 use kasane_project::{read_project_asset, AssetData};
 use kasane_sdk::{AuthoringSession, Version};
@@ -73,8 +74,6 @@ impl ObservationInput {
         session: &AuthoringSession,
         requested: &PreviewValues,
     ) -> Result<Self, ObservationError> {
-        let version = session.version();
-        let evaluation_revision = session.evaluation_revision();
         let frame = session
             .evaluate(requested)
             .map_err(|error| ObservationError {
@@ -82,6 +81,74 @@ impl ObservationInput {
                 message: error.message.into(),
                 asset_id: error.object_ids.first().cloned(),
             })?;
+        Self::capture_frame(session, requested.clone(), frame)
+    }
+
+    /// Capture a previously evaluated Motion/Expression/Physics/Pose frame.
+    /// The preview must still describe this session's current document.
+    pub fn capture_motion(
+        session: &AuthoringSession,
+        preview: &MotionPreview,
+    ) -> Result<Self, ObservationError> {
+        Self::capture_motion_with_renderer_opacity(session, preview, false)
+    }
+
+    /// Capture an animation frame and optionally apply its Model opacity as
+    /// Framework renderer color alpha at drawable draws. Offscreen opacity
+    /// remains independent of this host color input.
+    /// Framework does not apply Model opacity to its renderer automatically.
+    pub fn capture_motion_with_renderer_opacity(
+        session: &AuthoringSession,
+        preview: &MotionPreview,
+        apply_model_opacity: bool,
+    ) -> Result<Self, ObservationError> {
+        let version = session.version();
+        if preview.source_identity() != Some((version.session_id, version.generation))
+            || preview.document_revision() != version.revision
+            || preview.document_id() != session.document_id()
+        {
+            return Err(ObservationError {
+                code: "STALE_ANIMATION_PREVIEW".into(),
+                message: "Animation preview was captured from another document revision".into(),
+                asset_id: None,
+            });
+        }
+        let requested: PreviewValues = preview
+            .snapshot()
+            .parameters
+            .iter()
+            .map(|(id, value)| (id.clone(), *value))
+            .collect();
+        let mut frame = preview
+            .evaluate_drawables()
+            .map_err(|error| ObservationError {
+                code: "ANIMATION_EVALUATION".into(),
+                message: error.to_string(),
+                asset_id: None,
+            })?;
+        if apply_model_opacity {
+            let opacity = preview.snapshot().model_opacity;
+            if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+                return Err(ObservationError {
+                    code: "INVALID_MODEL_OPACITY".into(),
+                    message: "Model opacity must be finite and between zero and one".into(),
+                    asset_id: None,
+                });
+            }
+            for drawable in &mut frame.drawables {
+                drawable.opacity *= opacity;
+            }
+        }
+        Self::capture_frame(session, requested, frame)
+    }
+
+    fn capture_frame(
+        session: &AuthoringSession,
+        requested: PreviewValues,
+        frame: DrawableFrame,
+    ) -> Result<Self, ObservationError> {
+        let version = session.version();
+        let evaluation_revision = session.evaluation_revision();
         let required: BTreeSet<_> = frame
             .drawables
             .iter()
@@ -104,7 +171,7 @@ impl ObservationInput {
             version,
             evaluation_revision,
             document_id: session.document_id().to_owned(),
-            requested: requested.clone(),
+            requested,
             frame,
             assets,
             root,

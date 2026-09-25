@@ -23,6 +23,13 @@ pub struct EditSession<'a> {
     pub(crate) erased_keys: HashSet<ObjectKey>,
 }
 
+mod cdi;
+mod expression;
+mod model3;
+mod motion;
+mod physics;
+mod pose;
+
 impl EditSession<'_> {
     /// Read the current candidate when composing multiple operations in one edit.
     pub fn candidate_document(&self) -> &Document {

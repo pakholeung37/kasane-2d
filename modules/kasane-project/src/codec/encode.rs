@@ -290,7 +290,7 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
 
     let project = ProjectWire {
         format: "kasane-directory-project".to_string(),
-        format_version: 4,
+        format_version: 6,
         document: DocumentWire {
             id: document.id().to_string(),
             canvas: [c.width, c.height],
@@ -310,10 +310,42 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
             blend_bindings: blend_bindings_wire,
             glues: glues_wire,
             offscreens: offscreens_wire,
+            display_info: Present::Present(Some(document.display_info().clone())),
+            animation_assets: Present::Present(Some(AnimationAssetsWire {
+                expressions: document
+                    .expression_order()
+                    .iter()
+                    .map(|id| {
+                        document
+                            .get_expression(id)
+                            .expect("ordered expression exists")
+                            .clone()
+                    })
+                    .collect(),
+                motions: document
+                    .motion_order()
+                    .iter()
+                    .map(|id| {
+                        document
+                            .get_motion(id)
+                            .expect("ordered motion exists")
+                            .clone()
+                    })
+                    .collect(),
+                motion_groups: document.motion_groups().to_vec(),
+                pose: document.pose().cloned(),
+                physics: document.physics().cloned(),
+                missing_attachments: document.missing_attachments().to_vec(),
+                model3_settings: serde_json::to_value(document.model3_settings())
+                    .expect("valid model3 settings"),
+                package_attachments: document.package_attachments().to_vec(),
+            })),
             deformers: None,
             deformation_links: None,
             organization_links: None,
+            extra: Default::default(),
         },
+        extra: Default::default(),
     };
 
     Ok(project)

@@ -11,6 +11,10 @@ pub use assets::{
 };
 pub use diagnostics::{GeometryBounds, GeometryChecks, GeometryDiagnostic, GeometryDiagnosticKind};
 pub use edit::EditSession;
+pub use kasane_animation::{
+    AnimationError, ExpressionPreview, MotionEventFired, MotionPreview, MotionSnapshot,
+    PhysicsPreview, RuntimeSnapshot,
+};
 pub use kasane_project::{
     FileSystem, ImportReport, NativeFileSystem, ProjectResult, PsdImportReport, ResourceDiagnostic,
 };

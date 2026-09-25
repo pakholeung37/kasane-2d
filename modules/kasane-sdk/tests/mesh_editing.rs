@@ -201,7 +201,10 @@ fn name_only_edit_preserves_evaluation_revision() {
     assert_eq!(session.mesh(MESH_ID).unwrap().name, "new name");
     session.undo().unwrap();
     assert_eq!(session.mesh(MESH_ID).unwrap().name, "eye");
-    assert_eq!(session.evaluation_revision(), session.version().revision);
+    assert_eq!(session.evaluation_revision(), evaluation_revision);
+    session.redo().unwrap();
+    assert_eq!(session.mesh(MESH_ID).unwrap().name, "new name");
+    assert_eq!(session.evaluation_revision(), evaluation_revision);
 }
 
 #[test]

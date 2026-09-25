@@ -425,7 +425,8 @@ fn model3_import_edits_saves_and_exports_without_changing_session_on_export() {
     assert_eq!(imported.after, sdk.version());
     assert_eq!(sdk.version().generation, before.generation + 1);
     assert_eq!(imported.report.moc_version, 5);
-    assert!(imported.project.diagnostics.is_empty());
+    assert_eq!(imported.project.diagnostics.len(), 2);
+    assert_eq!(sdk.missing_attachments().len(), 2);
     assert!(sdk.project_path().is_none());
     assert_eq!(sdk.history_lengths(), (0, 0));
     assert_eq!(
@@ -440,13 +441,34 @@ fn model3_import_edits_saves_and_exports_without_changing_session_on_export() {
     .unwrap();
     sdk.save_project(&temp.path("saved"), None).unwrap();
     let saved_version = sdk.version();
-    let history = sdk.history_lengths();
     let package = temp.path("exported");
-    let publication = sdk.export_package(&package, Some(saved_version)).unwrap();
+    assert_eq!(
+        sdk.export_package(&package, Some(saved_version))
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "MISSING_PACKAGE_ATTACHMENT"
+    );
+    let missing = sdk.missing_attachments();
+    sdk.edit("discard absent source attachments", None, |edit| {
+        for path in &missing {
+            edit.discard_missing_attachment(path)?;
+        }
+        Ok(())
+    })
+    .unwrap();
+    let exported_version = sdk.version();
+    let exported_history = sdk.history_lengths();
+    let publication = sdk
+        .export_package(&package, Some(exported_version))
+        .unwrap();
     assert!(publication.published);
     assert!(package.join("model.moc3").exists());
-    assert_eq!(sdk.version(), saved_version);
-    assert_eq!(sdk.history_lengths(), history);
+    assert_eq!(sdk.version(), exported_version);
+    assert_eq!(sdk.history_lengths(), exported_history);
+    sdk.undo().unwrap();
+    assert_eq!(sdk.missing_attachments().len(), 2);
+    assert_eq!(sdk.mesh(&mesh_id).unwrap().name, "edited imported");
     sdk.undo().unwrap();
     assert_eq!(sdk.mesh(&mesh_id).unwrap().name, old_name);
     assert!(sdk.diagnose_resources().is_empty());

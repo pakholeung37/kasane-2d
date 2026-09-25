@@ -113,6 +113,44 @@ view.
 
 ## Import and export
 
+CDI display metadata is editable in the same history transaction as model
+objects:
+
+```python
+with session.edit("CDI labels") as edit:
+    edit.create_parameter_group(str(uuid4()), "Face", "顔")
+    edit.set_parameter_display_name(parameter_id, "角度")
+
+print(session.display_info(), session.export_cdi3())
+```
+
+`edit.import_cdi3(text)` returns diagnostics for unresolved model IDs. The
+CDI text is stored with the project, and full package export includes the
+generated or imported CDI file.
+
+Expression assets use parameter UUIDs while editing and runtime IDs in exp3:
+
+```python
+expression_id = str(uuid4())
+with session.edit("smile") as edit:
+    edit.create_expression(expression_id, "Smile", [(parameter_id, 0.5, "add")],
+                           fade_in=0.2)
+
+print(session.expression_ids(), session.export_expression3(expression_id))
+```
+
+`edit.import_expression3(id, name, text)` imports an exp3 file in the current
+transaction. It returns diagnostics for parameter IDs absent from the model;
+such assets can be saved for repair, but strict exp3 and package export reject
+unresolved targets. Package export registers expressions in `model.model3.json`
+and writes each exp3 file under `expressions/`.
+
+`preview = session.expression_preview()` captures an independent document
+snapshot. Use `preview.schedule_expression(expression_id, 0)`,
+`preview.advance(dt)`, `preview.seek(time)`, and `preview.frame()` to inspect
+Expression parameter values and evaluated geometry without editing the project.
+Create another preview after changing model content.
+
 ```python
 session = kasane.Session(str(uuid4()), 100, 100, (50, 50), 10)
 result = session.import_model3(Path("/absolute/model.model3.json"))
@@ -127,6 +165,18 @@ For a standalone MOC3, use `import_bare_moc3(moc3_path, {slot: png_path})` with
 an absolute PNG path for each texture slot. Import replaces the session's
 current project. Inspect `ImportResult.diagnostics` and
 `session.diagnose_resources()` for missing or damaged textures.
+
+Animation assets can be imported or edited inside `session.edit(...)`:
+`import_expression3`, `import_motion3`, `import_pose3`, and `import_physics3`
+accept source JSON text. Their corresponding `Session.export_*3()` methods
+emit runtime JSON; `motion_preview()` combines Motion, Expression, Physics,
+and Pose in a detached, seekable CPU preview. `physics_preview()` exposes the
+stateful Physics rig alone. See the [API reference](API.md) for timeline and
+rig editing methods. Imported missing model3 attachments are reported by
+`session.missing_attachments()` and block strict package export until repaired
+or explicitly omitted with `edit.discard_missing_attachment(path)`. Managed
+Sound and UserData bytes are retained by the project and included in the
+exported package.
 
 For layered 8-bit RGB PSD artwork, import into a new project directory:
 
