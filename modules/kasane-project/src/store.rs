@@ -875,7 +875,29 @@ impl DocumentStore {
                             Err(status) => return (ProjectResult::from_status(status), None, None),
                         };
                         let id = stable_motion_id(&res.document, relative);
-                        let name = format!("{group_name}_{index}");
+                        let source_file = relative.rsplit('/').next().unwrap_or(relative);
+                        let mut name = source_file
+                            .strip_suffix(".motion3.json")
+                            .filter(|stem| !stem.is_empty())
+                            .unwrap_or(source_file)
+                            .to_string();
+                        if name.is_empty() {
+                            name = format!("{group_name}_{index}");
+                        }
+                        let base_name = name.clone();
+                        let mut suffix = 0;
+                        while res.document.motion_order().iter().any(|existing| {
+                            res.document
+                                .get_motion(existing)
+                                .is_some_and(|clip| clip.name == name)
+                        }) {
+                            suffix += 1;
+                            name = if suffix == 1 {
+                                format!("{base_name}-{}", &id[..8])
+                            } else {
+                                format!("{base_name}-{}-{suffix}", &id[..8])
+                            };
+                        }
                         match crate::import_motion3(&res.document, &id, &name, &text) {
                             Ok(imported) => {
                                 res.document = imported.candidate;

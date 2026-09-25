@@ -9,12 +9,23 @@ use std::{
     sync::Arc,
 };
 
+/// Retained cache usage and work performed by the last successful seek.
+///
+/// Cache clearing/invalidation resets all fields except `budget_bytes` to zero.
+/// Failed or cancelled seeks leave these statistics unchanged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SeekCacheStats {
+    /// Configured retained-memory budget in bytes; zero disables caching.
     pub budget_bytes: usize,
+    /// Conservative retained allocation estimate in bytes, at most the budget.
+    /// Excludes shared document/curve data and temporary seek state.
     pub estimated_bytes: usize,
+    /// Number of retained complete playback checkpoints.
     pub checkpoints: usize,
+    /// Restored checkpoint time in seconds; zero means replay from the initial state.
     pub last_restored_time: f32,
+    /// Steps actually replayed by the last successful seek, including a partial tail.
+    /// An exact cache hit takes zero steps; seek to zero without a checkpoint takes one.
     pub last_replayed_steps: u32,
 }
 

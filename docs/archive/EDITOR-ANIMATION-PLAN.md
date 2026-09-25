@@ -184,14 +184,14 @@ model/
   model.pose3.json
   model.cdi3.json
   textures/0.png
-  expressions/<stable-id>.exp3.json
-  motions/<stable-id>.motion3.json
+  expressions/<readable-name>.exp3.json
+  motions/<readable-name>.motion3.json
   sounds/...                  # 仅导入/关联了 Sound 时
   userdata/...                # 仅存在关联时
   export-report.json
 ```
 
-CDI 默认从编辑器数据生成；expression/motion 文件使用稳定身份命名，显示名放注册信息和 CDI，避免重命名引起路径碰撞。最终 model3 中 `DisplayInfo` 引用 cdi3，Physics/Pose 分别引用各自文件，Expressions 包含 Name/File，Motions 按组包含 File 及可选 fade/Sound。
+CDI 默认从编辑器数据生成；expression/motion 文件使用经过路径净化的可读资源名命名，重名时追加短 ID。引用身份仍是内部 UUID，资源重命名后的导出路径会随名称更新。最终 model3 中 `DisplayInfo` 引用 cdi3，Physics/Pose 分别引用各自文件，Expressions 包含 Name/File，Motions 按组包含 File 及可选 fade/Sound。
 
 发布流程：
 

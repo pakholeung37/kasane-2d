@@ -124,8 +124,8 @@ impl Document {
             }
         }
         for area in settings.hit_areas.iter().flatten() {
-            if area.name.is_empty() || area.name.contains('\0') || !valid_target(&area.mesh, false)
-            {
+            // Cubism permits unnamed hit areas; the Mao sample uses them.
+            if area.name.contains('\0') || !valid_target(&area.mesh, false) {
                 return Status::error("INVALID_MODEL3_HIT_AREAS", &area.name);
             }
         }

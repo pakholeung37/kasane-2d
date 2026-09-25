@@ -762,7 +762,10 @@ class PhysicsDiagnostic(NamedTuple):
 
 
 class ExpressionSnapshot(NamedTuple):
-    """Values from a detached Expression preview at one animation time."""
+    """Expression preview values: time in seconds, UUID-keyed parameters,
+    and active expression UUIDs in queue order (including fading-out entries).
+    Returned containers are detached copies; editing them does not affect playback.
+    """
 
     time: float
     parameters: dict[str, float]
@@ -770,7 +773,15 @@ class ExpressionSnapshot(NamedTuple):
 
 
 class MotionSnapshot(NamedTuple):
-    """Detached Motion preview values and events at one animation time."""
+    """Combined Motion/Expression/Physics/Pose values in detached containers.
+
+    time is absolute seconds. parameters maps parameter UUIDs to final values;
+    part_opacity_channels maps Part UUIDs to virtual controls, while part_opacities
+    holds Pose outputs. model_opacity is separate from drawable geometry opacity.
+    Active lists contain queue-order asset UUIDs and may include duplicates.
+    fired_events contains (motion UUID, event UUID, text) from the last update,
+    not all replay steps. coverage lists unsupported mappings or asset issues.
+    """
 
     time: float
     parameters: dict[str, float]
@@ -784,7 +795,20 @@ class MotionSnapshot(NamedTuple):
 
 
 class SeekCacheStats(NamedTuple):
-    """Retained checkpoint estimates and work performed by the last successful seek."""
+    """Immutable cache usage and work performed by the last successful seek.
+
+    Attributes:
+        budget_bytes: Configured retained-memory budget in bytes; zero disables caching.
+        estimated_bytes: Conservative retained allocation estimate in bytes, at most
+            the budget; excludes shared document/curve data and temporary seek state.
+        checkpoints: Number of retained complete playback checkpoints.
+        last_restored_time: Checkpoint time in seconds; zero means replay from initial state.
+        last_replayed_steps: Steps actually replayed, including any partial tail.
+            Exact cache hits take zero steps; seeking to zero without a checkpoint takes one.
+
+    Cache clearing/invalidation resets all fields except budget_bytes to zero.
+    Failed or cancelled seeks leave statistics unchanged.
+    """
 
     budget_bytes: int
     estimated_bytes: int

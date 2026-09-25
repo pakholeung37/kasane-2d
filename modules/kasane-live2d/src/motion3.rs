@@ -387,10 +387,15 @@ fn validate(motion: &Motion3, writer: bool) -> Result<(), Motion3Error> {
                 "initial time exceeds duration",
             ));
         }
+        // Cubism Editor rounds Meta.Duration separately from curve timestamps.
+        // Its own Mao sample has Duration 9.23 and final points at 9.233.
+        // Accept at most half a frame of rounding, while still rejecting
+        // endpoints that materially extend past the clip.
+        let end_tolerance = (0.5 / motion.meta.fps).max(0.0001);
         if curve
             .segments
             .last()
-            .is_some_and(|segment| segment.end().time > motion.meta.duration + 0.0001)
+            .is_some_and(|segment| segment.end().time > motion.meta.duration + end_tolerance)
         {
             return Err(error(
                 "CURVE_EXCEEDS_DURATION",

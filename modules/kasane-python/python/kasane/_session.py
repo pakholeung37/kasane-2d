@@ -174,7 +174,7 @@ class Session:
         return json.loads(self._native.motion_groups_json())
 
     def export_motion3(self, motion_id: str) -> str:
-        """Encode a clip with current runtime IDs, rejecting unresolved targets."""
+        """Encode a clip with current runtime IDs, retaining unresolved imported runtime IDs."""
         return self._native.export_motion3(motion_id)
 
     def pose(self) -> dict[str, object] | None:

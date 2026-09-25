@@ -620,11 +620,18 @@ pub fn export_cdi3(document: &Document) -> Result<String, CdiProjectError> {
                             extensions,
                         })
                     }
-                    CdiPartEntry::Unresolved { runtime_id, .. } => Err(error(
-                        "UNRESOLVED_PART",
-                        format!("$.Parts[{i}].Id"),
-                        format!("{runtime_id} is absent from the model"),
-                    )),
+                    // CDI is display metadata. Cubism samples can contain
+                    // labels for Parts absent from the current MOC; retain
+                    // those labels without changing the model namespace.
+                    CdiPartEntry::Unresolved {
+                        runtime_id,
+                        name,
+                        extensions,
+                    } => Ok(CdiPart {
+                        id: runtime_id,
+                        name,
+                        extensions,
+                    }),
                 })
                 .collect::<Result<Vec<_>, _>>()
         })

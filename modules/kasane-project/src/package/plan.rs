@@ -7,9 +7,115 @@ use kasane_core::{types::Status, Document};
 use kasane_moc3::encode_moc3;
 use serde_json::Value;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
 };
+
+fn asset_filename(
+    directory: &str,
+    name: &str,
+    id: &str,
+    extension: &str,
+    used: &mut HashSet<String>,
+) -> String {
+    // Keep user-facing asset names readable without letting a name create a
+    // path component or exceed common filesystem filename limits.
+    let name = name.strip_suffix(&format!(".{extension}")).unwrap_or(name);
+    let mut stem = String::new();
+    for ch in name.chars().take(64) {
+        let safe = if ch.is_alphanumeric() || matches!(ch, '_' | '-' | '.') {
+            ch
+        } else {
+            '_'
+        };
+        if stem.len() + safe.len_utf8() > 180 {
+            break;
+        }
+        stem.push(safe);
+    }
+    let stem = stem.trim_matches(['.', '_']);
+    let stem = if stem.is_empty() { "asset" } else { stem };
+    let stem = if matches!(
+        stem.to_ascii_uppercase().as_str(),
+        "CON"
+            | "PRN"
+            | "AUX"
+            | "NUL"
+            | "COM1"
+            | "COM2"
+            | "COM3"
+            | "COM4"
+            | "COM5"
+            | "COM6"
+            | "COM7"
+            | "COM8"
+            | "COM9"
+            | "LPT1"
+            | "LPT2"
+            | "LPT3"
+            | "LPT4"
+            | "LPT5"
+            | "LPT6"
+            | "LPT7"
+            | "LPT8"
+            | "LPT9"
+    ) {
+        format!("asset_{stem}")
+    } else {
+        stem.to_string()
+    };
+    let mut candidate = format!("{directory}/{stem}.{extension}");
+    if !used.insert(candidate.to_lowercase()) {
+        candidate = format!("{directory}/{stem}-{}.{extension}", &id[..8]);
+        let mut suffix = 2;
+        while !used.insert(candidate.to_lowercase()) {
+            candidate = format!("{directory}/{stem}-{}-{suffix}.{extension}", &id[..8]);
+            suffix += 1;
+        }
+    }
+    candidate
+}
+
+#[cfg(test)]
+mod filename_tests {
+    use super::asset_filename;
+    use std::collections::HashSet;
+
+    #[test]
+    fn readable_names_remain_safe_and_case_collisions_get_stable_suffixes() {
+        let mut used = HashSet::new();
+        assert_eq!(
+            asset_filename(
+                "motions",
+                "mtn_01",
+                "00000000-0000-4000-8000-000000000001",
+                "motion3.json",
+                &mut used
+            ),
+            "motions/mtn_01.motion3.json"
+        );
+        assert_eq!(
+            asset_filename(
+                "motions",
+                "MTN_01",
+                "12345678-0000-4000-8000-000000000002",
+                "motion3.json",
+                &mut used
+            ),
+            "motions/MTN_01-12345678.motion3.json"
+        );
+        assert_eq!(
+            asset_filename(
+                "expressions",
+                "../CON",
+                "00000000-0000-4000-8000-000000000003",
+                "exp3.json",
+                &mut used
+            ),
+            "expressions/asset_CON.exp3.json"
+        );
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExportFileKind {
@@ -86,6 +192,11 @@ pub fn build_export_plan(doc: &Document, asset_root: &Path) -> Result<ExportPlan
     let artifact = encode_moc3(doc)?;
     let cdi_json = export_cdi3(doc)
         .map_err(|error| Status::error(error.code, format!("{}: {}", error.path, error.message)))?;
+    let mut used_paths: HashSet<String> = doc
+        .package_attachments()
+        .iter()
+        .map(|item| item.path.to_lowercase())
+        .collect();
     let mut expressions = Vec::new();
     for id in doc.expression_order() {
         let asset = doc.get_expression(id).expect("ordered expression exists");
@@ -93,22 +204,21 @@ pub fn build_export_plan(doc: &Document, asset_root: &Path) -> Result<ExportPlan
             Status::error(error.code, format!("{}: {}", error.path, error.message))
         })?;
         expressions.push((
-            format!("expressions/{id}.exp3.json"),
+            asset_filename("expressions", &asset.name, id, "exp3.json", &mut used_paths),
             asset.name.clone(),
             content,
         ));
     }
     let mut motions = Vec::new();
+    let mut motion_paths = BTreeMap::new();
     for id in doc.motion_order() {
         let clip = doc.get_motion(id).expect("ordered motion exists");
         let content = export_motion3(doc, id).map_err(|error| {
             Status::error(error.code, format!("{}: {}", error.path, error.message))
         })?;
-        motions.push((
-            format!("motions/{id}.motion3.json"),
-            clip.name.clone(),
-            content,
-        ));
+        let path = asset_filename("motions", &clip.name, id, "motion3.json", &mut used_paths);
+        motion_paths.insert(id.clone(), path.clone());
+        motions.push((path, clip.name.clone(), content));
     }
     let pose = export_pose3(doc)
         .map_err(|error| Status::error(error.code, format!("{}: {}", error.path, error.message)))?;
@@ -137,7 +247,7 @@ pub fn build_export_plan(doc: &Document, asset_root: &Path) -> Result<ExportPlan
         for group in doc.motion_groups() {
             let mut entries = Vec::new();
             for entry in &group.entries {
-                let path = format!("motions/{}.motion3.json", entry.clip_id);
+                let path = motion_paths[&entry.clip_id].clone();
                 let mut value = serde_json::Map::new();
                 value.insert("File".into(), Value::String(path));
                 if let Some(sound) = &entry.sound {
@@ -172,7 +282,7 @@ pub fn build_export_plan(doc: &Document, asset_root: &Path) -> Result<ExportPlan
             .motion_order()
             .iter()
             .filter(|id| !registered.contains(id.as_str()))
-            .map(|id| serde_json::json!({"File": format!("motions/{id}.motion3.json")}))
+            .map(|id| serde_json::json!({"File": motion_paths[id]}))
             .collect();
         if !remaining.is_empty() {
             groups

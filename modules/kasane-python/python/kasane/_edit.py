@@ -184,27 +184,67 @@ class Edit:
 
     def set_motion_segment(self, motion_id: str, track_id: str, index: int,
                            segment: Mapping[str, object]) -> None:
+        """Replace segments[index] on a track; index is zero-based (not a key index).
+
+        segment uses a kind of linear, bezier, stepped or inverse_stepped and
+        an end={time, value}; bezier also needs control1 and control2 points.
+        The complete clip is validated after replacement. Missing clip, track
+        or segment raises MISSING_MOTION, MISSING_MOTION_TRACK or
+        MISSING_MOTION_SEGMENT. An SDK failure aborts this edit."""
         self._call(lambda: self._native.set_motion_segment_json(motion_id, track_id, index, json.dumps(dict(segment))))
 
     def insert_motion_segment(self, motion_id: str, track_id: str, index: int,
                               segment: Mapping[str, object]) -> None:
+        """Insert a typed segment before a zero-based index; len(segments) appends.
+
+        Uses the same mapping as set_motion_segment. Points are not reordered:
+        the resulting clip must satisfy time ordering and Bezier constraints.
+        Out-of-range indices raise MISSING_MOTION_SEGMENT; missing clip/track
+        raises MISSING_MOTION/MISSING_MOTION_TRACK. SDK failure aborts this edit."""
         self._call(lambda: self._native.insert_motion_segment_json(motion_id, track_id, index, json.dumps(dict(segment))))
 
     def move_motion_key(self, motion_id: str, track_id: str, index: int, time: float, value: float) -> None:
-        """Move the initial point (index 0) or a segment endpoint."""
+        """Move key 0 (initial point) or endpoint index-1 (keys 1..segment count).
+
+        Time is in seconds; time/value must be finite and preserve valid point
+        ordering. Bezier control points are not moved. Missing keys raise
+        MISSING_MOTION_SEGMENT; invalid ordering raises INVALID_MOTION_POINT.
+        SDK failure aborts this edit.
+        """
         self._call(lambda: self._native.move_motion_key(motion_id, track_id, index, time, value))
 
     def set_motion_event(self, motion_id: str, event: Mapping[str, object]) -> None:
+        """Create or replace an event by UUID, preserving existing event order.
+
+        event is {id: UUID, time: seconds, value: str, extensions: {}}.
+        New events append; time must be finite and in [0, clip.duration].
+        Invalid time raises INVALID_MOTION_EVENT_TIME; missing clip raises
+        MISSING_MOTION. SDK failure aborts this edit."""
         self._call(lambda: self._native.set_motion_event_json(motion_id, json.dumps(dict(event))))
 
     def remove_motion_track(self, motion_id: str, track_id: str) -> None:
+        """Remove a track by UUID, including its initial point and all segments.
+
+        Missing clip/track raises MISSING_MOTION/MISSING_MOTION_TRACK;
+        removal is not a no-op for an absent track. SDK failure aborts this edit."""
         self._call(lambda: self._native.remove_motion_track(motion_id, track_id))
 
     def remove_motion_event(self, motion_id: str, event_id: str) -> None:
+        """Remove one event by UUID; an absent event is an error, not a no-op.
+
+        Missing clip/event raises MISSING_MOTION/MISSING_MOTION_EVENT.
+        SDK failure aborts this edit."""
         self._call(lambda: self._native.remove_motion_event(motion_id, event_id))
 
     def set_motion_timing(self, motion_id: str, duration: float, fps: float, looping: bool,
                           fade_in: float | None = None, fade_out: float | None = None) -> None:
+        """Replace clip duration (seconds), FPS, loop flag and clip-level fades.
+
+        Duration/FPS must be finite and positive; fades must be None or finite
+        nonnegative seconds. None clears an explicit fade (runtime default:
+        one second). Existing points/events are not rescaled; the complete
+        clip must still validate. Invalid metadata raises INVALID_MOTION_DURATION,
+        INVALID_MOTION_FPS or INVALID_MOTION_FADE. SDK failure aborts this edit."""
         self._call(lambda: self._native.set_motion_timing(motion_id, duration, fps, looping, fade_in, fade_out))
 
     def create_pose(self, pose_id: str, groups: Sequence[Sequence[tuple[str, Sequence[str]]]],

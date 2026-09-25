@@ -74,6 +74,7 @@ pub struct PhysicsPreview {
 }
 
 impl PhysicsPreview {
+    /// Capture an independent document snapshot at time zero. Later document edits are not observed.
     pub fn new(document: &Document) -> Self {
         let parameters = document
             .parameter_order()
@@ -92,15 +93,21 @@ impl PhysicsPreview {
             diagnostics: Vec::new(),
         }
     }
+    /// Borrow current values keyed by parameter UUID without advancing physics.
     pub fn parameters(&self) -> &BTreeMap<String, f32> {
         &self.parameters
     }
+    /// Borrow coverage messages from the last advance; reset clears them.
     pub fn diagnostics(&self) -> &[String] {
         &self.diagnostics
     }
+    /// Return the captured document revision, not the current authoring-session revision.
     pub fn document_revision(&self) -> u64 {
         self.document.revision()
     }
+    /// Set a parameter UUID value, clamped to its range, without resetting particles.
+    /// Missing UUIDs return `Evaluation`; nonfinite values return `InvalidTime`, with no
+    /// mutation. Reset discards these inputs and restores document-default parameters.
     pub fn set_parameter(&mut self, id: &str, value: f32) -> Result<(), AnimationError> {
         let parameter = self
             .document
@@ -113,6 +120,10 @@ impl PhysicsPreview {
             .insert(id.into(), value.clamp(parameter.minimum, parameter.maximum));
         Ok(())
     }
+    /// Advance physics by finite, nonnegative seconds and refresh diagnostics.
+    /// Uses the asset FPS when present, otherwise the supplied delta. Returns current
+    /// parameter values; missing Physics assets leave them unchanged. Invalid deltas
+    /// return [`AnimationError::InvalidTime`] before changing state.
     pub fn advance(&mut self, dt: f32) -> Result<&BTreeMap<String, f32>, AnimationError> {
         if !dt.is_finite() || dt < 0.0 {
             return Err(AnimationError::InvalidTime);
@@ -126,10 +137,14 @@ impl PhysicsPreview {
         );
         Ok(&self.parameters)
     }
+    /// Initialize particles and physics outputs from current parameters without advancing time.
+    /// Returns current parameter values. Does not refresh diagnostics or run other animation stages.
     pub fn stabilize(&mut self) -> &BTreeMap<String, f32> {
         self.state.stabilize(&self.document, &mut self.parameters);
         &self.parameters
     }
+    /// Restore document-default parameters and initial physics particles/caches; clear diagnostics.
+    /// Previously set parameter inputs are discarded; the captured document remains unchanged.
     pub fn reset(&mut self) {
         self.state.reset(&self.document);
         self.parameters = self

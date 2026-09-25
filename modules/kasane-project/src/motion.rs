@@ -374,13 +374,14 @@ pub fn export_motion3(document: &Document, id: &str) -> Result<String, MotionPro
                 MotionTrackTarget::Unresolved {
                     category,
                     runtime_id,
-                } => {
-                    return Err(error(
-                        "UNRESOLVED_TARGET",
-                        path,
-                        format!("{category}:{runtime_id}"),
-                    ))
-                }
+                } => (
+                    match category.as_str() {
+                        "Parameter" => MotionTarget::Parameter,
+                        "PartOpacity" => MotionTarget::PartOpacity,
+                        _ => return Err(error("INVALID_TARGET", path, category)),
+                    },
+                    runtime_id.clone(),
+                ),
             };
             Ok(Motion3Curve {
                 target,

@@ -126,6 +126,7 @@ fn model3_expression_package_import_is_atomic() {
     let relative = model3["FileReferences"]["Expressions"][0]["File"]
         .as_str()
         .unwrap();
+    assert_eq!(relative, "expressions/Smile.exp3.json");
     assert!(package.join(relative).is_file());
     let mut reopened = DocumentSession::new();
     let (result, report) = reopened.import_model3(&package.join("model.model3.json"));

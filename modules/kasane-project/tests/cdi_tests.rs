@@ -334,9 +334,10 @@ fn optional_collections_unresolved_parts_and_duplicate_members_are_distinct() {
     )
     .unwrap();
     assert_eq!(unresolved.diagnostics[0].code, "UNRESOLVED_PART");
-    let error = export_cdi3(&unresolved.candidate).unwrap_err();
-    assert_eq!(error.code, "UNRESOLVED_PART");
-    assert_eq!(error.path, "$.Parts[0].Id");
+    let retained: Value =
+        serde_json::from_str(&export_cdi3(&unresolved.candidate).unwrap()).unwrap();
+    assert_eq!(retained["Parts"][0]["Id"], "MissingPart");
+    assert_eq!(retained["Parts"][0]["Name"], "未找到");
 
     let repeated = import_cdi3(
         &source,

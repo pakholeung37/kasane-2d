@@ -95,19 +95,6 @@ impl MotionRuntime {
         let clip = document
             .get_motion(id)
             .ok_or_else(|| AnimationError::MissingMotion(id.into()))?;
-        for track in &clip.tracks {
-            if let MotionTrackTarget::Unresolved {
-                category,
-                runtime_id,
-            } = &track.target
-            {
-                return Err(AnimationError::UnresolvedMotionTarget {
-                    motion_id: id.into(),
-                    category: category.clone(),
-                    runtime_id: runtime_id.clone(),
-                });
-            }
-        }
         let index = self.activations.partition_point(|item| item.time <= time);
         self.activations.insert(
             index,
@@ -301,7 +288,13 @@ impl MotionRuntime {
                         "{}: Model {runtime_id} mapping requires model3 Groups",
                         clip.id
                     )),
-                    MotionTrackTarget::Unresolved { .. } => unreachable!("checked when scheduled"),
+                    MotionTrackTarget::Unresolved {
+                        category,
+                        runtime_id,
+                    } => snapshot.coverage.push(format!(
+                        "{}: virtual {category} {runtime_id} has no drawable target",
+                        clip.id
+                    )),
                 }
             }
             let mut before = playing.previous_offset;

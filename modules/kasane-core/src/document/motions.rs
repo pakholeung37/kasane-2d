@@ -158,7 +158,9 @@ impl Document {
     fn validate_motion_groups(&self, groups: &[MotionGroup]) -> Status {
         let mut names = HashSet::new();
         for (index, group) in groups.iter().enumerate() {
-            if group.name.is_empty() || group.name.contains('\0') || !names.insert(&group.name) {
+            // Live2D model3 permits an empty Motion group key; Mao uses it for
+            // its non-idle clips. It still has to be unique like any other key.
+            if group.name.contains('\0') || !names.insert(&group.name) {
                 return Status::error("INVALID_MOTION_GROUP", format!("groups[{index}]"));
             }
             for (entry_index, entry) in group.entries.iter().enumerate() {
@@ -352,13 +354,16 @@ impl Document {
                     format!("{}.tracks[{index}].initial", clip.id),
                 );
             }
+            // Cubism Editor may round the clip duration more coarsely than
+            // its last curve timestamp (for example 9.23 vs 9.233 at 30 FPS).
+            let end_tolerance = (0.5 / clip.fps).max(0.0001);
             let mut previous = track.initial.time;
             for (segment_index, segment) in track.segments.iter().enumerate() {
                 let end = segment.end();
                 if !end.time.is_finite()
                     || !end.value.is_finite()
                     || end.time <= previous
-                    || end.time > clip.duration + 0.0001
+                    || end.time > clip.duration + end_tolerance
                 {
                     return Status::error(
                         "INVALID_MOTION_POINT",

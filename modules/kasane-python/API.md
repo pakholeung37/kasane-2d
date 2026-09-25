@@ -163,8 +163,9 @@ import/export, undo/redo, project reset, and nested edits are rejected with
 
 `Session.display_info()` returns detached CDI metadata, and
 `Session.export_cdi3()` encodes the current names and runtime IDs. An
-unresolved imported target can be saved for repair; strict CDI export raises
-`SdkFailure` with `field_path`. `export_package()` writes `model.cdi3.json`
+unresolved imported target can be saved for repair; strict CDI export reports
+unresolved parameter references with `SdkFailure.field_path`. Imported labels
+for absent Parts are preserved by runtime ID. `export_package()` writes `model.cdi3.json`
 and references it from `model.model3.json`.
 
 `Edit.create_expression(id, name, entries, fade_in=None, fade_out=None)` creates
@@ -178,7 +179,8 @@ assets and strict exp3 output. Unknown JSON fields are retained in the project;
 the exporter blocks content edits or a changed parameter runtime namespace
 while they exist. Reimporting establishes a new baseline for unknown fields.
 Package export writes registered expressions to `expressions/*.exp3.json` and
-references them from `model.model3.json`.
+references them from `model.model3.json`. Export filenames use safe readable
+asset names; case-insensitive collisions receive a short ID suffix.
 `Session.expression_preview()` captures a detached Expression stage.
 `ExpressionPreview.schedule_expression(id, time)` records activations;
 `advance(dt)` and `seek(time)` return `ExpressionSnapshot` with UUID keyed
@@ -198,6 +200,9 @@ current shape. `Edit.replace_motion()` replaces that detached record.
 `Session.motion_ids()`, `motion_groups()`, and `export_motion3(id)` read the
 assets and registration. `Edit.set_motion_groups(groups)` sets ordered model3
 registrations, including per-entry fade and Sound references.
+Imported Motion names default to the source file stem, so package export can
+retain names such as `mtn_01.motion3.json`. Imported virtual tracks retain
+their runtime IDs on export and appear in preview coverage diagnostics.
 
 `Edit.create_pose(id, groups, fade_in=None)` takes ordered groups of
 `(part_uuid, linked_part_uuids)` pairs. `replace_pose()` accepts a detached
@@ -230,6 +235,168 @@ gaps; ordinary Parameter curves work.
 for remaining replay work after cache restoration (exact hits report `(0, 0)`);
 return `False` to cancel with `SEEK_CANCELLED` while retaining the preceding
 preview state. Exceptions from the callback also leave the state unchanged.
+
+
+
+### Motion timeline records and indices
+
+The following records use project UUIDs, seconds and domain field names, not
+motion3 wire-format arrays. Parameter and Part references must exist in the
+same document. Use `Session.motion(id)` as the starting point for full-clip
+replacement; it returns `None` for an unknown UUID.
+
+```python
+point = {"time": 1.0, "value": 0.5}
+segment = {"kind": "linear", "end": point}
+track = {
+    "id": track_uuid,
+    "target": {"kind": "parameter", "parameter_id": parameter_uuid},
+    "initial": {"time": 0.0, "value": 0.0},
+    "segments": [segment],
+    "fade_in": None, "fade_out": None, "extensions": {},
+}
+event = {"id": event_uuid, "time": 0.5, "value": "cue", "extensions": {}}
+groups = [{"name": "Idle", "entries": [{
+    "clip_id": motion_uuid, "fade_in": None, "fade_out": None,
+    "sound": None, "extensions": {},
+}]}]
+```
+
+Segment `kind` is `linear`, `stepped`, `inverse_stepped` or `bezier`.
+Every segment has an `end` point; Bezier additionally has `control1` and
+`control2` points of the same `{time, value}` shape. Points must be finite,
+endpoints must increase in time, and the resulting curve must satisfy clip
+bounds and Bezier validation. Times are not automatically sorted or rescaled.
+Track targets are `{"kind": "parameter", "parameter_id": UUID}`,
+`{"kind": "part_opacity", "part_id": UUID}`, or
+`{"kind": "model", "runtime_id": str}`. Imports may retain
+`{"kind": "unresolved", "category": str, "runtime_id": str}` for repair;
+motion3 export preserves their runtime IDs. Preview skips their curves and
+reports them in snapshot coverage.
+
+| `Edit` operation | Index and mutation rules |
+| --- | --- |
+| `create_motion_track(motion_id, track)` | Append a track; duplicate track UUIDs fail. |
+| `replace_motion_track(motion_id, track)` | Replace the track matching `track["id"]` in place; it must exist. |
+| `set_motion_segment(motion_id, track_id, index, segment)` | Replace zero-based `segments[index]`; valid range is `0 <= index < len(segments)`. |
+| `insert_motion_segment(motion_id, track_id, index, segment)` | Insert before index; `index == len(segments)` appends. |
+| `move_motion_key(motion_id, track_id, index, time, value)` | Key 0 is `initial`; keys 1 through segment count are endpoints of `segments[index - 1]`. Bezier controls do not move. |
+| `set_motion_event(motion_id, event)` | Replace the event matching its UUID in place, or append a new event. Event time must be within `[0, duration]`. |
+| `remove_motion_track(motion_id, track_id)` | Remove the track and all its points; absence is an error. |
+| `remove_motion_event(motion_id, event_id)` | Remove the event; absence is an error. |
+| `set_motion_timing(motion_id, duration, fps, looping, fade_in=None, fade_out=None)` | Replace timing metadata. Duration/FPS must be positive and finite; fades are `None` or finite nonnegative seconds. `None` clears a fade override. Existing curves/events must remain valid. |
+
+All timeline helpers validate the complete result. Typical `SdkFailure.code`
+values are `MISSING_MOTION`, `MISSING_MOTION_TRACK`, `MISSING_MOTION_SEGMENT`,
+`MISSING_MOTION_EVENT`, `DUPLICATE_ID`, `INVALID_MOTION_POINT`,
+`INVALID_MOTION_BEZIER`, `INVALID_MOTION_EVENT_TIME`, `INVALID_MOTION_DURATION`,
+`INVALID_MOTION_FPS`, and `INVALID_MOTION_FADE`. SDK errors abort the current
+edit, so earlier mutations in that transaction are not committed. Timeline
+helpers reject unknown imported extensions with `OPAQUE_EDIT_REQUIRES_IMPORT`;
+reimport to establish a new baseline. Indices must fit a native unsigned integer;
+Python conversion can raise `OverflowError` or `TypeError` before SDK validation.
+
+### Preview state, time and errors
+
+All three preview types capture the document when created. `document_revision`
+is that captured revision, not the current session revision. Recreate a preview
+after authoring edits. Python snapshots/mappings/lists are detached copies;
+Rust snapshot accessors borrow state. IDs in parameter/Part maps are UUIDs.
+
+| API | State semantics |
+| --- | --- |
+| Expression/Motion `snapshot()` | Read current values without advancing time; Motion events are from the last update. |
+| Expression/Motion `set_base_parameter(parameter_id, value)` | Clamp a finite value to the parameter range, store as baseline and reset playback. Retain schedules; Motion clears checkpoints/statistics. |
+| Expression/Motion `schedule_expression(expression_id, time)` | Schedule at absolute seconds, no earlier than current time. Ties preserve call order; activation begins on the first due update. |
+| Motion `schedule_motion(motion_id, time)` | Same time rules; uses clip/curve fades. For registration overrides use `schedule_motion_entry`. |
+| Motion `schedule_parameter_input(parameter_id, time, value)` | Clamp a finite value and schedule an override before Motion on the first due update; retain it across reset/seek. |
+| Expression/Motion `reset()` | Restore time zero and initial state from the baseline while retaining schedules. Time-zero activations need `advance(0)` or `seek(0)` to evaluate. Motion also clears cache/statistics. |
+| Expression/Motion `advance(dt)` | Finite nonnegative seconds; zero evaluates due activations. Returns a snapshot. |
+| Expression/Motion `seek(time)` | Absolute seconds, 60 Hz replay with a partial final step. Seeking zero evaluates one zero-length step. Expression replays from baseline; Motion may restore a canonical checkpoint. |
+| Physics `parameters()` / `diagnostics()` | Current values / coverage messages from the last advance, without evaluation. |
+| Physics `set_parameter(parameter_id, value)` | Clamp a finite value without resetting particles; this is a temporary input, not a persistent baseline. |
+| Physics `advance(dt)` | Finite nonnegative seconds; uses the asset FPS if present, otherwise the supplied delta. Refreshes diagnostics and returns parameter values. |
+| Physics `stabilize()` / Motion `stabilize_physics()` | Initialize physics particles/outputs using current values without advancing time or running other stages. Does not seed seek checkpoints or refresh diagnostics. |
+| Physics `reset()` | Restore document-default values and initial particles/caches; discard temporary inputs and clear diagnostics. |
+
+Scheduling errors include `INVALID_TIME` (nonfinite/negative time),
+`PAST_ACTIVATION`, `MISSING_EXPRESSION`/`MISSING_MOTION`, and
+`UNRESOLVED_PARAMETER` for expressions. Motion skips unresolved imported tracks
+and reports coverage instead of rejecting scheduling. Baseline edits reject missing
+UUIDs or nonfinite values with `EVALUATION_FAILED`. Physics/input setters use
+`INVALID_TIME` for nonfinite values and `EVALUATION_FAILED` for missing UUIDs.
+Invalid advance deltas or Expression/Motion clock overflow use `INVALID_TIME`.
+Seek rejects `time * 60 > 1_000_000` with `SEEK_LIMIT` even if the cache is warm.
+These rejected inputs do not alter preview state. Motion event expansion above
+one million is rejected with `EVENT_LIMIT` before mutation.
+
+`ExpressionSnapshot` contains `time` (seconds), `parameters` (UUID → value) and
+`active_expressions` (queue-order UUIDs, including fading-out entries).
+`MotionSnapshot` additionally contains `part_opacity_channels` (virtual Part
+controls), `part_opacities` (Pose results), `model_opacity`, `active_motions`,
+`fired_events` (`(motion_uuid, event_uuid, text)` tuples) and `coverage` messages.
+Repeated activations may repeat an asset UUID in the active lists. Seek returns
+events from its final replay step, not all traversed steps; events do not trigger
+audio or other side effects. `frame()` includes ancestor Part opacity for Motion;
+model opacity remains a separate snapshot channel. Geometry failures raise
+`EVALUATION_FAILED`. Standalone Physics has no geometry/frame or seek API.
+
+### Motion registration and seek caching
+
+```python
+preview = model.motion_preview()
+preview.schedule_motion_entry("Idle", 0, 0.0)  # zero-based model3 group entry
+preview.set_seek_cache_budget(16 * 1024 * 1024)  # default; 0 disables caching
+preview.seek(60.0)
+preview.seek(61.0)
+print(preview.seek_cache_stats())  # 60 replay steps if the 60s checkpoint fits
+preview.clear_seek_cache()
+```
+
+Registration fades override clip fades per activation; explicit track fades retain
+precedence. Missing groups/indices raise `MISSING_MOTION_ENTRY`. Sound metadata is
+not played. Canonical 60 Hz replay saves complete Motion/Expression/Physics/Pose
+checkpoints every second. The budget conservatively estimates retained state,
+excluding shared documents and temporary seek state. Oversized checkpoints are
+skipped; older checkpoints are evicted first. Schedule edits, base edits and reset
+clear the cache. Arbitrary advance/stabilization never seed it.
+`SeekCacheStats` exposes `budget_bytes`, `estimated_bytes`, `checkpoints`,
+`last_restored_time`, and `last_replayed_steps`. Progress callbacks count remaining
+replay work; exact hits call `(0, 0)`. Returning false or raising an exception leaves
+both playback and cache unchanged. Standalone Expression preview still replays
+from its initial state.
+
+
+| API | Contract |
+| --- | --- |
+| `schedule_motion_entry(group: str, index: int, time: float) -> None` | Exact group name, nonnegative zero-based index, absolute time in seconds. Time must be finite, nonnegative and no earlier than the current preview time. Success clears checkpoints/statistics without resetting playback. |
+| `set_seek_cache_budget(size_bytes: int) -> None` | Nonnegative byte budget, default 16 MiB; zero disables caching. Every call clears checkpoints/statistics, including calls with the same budget. Preserves playback and schedules. |
+| `clear_seek_cache() -> None` | Discards checkpoints and zeros statistics while retaining the configured budget, current playback, baseline values and schedules. |
+| `seek_cache_stats() -> SeekCacheStats` | Returns an immutable snapshot without changing playback or the cache. |
+
+Registration scheduling raises `SdkFailure` with `MISSING_MOTION_ENTRY` for an
+unknown group/index, `INVALID_TIME` for nonfinite/negative time, `PAST_ACTIVATION`
+for past time. Unresolved imported tracks are skipped and reported in coverage. Failure
+preserves playback, schedules and cache. Registration fades fall back to clip
+fades and then one second when absent. Each activation retains its own settings.
+Parameter-curve fade overrides retain precedence. Negative or oversized Python
+indices/budgets raise `OverflowError` when converted to a native unsigned integer;
+non-integer arguments raise `TypeError`, without modifying state.
+
+| `SeekCacheStats` field | Meaning |
+| --- | --- |
+| `budget_bytes: int` | Configured retained-memory budget in bytes; zero disables caching. |
+| `estimated_bytes: int` | Conservative retained allocation estimate in bytes, at most the budget; excludes shared document/curve data and temporary seek state. |
+| `checkpoints: int` | Number of retained complete playback checkpoints. |
+| `last_restored_time: float` | Last restored checkpoint time in seconds; zero means replay started from the initial state. |
+| `last_replayed_steps: int` | Actual steps in the last successful seek, including a partial tail; zero for an exact cache hit, one for an uncached seek to time zero. |
+
+Clearing/invalidation zeros all statistics except `budget_bytes`; failed or
+cancelled seeks preserve them. `advance()` and stabilization do not update the
+last-seek statistics. Rust SDK reexports the same `MotionPreview` methods and
+`SeekCacheStats`; indices/budgets use `usize`, times use `f32`, replay-step counts
+use `u32`, and registration errors use `AnimationError` variants.
+
 
 `Session.model3_settings()` exposes Groups, Layout, HitAreas, UserData, and
 unknown model3 fields. Groups use `{"name": "EyeBlink", "parameters":
@@ -324,29 +491,3 @@ Groups/HitAreas to stable UUIDs using their saved namespace. Older readers must
 reject v6. Python callers that passed capitalized wire-style Groups/HitAreas to
 `set_model3_settings()` must use the typed records shown above; model3 package
 import/export still uses the standard Live2D wire format.
-
-
-Motion registration and seek caching:
-
-```python
-preview = model.motion_preview()
-preview.schedule_motion_entry("Idle", 0, 0.0)  # zero-based model3 group entry
-preview.set_seek_cache_budget(16 * 1024 * 1024)  # default; 0 disables caching
-preview.seek(60.0)
-preview.seek(61.0)
-assert preview.seek_cache_stats().last_replayed_steps == 60
-preview.clear_seek_cache()
-```
-
-Registration fades override clip fades per activation; explicit track fades retain
-precedence. Missing groups/indices raise `MISSING_MOTION_ENTRY`. Sound metadata is
-not played. Canonical 60 Hz replay saves complete Motion/Expression/Physics/Pose
-checkpoints every second. The budget conservatively estimates retained state,
-excluding shared documents and temporary seek state. Oversized checkpoints are
-skipped; older checkpoints are evicted first. Schedule edits, base edits and reset
-clear the cache. Arbitrary advance/stabilization never seed it.
-`SeekCacheStats` exposes `budget_bytes`, `estimated_bytes`, `checkpoints`,
-`last_restored_time`, and `last_replayed_steps`. Progress callbacks count remaining
-replay work; exact hits call `(0, 0)`. Returning false or raising an exception leaves
-both playback and cache unchanged. Standalone Expression preview still replays
-from its initial state.

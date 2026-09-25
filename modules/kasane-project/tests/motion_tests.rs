@@ -59,16 +59,13 @@ fn motion_import_roundtrips_segments_events_and_v5_project() {
 }
 
 #[test]
-fn unresolved_and_opaque_motion_targets_block_export() {
+fn virtual_motion_targets_roundtrip_and_opaque_namespace_changes_block_export() {
     let source = include_str!("../../../tests/fixtures/animation_cpu/minimal.motion3.json");
     let imported = import_motion3(&document(), MOTION, "Mixed", source).unwrap();
     assert_eq!(imported.diagnostics.len(), 2);
-    assert_eq!(
-        export_motion3(&imported.candidate, MOTION)
-            .unwrap_err()
-            .code,
-        "UNRESOLVED_TARGET"
-    );
+    let exported: Value =
+        serde_json::from_str(&export_motion3(&imported.candidate, MOTION).unwrap()).unwrap();
+    assert_eq!(exported["Curves"][2]["Id"], "Part0");
 
     let source = r#"{"Version":3,"Meta":{"Duration":1,"Fps":30,"Loop":false,"AreBeziersRestricted":true,"CurveCount":1,"TotalSegmentCount":1,"TotalPointCount":2,"UserDataCount":0,"TotalUserDataSize":0},"Curves":[{"Target":"Parameter","Id":"ParamX","Segments":[0,0,0,1,1]}],"Future":{"Label":"保留"}}"#;
     let mut candidate = import_motion3(&document(), MOTION, "Idle", source)
@@ -104,7 +101,7 @@ fn motion_group_registration_is_separate_and_roundtrips() {
                 entries: vec![registration.clone()]
             },
             MotionGroup {
-                name: "TapBody".into(),
+                name: "".into(),
                 entries: vec![registration]
             },
         ])
@@ -113,6 +110,7 @@ fn motion_group_registration_is_separate_and_roundtrips() {
     let reopened = decode_project(&encode_project(&candidate).unwrap()).unwrap();
     assert_eq!(reopened.motion_order().len(), 1);
     assert_eq!(reopened.motion_groups().len(), 2);
+    assert_eq!(reopened.motion_groups()[1].name, "");
     assert_eq!(reopened.motion_groups()[1].entries[0].fade_out, Some(0.25));
     assert!(reopened.validate_structure().is_empty());
 }
@@ -194,6 +192,7 @@ fn model3_motion_package_preserves_shared_file_registrations_and_atomic_import()
     let relative = model3["FileReferences"]["Motions"]["Idle"][0]["File"]
         .as_str()
         .unwrap();
+    assert_eq!(relative, "motions/Idle.motion3.json");
     let mut reopened = DocumentSession::new();
     let (result, _) = reopened.import_model3(&package.join("model.model3.json"));
     assert!(result.status.is_ok(), "{result:?}");

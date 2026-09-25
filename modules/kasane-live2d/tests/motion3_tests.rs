@@ -50,3 +50,14 @@ fn rejects_broken_segment_and_preserves_small_decimal_without_exponent() {
         0.00000001
     );
 }
+
+#[test]
+fn accepts_editor_rounded_duration_with_last_point_within_half_frame() {
+    let rounded = TYPED.replace("\"Duration\":1", "\"Duration\":0.997");
+    assert!(decode_motion3(&rounded).is_ok());
+    let too_short = TYPED.replace("\"Duration\":1", "\"Duration\":0.95");
+    assert_eq!(
+        decode_motion3(&too_short).unwrap_err().code,
+        "CURVE_EXCEEDS_DURATION"
+    );
+}

@@ -32,7 +32,7 @@ fn model3_groups_layout_and_hit_areas_survive_project_and_package() {
     model3["Groups"] =
         serde_json::json!([{"Target":"Parameter","Name":"EyeBlink","Ids":["ParamX"]}]);
     model3["Layout"] = serde_json::json!({"CenterX":0.0,"Width":2.0});
-    model3["HitAreas"] = serde_json::json!([{"Id":"Mesh0","Name":"Head"}]);
+    model3["HitAreas"] = serde_json::json!([{"Id":"Mesh0","Name":""}]);
     std::fs::write(
         temporary.join("model.model3.json"),
         serde_json::to_vec_pretty(&model3).unwrap(),
@@ -54,7 +54,7 @@ fn model3_groups_layout_and_hit_areas_survive_project_and_package() {
         .clone();
     let mut settings = session.document().model3_settings().clone();
     settings.hit_areas = Some(vec![kasane_core::document::ModelHitArea {
-        name: "Head".into(),
+        name: "".into(),
         mesh: kasane_core::document::ModelTargetRef::Resolved {
             object_id: session.document().mesh_order()[0].clone(),
         },
@@ -78,7 +78,7 @@ fn model3_groups_layout_and_hit_areas_survive_project_and_package() {
     assert_eq!(output["Layout"], model3["Layout"]);
     assert_eq!(
         output["HitAreas"],
-        serde_json::json!([{"Id": mesh_runtime, "Name": "Head"}])
+        serde_json::json!([{"Id": mesh_runtime, "Name": ""}])
     );
     let mut invalid = output;
     invalid["FileReferences"]["Physics"] = "../outside.physics3.json".into();

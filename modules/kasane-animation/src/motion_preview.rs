@@ -10,28 +10,42 @@ use crate::pose::PoseRuntime;
 use crate::seek_cache::{Checkpoint, SeekCache};
 use crate::{AnimationError, CompiledCurve, SeekCacheStats};
 
+/// A motion event crossed during the last update, returned without side effects.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionEventFired {
+    /// Source clip UUID.
     pub motion_id: String,
+    /// Source event UUID.
     pub event_id: String,
+    /// User-authored event text.
     pub value: String,
 }
 
+/// Combined values after Motion, Expression, Physics and Pose evaluation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct MotionSnapshot {
+    /// Absolute preview time in seconds.
     pub time: f32,
+    /// Final parameter values keyed by parameter UUID.
     pub parameters: BTreeMap<String, f32>,
     /// PartOpacity curves write virtual controls when no real parameter has the Part runtime ID.
     pub part_opacity_channels: BTreeMap<String, f32>,
+    /// Pose-produced opacities keyed by Part UUID.
     pub part_opacities: BTreeMap<String, f32>,
+    /// Model Opacity channel, separate from the drawable geometry opacity.
     pub model_opacity: f32,
+    /// Active clip UUIDs in queue order; repeated activations may repeat a UUID.
     pub active_motions: Vec<String>,
+    /// Active expression UUIDs in queue order, including fading-out entries.
     pub active_expressions: Vec<String>,
+    /// Events crossed by the last update, not accumulated across all seek steps.
     pub fired_events: Vec<MotionEventFired>,
     /// Model EyeBlink/LipSync mappings and unsupported Model IDs are reported.
     pub coverage: Vec<String>,
 }
 
+/// Detached combined preview with immutable assets and bounded canonical seek checkpoints.
+/// Create a new preview after authoring edits; playback never edits the source document.
 pub struct MotionPreview {
     document: Arc<Document>,
     curves: Arc<BTreeMap<String, CompiledCurve>>,
@@ -46,6 +60,7 @@ pub struct MotionPreview {
 }
 
 impl MotionPreview {
+    /// Capture an independent document snapshot at time zero. Later document edits are not observed.
     pub fn new(document: &Document) -> Self {
         let curves = document
             .motion_order()
@@ -96,22 +111,34 @@ impl MotionPreview {
             pose,
         }
     }
+    /// Return the captured document revision, not the current authoring-session revision.
     pub fn document_revision(&self) -> u64 {
         self.document.revision()
     }
+    /// Associate the preview with an observer session and generation.
+    /// This metadata does not change playback, schedules or cached checkpoints.
     pub fn bind_session_identity(&mut self, session_id: u64, generation: u64) {
         self.source_identity = Some((session_id, generation));
     }
+    /// Return the observer session/generation, or `None` for an unbound preview.
     pub fn source_identity(&self) -> Option<(u64, u64)> {
         self.source_identity
     }
+    /// Return the captured document UUID.
     pub fn document_id(&self) -> &str {
         self.document.id()
     }
+    /// Borrow the current snapshot without advancing playback.
     pub fn snapshot(&self) -> &MotionSnapshot {
         &self.snapshot
     }
 
+    /// Schedule a clip UUID using clip fades (no model3 registration overrides).
+    /// Time is finite, nonnegative absolute seconds and cannot precede current time.
+    /// Equal-time calls retain order; activation starts on the first update at or after time.
+    /// Returns `InvalidTime`, `PastActivation` or `MissingMotion` on invalid input.
+    /// Unresolved imported tracks are skipped and reported in snapshot coverage.
+    /// Success clears seek checkpoints/statistics; failure changes nothing.
     pub fn schedule_motion(&mut self, id: &str, time: f32) -> Result<(), AnimationError> {
         self.motion
             .schedule_motion(&self.document, self.snapshot.time, id, time, (None, None))?;
@@ -119,8 +146,20 @@ impl MotionPreview {
         Ok(())
     }
 
-    /// Schedule a model3 group entry, applying registration fade overrides.
-    /// Curve fades retain precedence. Sound metadata is not played by this CPU preview.
+    /// Schedule a model3 group entry at an absolute preview time in seconds.
+    ///
+    /// `group` is an exact group name and `index` is zero-based. Parameter-curve
+    /// fades override registration fades, which override clip fades (default:
+    /// one second). Each activation retains its own fades. Sound is not played.
+    /// Success clears seek checkpoints and statistics without resetting playback.
+    ///
+    /// # Errors
+    /// Returns [`AnimationError::MissingMotionEntry`] for an unknown group/index,
+    /// [`AnimationError::InvalidTime`] for nonfinite or negative time,
+    /// or [`AnimationError::PastActivation`] for time before the current preview.
+    /// Unresolved MOC targets remain in the clip and are reported as coverage
+    /// diagnostics when sampled, since Cubism permits virtual parameters.
+    /// Failure leaves playback, schedules and the cache unchanged.
     pub fn schedule_motion_entry(
         &mut self,
         group: &str,
@@ -148,13 +187,23 @@ impl MotionPreview {
         Ok(())
     }
 
-    /// Retained checkpoint budget; zero disables caching. Changing it clears the cache.
+    /// Set the retained checkpoint budget in bytes (default: 16 MiB).
+    ///
+    /// Every call clears checkpoints and seek statistics, even if the budget is
+    /// unchanged; zero disables caching. Playback and schedules are preserved.
+    /// The budget uses conservative allocation estimates, excluding shared
+    /// document/curve data and temporary transactional seek state. Oldest inserted
+    /// checkpoints are evicted first; a checkpoint larger than the budget is skipped.
     pub fn set_seek_cache_budget(&mut self, bytes: usize) {
         self.cache.set_budget(bytes);
     }
+    /// Discard all checkpoints and zero seek statistics, retaining the budget.
+    /// Playback, baseline values and schedules are unchanged.
     pub fn clear_seek_cache(&mut self) {
         self.cache.clear();
     }
+    /// Return a detached copy of cache usage and last successful seek statistics.
+    /// Reading statistics does not mutate playback or the cache.
     pub fn seek_cache_stats(&self) -> SeekCacheStats {
         self.cache.stats
     }
@@ -183,6 +232,11 @@ impl MotionPreview {
             + self.pose.heap_bytes()
     }
 
+    /// Schedule an expression UUID at an absolute time in seconds; equal-time calls retain order.
+    /// Activation starts on the first update at or after the scheduled time.
+    /// Returns `InvalidTime` for nonfinite/negative time, `PastActivation` for past time,
+    /// `MissingExpression` for an unknown UUID, or `UnresolvedParameter` for unresolved
+    /// targets. Failure preserves state; Motion preview clears its cache on success.
     pub fn schedule_expression(&mut self, id: &str, time: f32) -> Result<(), AnimationError> {
         self.expressions
             .schedule(&self.document, self.snapshot.time, id, time)?;
@@ -190,6 +244,9 @@ impl MotionPreview {
         Ok(())
     }
 
+    /// Set a parameter UUID baseline, clamp it to its range, then reset playback.
+    /// Retains schedules. Missing UUIDs/nonfinite values return [`AnimationError::Evaluation`]
+    /// without changing state. Motion preview also clears seek checkpoints/statistics.
     pub fn set_base_parameter(&mut self, id: &str, value: f32) -> Result<(), AnimationError> {
         let parameter = self
             .document
@@ -206,7 +263,12 @@ impl MotionPreview {
         Ok(())
     }
 
-    /// Schedule an editor override retained by reset and seek.
+    /// Schedule a parameter UUID override retained by reset and seek.
+    /// Time is absolute seconds, finite, nonnegative and no earlier than current time.
+    /// Equal-time inputs retain call order and apply before Motion on the first due update.
+    /// Values must be finite and are clamped to the parameter range. Invalid time/value
+    /// returns `InvalidTime`, past time `PastActivation`, and missing UUID `Evaluation`.
+    /// Success clears seek checkpoints/statistics; failure preserves state.
     pub fn schedule_parameter_input(
         &mut self,
         id: &str,
@@ -224,6 +286,9 @@ impl MotionPreview {
         Ok(())
     }
 
+    /// Restore time zero and initial Motion/Expression/Physics/Pose state from the baseline.
+    /// Retains activation/input schedules and cache budget; clears checkpoints/statistics
+    /// and fired events. Time-zero activations require `advance(0)` or `seek(0)`.
     pub fn reset(&mut self) {
         self.cache.clear();
         let mut parameters = self.base.clone();
@@ -246,6 +311,10 @@ impl MotionPreview {
         };
     }
 
+    /// Advance Motion → Expression → Physics → Pose by finite, nonnegative seconds.
+    /// Zero evaluates activations due now. Invalid delta/clock overflow returns
+    /// `InvalidTime`; an estimated event batch over one million returns `EventLimit`.
+    /// These failures preserve playback. Arbitrary advances do not populate seek checkpoints.
     pub fn advance(&mut self, dt: f32) -> Result<&MotionSnapshot, AnimationError> {
         if !dt.is_finite() || dt < 0.0 || !(self.snapshot.time + dt).is_finite() {
             return Err(AnimationError::InvalidTime);
@@ -276,18 +345,28 @@ impl MotionPreview {
         Ok(&self.snapshot)
     }
 
+    /// Initialize particles and physics outputs using current snapshot parameters.
+    /// Does not advance time or run Motion/Expression/Pose. Does not seed checkpoints;
+    /// subsequent seek still replays the original baseline and scheduled inputs.
     pub fn stabilize_physics(&mut self) {
         self.physics
             .stabilize(&self.document, &mut self.snapshot.parameters);
     }
 
+    /// Seek to absolute seconds using canonical checkpoints or the initial state.
+    /// Uses an absolute 60 Hz grid and a partial final step. Time zero evaluates a
+    /// zero-length step. Nonfinite/negative time returns `InvalidTime`; time * 60
+    /// above one million returns `SeekLimit`, even with cached state. Failure preserves
+    /// playback and cache. Returned events are data, with no playback side effects.
     pub fn seek(&mut self, time: f32) -> Result<&MotionSnapshot, AnimationError> {
         self.seek_with_progress(time, |_, _| true)
     }
 
     /// Replay from a canonical checkpoint, reporting remaining completed/total steps.
     /// An exact cache hit reports (0, 0).
-    /// Returning false cancels the seek without changing the current preview.
+    /// Returning false produces `SeekCancelled`, preserving playback and cache/statistics.
+    /// The initial callback runs before replay, followed by one per replay step.
+    /// Time constraints and other errors are the same as [`Self::seek`].
     pub fn seek_with_progress(
         &mut self,
         time: f32,
@@ -340,6 +419,9 @@ impl MotionPreview {
         Ok(&self.snapshot)
     }
 
+    /// Evaluate geometry and multiply each drawable by its ancestor Part opacities.
+    /// Model opacity remains separate in [`MotionSnapshot::model_opacity`].
+    /// Does not advance playback. Returns [`AnimationError::Evaluation`] on failure.
     pub fn evaluate_drawables(&self) -> Result<DrawableFrame, AnimationError> {
         let values: PreviewValues = self
             .snapshot

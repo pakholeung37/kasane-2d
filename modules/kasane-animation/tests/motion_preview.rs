@@ -157,7 +157,7 @@ fn loop_v2_matches_official_framework_frames() {
 }
 
 #[test]
-fn event_cursor_and_unresolved_target_guard_are_explicit() {
+fn event_cursor_and_virtual_target_coverage_are_explicit() {
     let typed = include_str!("../../../tests/fixtures/animation_cpu/typed.motion3.json");
     let imported = import_motion3(&document(), MOTION, "Typed", typed).unwrap();
     let mut preview = MotionPreview::new(&imported.candidate);
@@ -175,9 +175,10 @@ fn event_cursor_and_unresolved_target_guard_are_explicit() {
     )
     .unwrap();
     let mut preview = MotionPreview::new(&imported.candidate);
-    assert!(preview
+    preview
         .schedule_motion("00000000-0000-4000-8000-000000000d04", 0.0)
-        .is_err());
+        .unwrap();
+    assert!(!preview.advance(0.5).unwrap().coverage.is_empty());
 }
 
 #[test]
