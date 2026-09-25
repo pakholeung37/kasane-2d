@@ -11,7 +11,7 @@ from ._native import ObjectHandle, SdkFailure, capabilities
 from ._edit import Edit
 from ._animation import ExpressionPreview, MotionPreview, PhysicsPreview
 from ._session import Session, open_project
-from ._observe import Observer, ObservationFailure
+from ._observe import CapturedScene, Observer, ObservationFailure, RenderedSceneView
 from .geometry import rectangle_grid_geometry
 from ._types import (
     Version,
@@ -170,6 +170,8 @@ for _public_type in (
     Edit,
     Session,
     Observer,
+    CapturedScene,
+    RenderedSceneView,
 ):
     _public_type.__module__ = __name__
 if ObservationFailure.__module__ == "kasane._observe":
@@ -234,6 +236,8 @@ __all__ = [
     "MeshKeyform",
     "ObjectHandle",
     "ObservationFailure",
+    "CapturedScene",
+    "RenderedSceneView",
     "ObservationRun",
     "ObservedFrame",
     "Observer",

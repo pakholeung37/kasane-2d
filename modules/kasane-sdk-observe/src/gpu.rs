@@ -14,7 +14,10 @@ use kasane_render_wgpu::{
 use kasane_sdk::Version;
 use sha2::{Digest, Sha256};
 
-use crate::{ObservationError, ObservationInput, ResolvedTexture};
+use crate::{
+    ObservationError, ObservationInput, RenderRequest, ResolvedObservation, ResolvedTexture,
+    ViewMapping,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ObserverConfig {
@@ -53,6 +56,9 @@ pub struct ObservedFrame {
     pub canvas: (f32, f32, f32, f32, f32),
     pub view_scale: f32,
     pub view_offset: (f32, f32),
+    /// Present only for an explicit ROI render. The legacy observe path keeps
+    /// its existing fitted-view fields and byte contract.
+    pub explicit_view: Option<ViewMapping>,
     pub drawable_bounds: Vec<DrawableBounds>,
     pub texture_revisions: Vec<TextureRevision>,
     pub adapter_name: String,
@@ -177,9 +183,9 @@ impl Observer {
         Ok(())
     }
 
-    fn upload_textures(&mut self, resolved: Vec<ResolvedTexture>) -> Result<(), ObservationError> {
+    fn upload_textures(&mut self, resolved: &[ResolvedTexture]) -> Result<(), ObservationError> {
         let limit = self.device.limits().max_texture_dimension_2d;
-        for texture in &resolved {
+        for texture in resolved {
             let width = texture.data.width;
             let height = texture.data.height;
             if width == 0 || height == 0 || width > limit || height > limit {
@@ -198,7 +204,7 @@ impl Observer {
             .collect();
         self.textures.retain(|id, _| required.contains(id.as_str()));
         for texture in resolved {
-            let id = texture.asset.id;
+            let id = texture.asset.id.clone();
             if self.textures.get(&id).is_some_and(|cached| {
                 cached.sha256 == texture.data.sha256
                     && cached.width == texture.data.width
@@ -244,7 +250,7 @@ impl Observer {
                     view,
                     width: texture.data.width,
                     height: texture.data.height,
-                    sha256: texture.data.sha256,
+                    sha256: texture.data.sha256.clone(),
                     revision,
                 },
             );
@@ -254,23 +260,86 @@ impl Observer {
 
     pub fn observe(&mut self, input: &ObservationInput) -> Result<ObservedFrame, ObservationError> {
         let resolved = input.resolve_textures()?;
+        self.render_resolved(input, &resolved, None)
+    }
+
+    /// Rerender a previously resolved scene at a source-canvas ROI without
+    /// reading the live session or source texture paths.
+    pub fn render(
+        &mut self,
+        captured: &ResolvedObservation,
+        request: RenderRequest,
+    ) -> Result<ObservedFrame, ObservationError> {
+        self.render_resolved(captured.input(), captured.textures(), Some(request))
+    }
+
+    fn render_resolved(
+        &mut self,
+        input: &ObservationInput,
+        resolved: &[ResolvedTexture],
+        request: Option<RenderRequest>,
+    ) -> Result<ObservedFrame, ObservationError> {
+        let explicit_view = request.map(RenderRequest::mapping).transpose()?;
+        let (width, height) = request.map_or((self.config.width, self.config.height), |view| {
+            (view.width, view.height)
+        });
+        let limit = self.device.limits().max_texture_dimension_2d;
+        if width > limit || height > limit || request.is_some_and(|_| width > 4096 || height > 4096)
+        {
+            return Err(error(
+                "OUTPUT_SIZE_LIMIT",
+                format!("Output size exceeds the inspection or device limit {limit}x{limit}"),
+            ));
+        }
         let mut digest = Sha256::new();
         {
             let mut digest_writer = DigestWriter(&mut digest);
-            write!(
-                digest_writer,
-                "kasane-observation-input-v1:{:?}:{:?}:{:?}",
-                input.frame,
-                resolved
-                    .iter()
-                    .map(|texture| (&texture.asset.id, &texture.data.sha256))
-                    .collect::<Vec<_>>(),
-                self.config,
-            )
-            .expect("digest writer is infallible");
+            let texture_hashes = resolved
+                .iter()
+                .map(|texture| (&texture.asset.id, &texture.data.sha256))
+                .collect::<Vec<_>>();
+            if request.is_some() {
+                write!(
+                    digest_writer,
+                    "kasane-observation-explicit-v1:{:?}:{:?}",
+                    input.frame, texture_hashes,
+                )
+                .expect("digest writer is infallible");
+            } else {
+                write!(
+                    digest_writer,
+                    "kasane-observation-input-v1:{:?}:{:?}:{:?}",
+                    input.frame, texture_hashes, self.config,
+                )
+                .expect("digest writer is infallible");
+            }
+        }
+        if let Some(request) = request {
+            digest.update(b"explicit-roi-v1");
+            digest.update(request.width.to_le_bytes());
+            digest.update(request.height.to_le_bytes());
+            for value in [
+                request.roi.x0,
+                request.roi.y0,
+                request.roi.x1,
+                request.roi.y1,
+                request.padding_canvas,
+            ] {
+                digest.update(value.to_bits().to_le_bytes());
+            }
         }
         let input_sha256 = format!("{:x}", digest.finalize());
         self.upload_textures(resolved)?;
+        self.renderer
+            .resize(
+                &self.device,
+                WgpuTargetConfig {
+                    width,
+                    height,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
+            )
+            .map_err(|status| error(&status.code, status.message))?;
         let mut catalog = WgpuTextureCatalog::new(
             self.textures
                 .iter()
@@ -294,9 +363,16 @@ impl Observer {
             .sync_model(&self.device, &input.frame, &catalog)
             .map_err(status)?;
         let canvas = input.frame.canvas;
-        let scale = self.config.fit_long_side / canvas.width.max(canvas.height);
-        let offset_x = (self.config.width as f32 - canvas.width * scale) * 0.5;
-        let offset_y = (self.config.height as f32 - canvas.height * scale) * 0.5;
+        let (scale, offset_x, offset_y) = if let Some(view) = explicit_view {
+            (view.scale, view.offset.0, view.offset.1)
+        } else {
+            let scale = self.config.fit_long_side / canvas.width.max(canvas.height);
+            (
+                scale,
+                (width as f32 - canvas.width * scale) * 0.5,
+                (height as f32 - canvas.height * scale) * 0.5,
+            )
+        };
         let drawable_bounds = input
             .frame
             .drawables
@@ -318,10 +394,10 @@ impl Observer {
                         max_x = max_x.max(x);
                         max_y = max_y.max(y);
                     }
-                    let x0 = (min_x.floor() - 2.0).clamp(0.0, self.config.width as f32) as u32;
-                    let y0 = (min_y.floor() - 2.0).clamp(0.0, self.config.height as f32) as u32;
-                    let x1 = (max_x.ceil() + 2.0).clamp(0.0, self.config.width as f32) as u32;
-                    let y1 = (max_y.ceil() + 2.0).clamp(0.0, self.config.height as f32) as u32;
+                    let x0 = (min_x.floor() - 2.0).clamp(0.0, width as f32) as u32;
+                    let y0 = (min_y.floor() - 2.0).clamp(0.0, height as f32) as u32;
+                    let x1 = (max_x.ceil() + 2.0).clamp(0.0, width as f32) as u32;
+                    let y1 = (max_y.ceil() + 2.0).clamp(0.0, height as f32) as u32;
                     (x1 > x0 && y1 > y0).then_some((x0, y0, x1, y1))
                 } else {
                     None
@@ -339,7 +415,7 @@ impl Observer {
                 b: Vec2::new(0.0, scale),
                 origin: Vec2::new(offset_x, offset_y),
             },
-            target_extent: Vec2::new(self.config.width as f32, self.config.height as f32),
+            target_extent: Vec2::new(width as f32, height as f32),
             mask_scale: scale as f64,
         };
         self.renderer
@@ -348,8 +424,8 @@ impl Observer {
         let output = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("sdk-observe.output"),
             size: wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -378,12 +454,12 @@ impl Observer {
             )
             .map_err(status)?;
         self.queue.submit([encoder.finish()]);
-        let unpadded_row = self.config.width * 4;
+        let unpadded_row = width * 4;
         let padded_row = unpadded_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
             * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("sdk-observe.readback"),
-            size: u64::from(padded_row) * u64::from(self.config.height),
+            size: u64::from(padded_row) * u64::from(height),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -399,12 +475,12 @@ impl Observer {
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_row),
-                    rows_per_image: Some(self.config.height),
+                    rows_per_image: Some(height),
                 },
             },
             wgpu::Extent3d {
-                width: self.config.width,
-                height: self.config.height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
         );
@@ -424,7 +500,7 @@ impl Observer {
             .map_err(|failure| error("GPU_READBACK", failure.to_string()))?
             .map_err(|failure| error("GPU_READBACK", failure.to_string()))?;
         let mapped = readback.get_mapped_range(..);
-        let mut rgba = Vec::with_capacity((unpadded_row as usize) * (self.config.height as usize));
+        let mut rgba = Vec::with_capacity((unpadded_row as usize) * (height as usize));
         for row in mapped.chunks_exact(padded_row as usize) {
             rgba.extend_from_slice(&row[..unpadded_row as usize]);
         }
@@ -442,8 +518,8 @@ impl Observer {
         texture_revisions.sort_by(|a, b| a.asset_id.cmp(&b.asset_id));
         Ok(ObservedFrame {
             input_sha256,
-            width: self.config.width,
-            height: self.config.height,
+            width,
+            height,
             rgba,
             version: input.version,
             evaluation_revision: input.evaluation_revision,
@@ -471,6 +547,7 @@ impl Observer {
             ),
             view_scale: scale,
             view_offset: (offset_x, offset_y),
+            explicit_view,
             drawable_bounds,
             texture_revisions,
             adapter_name: self.adapter_name.clone(),

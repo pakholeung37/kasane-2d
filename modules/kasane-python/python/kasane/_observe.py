@@ -1,6 +1,7 @@
 """GPU observation and reproducible observation-run reports."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
 from importlib.metadata import version as package_version
 import json
@@ -12,12 +13,14 @@ from typing import Mapping, Sequence
 from uuid import UUID, uuid4
 import zlib
 from . import _native as _native_module
+from ._animation import MotionPreview
 from ._session import Session
 
 try:
-    from ._native import NativeObserver, ObservationFailure
+    from ._native import NativeCapturedScene, NativeObserver, ObservationFailure
 except ImportError:
     NativeObserver = None
+    NativeCapturedScene = None
 
     class ObservationFailure(Exception):
         """Raised only by wheels built with the observe feature."""
@@ -60,15 +63,49 @@ class Observer:
         RGBA bytes, PNG bytes, bounds, version, texture hashes, and adapter data.
         """
         raw = self._native.observe(session._native, session._parameter_values(values or {}))
-        metadata, width, height, rgba, png, textures, adapter_name, backend = raw
-        version, input_sha256, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
-        return ObservedFrame(
-            version, input_sha256, evaluation_revision, document_id, source_revision,
-            [ParameterSample(*item) for item in parameters], CanvasSnapshot(*canvas),
-            scale, offset, [DrawableBounds(*item) for item in bounds],
-            width, height, rgba, png,
-            [TextureRevision(*item) for item in textures], adapter_name, backend,
+        return _frame_from_native(raw)
+
+    def capture_scene(
+        self, session: Session, values: Mapping[str, float] | None = None,
+    ) -> CapturedScene:
+        """Freeze one evaluated scene and its decoded textures for later views."""
+        native = self._native.capture_scene(
+            session._native, session._parameter_values(values or {})
         )
+        return CapturedScene(native)
+
+    def capture_animation_scene(
+        self, session: Session, preview: MotionPreview, *,
+        apply_model_opacity: bool = False,
+    ) -> CapturedScene:
+        """Freeze the preview's actual Motion/Expression/Physics/Pose frame.
+
+        This does not advance or seek the preview. The scene includes its
+        current snapshot and Model opacity policy, but no past update journal.
+        """
+        native = self._native.capture_animation_scene(
+            session._native, preview._native, apply_model_opacity
+        )
+        return CapturedScene(native)
+
+    def open_scene(self, absolute_directory: Path) -> CapturedScene:
+        """Open a saved scene without consulting a live authoring session."""
+        if not absolute_directory.is_absolute():
+            raise ValueError("Scene directory must be absolute")
+        return CapturedScene(NativeCapturedScene.open_scene(str(absolute_directory)))
+
+    def render_scene(
+        self, scene: CapturedScene, *, roi: tuple[float, float, float, float],
+        resolution: tuple[int, int], padding_canvas: float = 0,
+    ) -> RenderedSceneView:
+        """Rerender a frozen scene at an explicit source-canvas ROI."""
+        raw, (requested, padded, visible) = scene._native.render(
+            self._native, resolution[0], resolution[1], roi, padding_canvas
+        )
+        return RenderedSceneView(
+            _frame_from_native(raw), requested, padded, visible,
+        )
+
 
     def observe_run(
         self, session: Session, samples: Sequence[Mapping[str, float]], output: Path,
@@ -190,6 +227,61 @@ class Observer:
             )
             report_path.write_text(json.dumps(report, indent=2, allow_nan=False), encoding="utf-8")
         return ObservationRun(directory, report_path, frames, crops, contact_sheet)
+
+
+def _frame_from_native(raw: tuple) -> ObservedFrame:
+    """Decode the legacy native tuple; the new view reuses its pixel record."""
+    metadata, width, height, rgba, png, textures, adapter_name, backend = raw
+    version, input_sha256, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
+    return ObservedFrame(
+        version, input_sha256, evaluation_revision, document_id, source_revision,
+        [ParameterSample(*item) for item in parameters], CanvasSnapshot(*canvas),
+        scale, offset, [DrawableBounds(*item) for item in bounds],
+        width, height, rgba, png,
+        [TextureRevision(*item) for item in textures], adapter_name, backend,
+    )
+
+
+class CapturedScene:
+    """Frozen evaluated scene and textures, independent of later session edits."""
+
+    def __init__(self, native: NativeCapturedScene) -> None:
+        self._native = native
+
+    @property
+    def source(self) -> dict:
+        """Captured parameter/animation source and available snapshot metadata."""
+        return json.loads(self._native.source_json())
+
+    @property
+    def authoring(self) -> dict:
+        """Frozen object names, topology, hierarchy and mesh binding records."""
+        return json.loads(self._native.authoring_json())
+
+    def save_scene(self, absolute_directory: Path) -> Path:
+        """Write a new data-only scene bundle and return its directory."""
+        if not absolute_directory.is_absolute():
+            raise ValueError("Scene directory must be absolute")
+        self._native.save_scene(str(absolute_directory))
+        return absolute_directory
+
+
+@dataclass(frozen=True)
+class RenderedSceneView:
+    """An explicit ROI render plus source-canvas/image coordinate mapping."""
+
+    frame: ObservedFrame
+    requested_roi: tuple[float, float, float, float]
+    padded_roi: tuple[float, float, float, float]
+    visible_roi: tuple[float, float, float, float]
+
+    def canvas_to_image(self, point: tuple[float, float]) -> tuple[float, float]:
+        scale, (ox, oy) = self.frame.view_scale, self.frame.view_offset
+        return point[0] * scale + ox, point[1] * scale + oy
+
+    def image_to_canvas(self, point: tuple[float, float]) -> tuple[float, float]:
+        scale, (ox, oy) = self.frame.view_scale, self.frame.view_offset
+        return (point[0] - ox) / scale, (point[1] - oy) / scale
 
 
 def _encode_rgba_png(width: int, height: int, rgba: bytes) -> bytes:

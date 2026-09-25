@@ -9,6 +9,7 @@ description = "Deterministic CPU animation state and scheduling for Kasane 2D"
 [dependencies]
 kasane-core = { path = "../kasane-core" }
 thiserror = { workspace = true }
+serde = { workspace = true }
 
 [dev-dependencies]
 kasane-project = { path = "../kasane-project" }

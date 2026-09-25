@@ -462,6 +462,39 @@ short `evaluate()` when only runtime positions are needed.
 | `frame.save_png(absolute_path)` | Write the PNG bytes to disk. |
 | `observer.set_fit_long_side(value)` | Change the view's fitted long side. |
 | `observer.observe_run(session, samples, output, focus=())` | Render one or more parameter maps into a unique child of absolute `output`; optionally crop visible drawable IDs. Return `ObservationRun`. |
+| `observer.capture_scene(session, values=None)` | Freeze one evaluated frame and all decoded texture bytes in `CapturedScene`; later edits and asset changes do not change it. |
+| `observer.capture_animation_scene(session, preview, apply_model_opacity=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; reject a stale preview. |
+| `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame` and requested/padded/visible ROI. |
+| `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
+| `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
+
+The capture/ROI methods are the first O1 slice of the visual inspection plan.
+They currently render the legacy raw transparent pixel policy. The planned
+`inspect` packet, labels, display backgrounds, query and comparison APIs are
+not yet provided by these methods. A saved scene contains an evaluated frame,
+not a resumable animation preview. `CapturedScene.source` reports
+`source_kind`, and for animation, current snapshot, host Model opacity policy
+and `history_status="not_recorded"`. Snapshot events cover only the most recent
+update, not a full interval journal. `CapturedScene.authoring` returns frozen
+mesh names/source topology, Parts, transforms and mesh bindings from the same
+document revision as the frame; it does not yet report evaluated interpolation
+weights.
+
+```python
+with kasane.Observer(256, 256, 256) as observer:
+    scene = observer.capture_scene(session, {"Shift": 0.25})
+    view = observer.render_scene(
+        scene, roi=(20, 20, 60, 60), resolution=(1024, 768),
+        padding_canvas=4,
+    )
+    scene.save_scene(Path("/absolute/path/to/new-scene"))
+    point_on_canvas = view.image_to_canvas((512.5, 384.5))
+    reopened = observer.open_scene(Path("/absolute/path/to/new-scene"))
+    assert observer.render_scene(
+        reopened, roi=(20, 20, 60, 60), resolution=(1024, 768),
+        padding_canvas=4,
+    ).frame.rgba == view.frame.rgba
+```
 
 `ObservationRun.directory` (also `output`) is the actual run directory;
 `report`, `frames`, `crops`, and `contact_sheet` are paths under it. A failed

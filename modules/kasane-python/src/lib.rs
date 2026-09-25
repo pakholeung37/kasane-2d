@@ -14,7 +14,7 @@ use edit::NativeEdit;
 use error::SdkFailure;
 use handle::NativeHandle;
 #[cfg(feature = "observe")]
-use observe::{NativeObserver, ObservationFailure};
+use observe::{NativeCapturedScene, NativeObserver, ObservationFailure};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use session::NativeSession;
@@ -59,6 +59,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
             module.py().get_type::<ObservationFailure>(),
         )?;
         module.add_class::<NativeObserver>()?;
+        module.add_class::<NativeCapturedScene>()?;
     }
     module.add_function(wrap_pyfunction!(capabilities, module)?)?;
     module.add_function(wrap_pyfunction!(geometry::rectangle_grid_geometry, module)?)?;

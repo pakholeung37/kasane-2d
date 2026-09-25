@@ -7,7 +7,7 @@ use crate::types::{BlendMode, Canvas, Status, Vec2};
 
 pub type PreviewValues = HashMap<String, f32>;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Drawable {
     pub id: String,
     pub runtime_id: String,
@@ -58,7 +58,7 @@ impl Default for Drawable {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct EvaluatedParameter {
     pub id: String,
     pub requested: f32,
@@ -73,7 +73,7 @@ pub enum RenderCommand {
     EndOffscreen { offscreen_id: String },
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct OffscreenFrame {
     pub id: String,
     pub runtime_id: String,
@@ -89,7 +89,7 @@ pub struct OffscreenFrame {
     pub screen_color: [f32; 4],
 }
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct DrawableFrame {
     /// Revision used to evaluate this immutable snapshot; later name edits may reuse it.
     pub source_revision: u64,

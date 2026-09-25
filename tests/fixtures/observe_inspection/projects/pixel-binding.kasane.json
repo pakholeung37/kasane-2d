@@ -1,0 +1,298 @@
+{
+  "format": "kasane-directory-project",
+  "format_version": 4,
+  "document": {
+    "id": "10000000-0000-4000-8000-000000000001",
+    "canvas": [
+      100.0,
+      100.0
+    ],
+    "canvas_origin": [
+      37.0,
+      62.0
+    ],
+    "pixels_per_unit": 7.5,
+    "canvas_flag": 1,
+    "assets": [
+      {
+        "id": "10000000-0000-4000-8000-00000000000b",
+        "name": "padding",
+        "source": "assets/99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7.png",
+        "width": 16,
+        "height": 16,
+        "sha256": "99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7"
+      },
+      {
+        "id": "10000000-0000-4000-8000-00000000000c",
+        "name": "one pixel line",
+        "source": "assets/ac95ca2be961d2bd036e1646f99b464913a905bbd1292bd8ea9b5bd280e67631.png",
+        "width": 32,
+        "height": 32,
+        "sha256": "ac95ca2be961d2bd036e1646f99b464913a905bbd1292bd8ea9b5bd280e67631"
+      }
+    ],
+    "meshes": [
+      {
+        "id": "10000000-0000-4000-8000-000000000015",
+        "runtime_id": "10000000-0000-4000-8000-000000000015",
+        "name": "same name",
+        "texture_asset_id": "10000000-0000-4000-8000-00000000000b",
+        "vertex_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "base_positions": [
+          [
+            20.0,
+            20.0
+          ],
+          [
+            60.0,
+            20.0
+          ],
+          [
+            60.0,
+            60.0
+          ],
+          [
+            20.0,
+            60.0
+          ]
+        ],
+        "uvs": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "triangles": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3
+        ],
+        "properties": {
+          "part_id": "",
+          "deformer_id": "",
+          "appearance": {
+            "opacity": 1.0,
+            "multiply": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "screen": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "blend_mode": 0,
+          "enabled": true,
+          "double_sided": true,
+          "inverted_mask": false,
+          "masks": []
+        }
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000016",
+        "runtime_id": "10000000-0000-4000-8000-000000000016",
+        "name": "same name",
+        "texture_asset_id": "10000000-0000-4000-8000-00000000000c",
+        "vertex_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "base_positions": [
+          [
+            62.0,
+            24.0
+          ],
+          [
+            82.0,
+            24.0
+          ],
+          [
+            82.0,
+            44.0
+          ],
+          [
+            62.0,
+            44.0
+          ]
+        ],
+        "uvs": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "triangles": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3
+        ],
+        "properties": {
+          "part_id": "",
+          "deformer_id": "",
+          "appearance": {
+            "opacity": 1.0,
+            "multiply": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "screen": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "blend_mode": 0,
+          "enabled": true,
+          "double_sided": true,
+          "inverted_mask": false,
+          "masks": []
+        }
+      }
+    ],
+    "parts": [],
+    "transforms": [],
+    "parameters": [
+      {
+        "id": "10000000-0000-4000-8000-00000000001f",
+        "runtime_id": "10000000-0000-4000-8000-00000000001f",
+        "name": "Shift",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "default_value": 0.0,
+        "decimal_places": 6,
+        "kind": "normal",
+        "repeat": false
+      }
+    ],
+    "bindings": [
+      {
+        "id": "10000000-0000-4000-8000-000000000029",
+        "mesh_id": "10000000-0000-4000-8000-000000000015",
+        "axes": [
+          {
+            "parameter_id": "10000000-0000-4000-8000-00000000001f",
+            "keys": [
+              0.0,
+              1.0
+            ]
+          }
+        ],
+        "keyforms": [
+          {
+            "keys": [
+              0.0
+            ],
+            "positions": [
+              [
+                20.0,
+                20.0
+              ],
+              [
+                60.0,
+                20.0
+              ],
+              [
+                60.0,
+                60.0
+              ],
+              [
+                20.0,
+                60.0
+              ]
+            ],
+            "appearance": {
+              "opacity": 1.0,
+              "multiply": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "screen": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          },
+          {
+            "keys": [
+              1.0
+            ],
+            "positions": [
+              [
+                24.0,
+                20.0
+              ],
+              [
+                64.0,
+                20.0
+              ],
+              [
+                64.0,
+                60.0
+              ],
+              [
+                24.0,
+                60.0
+              ]
+            ],
+            "appearance": {
+              "opacity": 1.0,
+              "multiply": [
+                1.0,
+                1.0,
+                1.0
+              ],
+              "screen": [
+                0.0,
+                0.0,
+                0.0
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "scene_bindings": []
+  }
+}

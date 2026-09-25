@@ -195,7 +195,12 @@ mod tests {
         )
         .unwrap();
         assert!(layer.hidden);
-        assert!(layer.rgba.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert!(layer
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0));
 
         let bytes = psd::encode(2, 2, vec![layer]).unwrap();
         let parsed = read_psd(
@@ -212,14 +217,18 @@ mod tests {
             .as_ref()
             .unwrap()
             .data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|pixel| pixel[3] > 0));
         assert!(parsed
             .image_data
             .as_ref()
             .unwrap()
             .data
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .all(|pixel| pixel[3] == 0));
     }
 }

@@ -107,6 +107,11 @@ impl NativeMotionPreview {
     pub(crate) fn new(inner: MotionPreview) -> Self {
         Self { inner }
     }
+
+    #[cfg(feature = "observe")]
+    pub(crate) fn inner(&self) -> &MotionPreview {
+        &self.inner
+    }
 }
 
 type MotionPreviewTuple = (

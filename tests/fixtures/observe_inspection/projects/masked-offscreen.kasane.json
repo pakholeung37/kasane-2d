@@ -1,0 +1,380 @@
+{
+  "format": "kasane-directory-project",
+  "format_version": 4,
+  "document": {
+    "id": "10000000-0000-4000-8000-000000000003",
+    "canvas": [
+      100.0,
+      100.0
+    ],
+    "canvas_origin": [
+      37.0,
+      62.0
+    ],
+    "pixels_per_unit": 7.5,
+    "canvas_flag": 1,
+    "assets": [
+      {
+        "id": "10000000-0000-4000-8000-00000000000e",
+        "name": "padding",
+        "source": "assets/99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7.png",
+        "width": 16,
+        "height": 16,
+        "sha256": "99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7"
+      },
+      {
+        "id": "10000000-0000-4000-8000-00000000000f",
+        "name": "mask",
+        "source": "assets/e5bd6392b1aa04c6c7ed71eb22c79982315a89ecbf9dfd147edd9b73298788c3.png",
+        "width": 32,
+        "height": 32,
+        "sha256": "e5bd6392b1aa04c6c7ed71eb22c79982315a89ecbf9dfd147edd9b73298788c3"
+      }
+    ],
+    "meshes": [
+      {
+        "id": "10000000-0000-4000-8000-000000000018",
+        "runtime_id": "10000000-0000-4000-8000-000000000018",
+        "name": "rear",
+        "texture_asset_id": "10000000-0000-4000-8000-00000000000e",
+        "vertex_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "base_positions": [
+          [
+            20.0,
+            20.0
+          ],
+          [
+            80.0,
+            20.0
+          ],
+          [
+            80.0,
+            80.0
+          ],
+          [
+            20.0,
+            80.0
+          ]
+        ],
+        "uvs": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "triangles": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3
+        ],
+        "properties": {
+          "part_id": "",
+          "deformer_id": "",
+          "appearance": {
+            "opacity": 1.0,
+            "multiply": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "screen": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "blend_mode": 0,
+          "enabled": true,
+          "double_sided": true,
+          "inverted_mask": false,
+          "masks": []
+        }
+      },
+      {
+        "id": "10000000-0000-4000-8000-000000000019",
+        "runtime_id": "10000000-0000-4000-8000-000000000019",
+        "name": "mask source",
+        "texture_asset_id": "10000000-0000-4000-8000-00000000000f",
+        "vertex_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "base_positions": [
+          [
+            25.0,
+            25.0
+          ],
+          [
+            75.0,
+            25.0
+          ],
+          [
+            75.0,
+            75.0
+          ],
+          [
+            25.0,
+            75.0
+          ]
+        ],
+        "uvs": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "triangles": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3
+        ],
+        "properties": {
+          "part_id": "",
+          "deformer_id": "",
+          "appearance": {
+            "opacity": 1.0,
+            "multiply": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "screen": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "blend_mode": 0,
+          "enabled": true,
+          "double_sided": true,
+          "inverted_mask": false,
+          "masks": []
+        }
+      },
+      {
+        "id": "10000000-0000-4000-8000-00000000001a",
+        "runtime_id": "10000000-0000-4000-8000-00000000001a",
+        "name": "masked target",
+        "texture_asset_id": "10000000-0000-4000-8000-00000000000e",
+        "vertex_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "base_positions": [
+          [
+            30.0,
+            30.0
+          ],
+          [
+            70.0,
+            30.0
+          ],
+          [
+            70.0,
+            70.0
+          ],
+          [
+            30.0,
+            70.0
+          ]
+        ],
+        "uvs": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "triangles": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3
+        ],
+        "properties": {
+          "part_id": "10000000-0000-4000-8000-000000000034",
+          "deformer_id": "",
+          "appearance": {
+            "opacity": 1.0,
+            "multiply": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "screen": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "blend_mode": 0,
+          "enabled": true,
+          "double_sided": true,
+          "inverted_mask": false,
+          "masks": [
+            "10000000-0000-4000-8000-000000000019"
+          ]
+        }
+      },
+      {
+        "id": "10000000-0000-4000-8000-00000000001b",
+        "runtime_id": "10000000-0000-4000-8000-00000000001b",
+        "name": "front cover",
+        "texture_asset_id": "10000000-0000-4000-8000-00000000000e",
+        "vertex_ids": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "base_positions": [
+          [
+            40.0,
+            40.0
+          ],
+          [
+            65.0,
+            40.0
+          ],
+          [
+            65.0,
+            65.0
+          ],
+          [
+            40.0,
+            65.0
+          ]
+        ],
+        "uvs": [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            1.0,
+            0.0
+          ],
+          [
+            1.0,
+            1.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ],
+        "triangles": [
+          0,
+          1,
+          2,
+          0,
+          2,
+          3
+        ],
+        "properties": {
+          "part_id": "",
+          "deformer_id": "",
+          "appearance": {
+            "opacity": 1.0,
+            "multiply": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "screen": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          },
+          "blend_mode": 0,
+          "enabled": true,
+          "double_sided": true,
+          "inverted_mask": false,
+          "masks": []
+        }
+      }
+    ],
+    "parts": [
+      {
+        "id": "10000000-0000-4000-8000-000000000034",
+        "runtime_id": "10000000-0000-4000-8000-000000000034",
+        "name": "offscreen group",
+        "parent_id": "",
+        "enabled": true,
+        "draw_order": 0.0
+      }
+    ],
+    "transforms": [],
+    "parameters": [],
+    "bindings": [],
+    "scene_bindings": [],
+    "offscreens": [
+      {
+        "id": "10000000-0000-4000-8000-000000000047",
+        "runtime_id": "10000000-0000-4000-8000-000000000047",
+        "name": "half-opacity layer",
+        "part_id": "10000000-0000-4000-8000-000000000034",
+        "blend_mode": 0,
+        "flags": 4,
+        "keyforms": [
+          {
+            "opacity": 0.5
+          }
+        ]
+      }
+    ]
+  }
+}

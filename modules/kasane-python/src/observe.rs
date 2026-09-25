@@ -2,12 +2,16 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use kasane_sdk_observe::{ObservationError, ObservationInput, Observer, ObserverConfig};
+use kasane_sdk_observe::{
+    CanvasRoi, ObservationError, ObservationInput, ObservedFrame, Observer, ObserverConfig,
+    RenderRequest, ResolvedObservation,
+};
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
 use pyo3::prelude::*;
 use pyo3::types::PyBytes;
 
+use crate::animation::NativeMotionPreview;
 use crate::conversion::{version_tuple, VersionTuple};
 use crate::error::poisoned;
 use crate::session::NativeSession;
@@ -49,6 +53,128 @@ type NativeFrameTuple = (
     String,
 );
 
+type RenderMappingTuple = (
+    (f32, f32, f32, f32),
+    (f32, f32, f32, f32),
+    (f32, f32, f32, f32),
+);
+
+fn frame_tuple(py: Python<'_>, frame: ObservedFrame) -> PyResult<NativeFrameTuple> {
+    let png = frame
+        .png_bytes()
+        .map_err(|error| observation_failure(py, error))?;
+    Ok((
+        (
+            version_tuple(frame.version),
+            frame.input_sha256,
+            frame.evaluation_revision,
+            frame.document_id,
+            frame.source_revision,
+            frame.parameters,
+            frame.canvas,
+            frame.view_scale,
+            frame.view_offset,
+            frame
+                .drawable_bounds
+                .into_iter()
+                .map(|item| (item.id, item.visible, item.bounds))
+                .collect(),
+        ),
+        frame.width,
+        frame.height,
+        PyBytes::new(py, &frame.rgba).unbind(),
+        PyBytes::new(py, &png).unbind(),
+        frame
+            .texture_revisions
+            .into_iter()
+            .map(|texture| (texture.asset_id, texture.sha256, texture.revision))
+            .collect(),
+        frame.adapter_name,
+        frame.adapter_backend,
+    ))
+}
+
+#[pyclass]
+pub(crate) struct NativeCapturedScene {
+    inner: ResolvedObservation,
+}
+
+#[pymethods]
+impl NativeCapturedScene {
+    fn authoring_json(&self) -> PyResult<String> {
+        serde_json::to_string(self.inner.input().authoring())
+            .map_err(|error| PyException::new_err(error.to_string()))
+    }
+
+    fn source_json(&self) -> PyResult<String> {
+        serde_json::to_string(self.inner.input().source())
+            .map_err(|error| PyException::new_err(error.to_string()))
+    }
+
+    #[staticmethod]
+    fn open_scene(py: Python<'_>, absolute_directory: &str) -> PyResult<Self> {
+        let scene = py
+            .detach(|| ResolvedObservation::open_scene(std::path::Path::new(absolute_directory)))
+            .map_err(|error| observation_failure(py, error))?;
+        Ok(Self { inner: scene })
+    }
+
+    fn save_scene(&self, py: Python<'_>, absolute_directory: &str) -> PyResult<()> {
+        py.detach(|| {
+            self.inner
+                .save_scene(std::path::Path::new(absolute_directory))
+        })
+        .map_err(|error| observation_failure(py, error))
+    }
+
+    fn render(
+        &self,
+        py: Python<'_>,
+        observer: &NativeObserver,
+        width: u32,
+        height: u32,
+        roi: (f32, f32, f32, f32),
+        padding_canvas: f32,
+    ) -> PyResult<(NativeFrameTuple, RenderMappingTuple)> {
+        let request = RenderRequest {
+            width,
+            height,
+            roi: CanvasRoi {
+                x0: roi.0,
+                y0: roi.1,
+                x1: roi.2,
+                y1: roi.3,
+            },
+            padding_canvas,
+        };
+        let frame = py.detach(|| {
+            observer
+                .inner
+                .lock()
+                .map_err(|_| None)?
+                .render(&self.inner, request)
+                .map_err(Some)
+        });
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(Some(error)) => return Err(observation_failure(py, error)),
+            Err(None) => return Err(poisoned()),
+        };
+        let mapping = frame
+            .explicit_view
+            .expect("explicit render has an ROI mapping");
+        let roi_tuple = |roi: CanvasRoi| (roi.x0, roi.y0, roi.x1, roi.y1);
+        Ok((
+            frame_tuple(py, frame)?,
+            (
+                roi_tuple(mapping.requested_roi),
+                roi_tuple(mapping.padded_roi),
+                roi_tuple(mapping.visible_roi),
+            ),
+        ))
+    }
+}
+
 #[pyclass]
 pub(crate) struct NativeObserver {
     inner: Mutex<Observer>,
@@ -79,6 +205,54 @@ impl NativeObserver {
             .map_err(|error| observation_failure(py, error))
     }
 
+    fn capture_scene(
+        &self,
+        py: Python<'_>,
+        session: &NativeSession,
+        values: HashMap<String, f32>,
+    ) -> PyResult<NativeCapturedScene> {
+        let session = session.inner.clone();
+        let result = py.detach(|| {
+            let input = {
+                let session = session.lock().map_err(|_| None)?;
+                ObservationInput::capture(&session, &values).map_err(Some)?
+            };
+            ResolvedObservation::capture(input).map_err(Some)
+        });
+        match result {
+            Ok(inner) => Ok(NativeCapturedScene { inner }),
+            Err(Some(error)) => Err(observation_failure(py, error)),
+            Err(None) => Err(poisoned()),
+        }
+    }
+
+    fn capture_animation_scene(
+        &self,
+        py: Python<'_>,
+        session: &NativeSession,
+        preview: &NativeMotionPreview,
+        apply_model_opacity: bool,
+    ) -> PyResult<NativeCapturedScene> {
+        let session = session.inner.clone();
+        let result = py.detach(|| {
+            let input = {
+                let session = session.lock().map_err(|_| None)?;
+                ObservationInput::capture_motion_with_renderer_opacity(
+                    &session,
+                    preview.inner(),
+                    apply_model_opacity,
+                )
+                .map_err(Some)?
+            };
+            ResolvedObservation::capture(input).map_err(Some)
+        });
+        match result {
+            Ok(inner) => Ok(NativeCapturedScene { inner }),
+            Err(Some(error)) => Err(observation_failure(py, error)),
+            Err(None) => Err(poisoned()),
+        }
+    }
+
     fn observe(
         &self,
         py: Python<'_>,
@@ -92,43 +266,13 @@ impl NativeObserver {
                 ObservationInput::capture(&session, &values).map_err(Some)?
             };
             let mut observer = self.inner.lock().map_err(|_| None)?;
-            let frame = observer.observe(&input).map_err(Some)?;
-            let png = frame.png_bytes().map_err(Some)?;
-            Ok((frame, png))
+            observer.observe(&input).map_err(Some)
         });
-        let (frame, png) = match result {
-            Ok(value) => value,
+        let frame = match result {
+            Ok(frame) => frame,
             Err(Some(error)) => return Err(observation_failure(py, error)),
             Err(None) => return Err(poisoned()),
         };
-        Ok((
-            (
-                version_tuple(frame.version),
-                frame.input_sha256,
-                frame.evaluation_revision,
-                frame.document_id,
-                frame.source_revision,
-                frame.parameters,
-                frame.canvas,
-                frame.view_scale,
-                frame.view_offset,
-                frame
-                    .drawable_bounds
-                    .into_iter()
-                    .map(|item| (item.id, item.visible, item.bounds))
-                    .collect(),
-            ),
-            frame.width,
-            frame.height,
-            PyBytes::new(py, &frame.rgba).unbind(),
-            PyBytes::new(py, &png).unbind(),
-            frame
-                .texture_revisions
-                .into_iter()
-                .map(|texture| (texture.asset_id, texture.sha256, texture.revision))
-                .collect(),
-            frame.adapter_name,
-            frame.adapter_backend,
-        ))
+        frame_tuple(py, frame)
     }
 }

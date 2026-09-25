@@ -7,13 +7,16 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
-use kasane_animation::MotionPreview;
-use kasane_core::{DrawableFrame, ImageAsset, PreviewValues};
+use kasane_animation::{MotionPreview, MotionSnapshot};
+use kasane_core::{DrawableFrame, ImageAsset, Mesh, MeshBinding, Part, PreviewValues, Transform};
 use kasane_project::{read_project_asset, AssetData};
 use kasane_sdk::{AuthoringSession, Version};
 
+mod bundle;
 mod gpu;
+mod view;
 pub use gpu::{DrawableBounds, ObservedFrame, Observer, ObserverConfig, TextureRevision};
+pub use view::{CanvasRoi, RenderRequest, ViewMapping};
 
 #[derive(Clone, Debug)]
 pub struct ObservationInput {
@@ -24,12 +27,89 @@ pub struct ObservationInput {
     frame: DrawableFrame,
     assets: Vec<ImageAsset>,
     root: PathBuf,
+    source: ObservationSource,
+    authoring: CapturedAuthoring,
+}
+
+/// Object identities and source topology from the same document snapshot as
+/// the evaluated frame. Interpolation provenance is added by a later stage.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CapturedAuthoring {
+    pub meshes: Vec<Mesh>,
+    pub parts: Vec<Part>,
+    pub transforms: Vec<Transform>,
+    pub bindings: Vec<MeshBinding>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "source_kind", rename_all = "snake_case")]
+pub enum ObservationSource {
+    Parameters,
+    Animation {
+        snapshot: Box<MotionSnapshot>,
+        apply_model_opacity: bool,
+        /// Live preview captures do not contain a complete update journal.
+        history_status: HistoryStatus,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HistoryStatus {
+    NotRecorded,
 }
 
 #[derive(Clone, Debug)]
 pub struct ResolvedTexture {
     pub asset: ImageAsset,
     pub data: AssetData,
+}
+
+/// A captured evaluated frame and its decoded textures. Rendering this value
+/// never revisits the source project or its assets.
+#[derive(Clone, Debug)]
+pub struct ResolvedObservation {
+    input: ObservationInput,
+    textures: Vec<ResolvedTexture>,
+}
+
+pub(crate) const MAX_CAPTURE_TEXTURE_BYTES: u64 = 256 * 1024 * 1024;
+
+impl ResolvedObservation {
+    pub fn capture(input: ObservationInput) -> Result<Self, ObservationError> {
+        let expected_rgba = input.assets.iter().try_fold(0u64, |total, asset| {
+            total.checked_add(u64::from(asset.width) * u64::from(asset.height) * 4)
+        });
+        if expected_rgba.is_none_or(|bytes| bytes > MAX_CAPTURE_TEXTURE_BYTES) {
+            return Err(ObservationError {
+                code: "OBSERVATION_BUDGET_EXCEEDED".into(),
+                message: "Captured texture RGBA exceeds 256 MiB".into(),
+                asset_id: None,
+            });
+        }
+        let textures = input.resolve_textures()?;
+        let retained = textures.iter().try_fold(0u64, |total, texture| {
+            total
+                .checked_add(texture.data.bytes.len() as u64)?
+                .checked_add(texture.data.rgba.len() as u64)
+        });
+        if retained.is_none_or(|bytes| bytes > MAX_CAPTURE_TEXTURE_BYTES) {
+            return Err(ObservationError {
+                code: "OBSERVATION_BUDGET_EXCEEDED".into(),
+                message: "Captured texture bytes exceed 256 MiB".into(),
+                asset_id: None,
+            });
+        }
+        Ok(Self { input, textures })
+    }
+
+    pub fn input(&self) -> &ObservationInput {
+        &self.input
+    }
+
+    pub fn textures(&self) -> &[ResolvedTexture] {
+        &self.textures
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,6 +149,12 @@ impl ObservationInput {
     pub fn root(&self) -> &std::path::Path {
         &self.root
     }
+    pub fn source(&self) -> &ObservationSource {
+        &self.source
+    }
+    pub fn authoring(&self) -> &CapturedAuthoring {
+        &self.authoring
+    }
 
     pub fn capture(
         session: &AuthoringSession,
@@ -81,7 +167,12 @@ impl ObservationInput {
                 message: error.message.into(),
                 asset_id: error.object_ids.first().cloned(),
             })?;
-        Self::capture_frame(session, requested.clone(), frame)
+        Self::capture_frame(
+            session,
+            requested.clone(),
+            frame,
+            ObservationSource::Parameters,
+        )
     }
 
     /// Capture a previously evaluated Motion/Expression/Physics/Pose frame.
@@ -139,13 +230,23 @@ impl ObservationInput {
                 drawable.opacity *= opacity;
             }
         }
-        Self::capture_frame(session, requested, frame)
+        Self::capture_frame(
+            session,
+            requested,
+            frame,
+            ObservationSource::Animation {
+                snapshot: Box::new(preview.snapshot().clone()),
+                apply_model_opacity,
+                history_status: HistoryStatus::NotRecorded,
+            },
+        )
     }
 
     fn capture_frame(
         session: &AuthoringSession,
         requested: PreviewValues,
         frame: DrawableFrame,
+        source: ObservationSource,
     ) -> Result<Self, ObservationError> {
         let version = session.version();
         let evaluation_revision = session.evaluation_revision();
@@ -167,6 +268,44 @@ impl ObservationInput {
             .project_path()
             .and_then(|path| path.parent())
             .map_or_else(PathBuf::new, std::path::Path::to_path_buf);
+        let authoring = CapturedAuthoring {
+            meshes: session
+                .mesh_ids()
+                .iter()
+                .map(|id| {
+                    session
+                        .mesh(id)
+                        .expect("mesh ID exists in captured document")
+                })
+                .collect(),
+            parts: session
+                .part_ids()
+                .iter()
+                .map(|id| {
+                    session
+                        .part(id)
+                        .expect("part ID exists in captured document")
+                })
+                .collect(),
+            transforms: session
+                .transform_ids()
+                .iter()
+                .map(|id| {
+                    session
+                        .transform(id)
+                        .expect("transform ID exists in captured document")
+                })
+                .collect(),
+            bindings: session
+                .binding_ids()
+                .iter()
+                .map(|id| {
+                    session
+                        .binding(id)
+                        .expect("binding ID exists in captured document")
+                })
+                .collect(),
+        };
         Ok(Self {
             version,
             evaluation_revision,
@@ -175,6 +314,8 @@ impl ObservationInput {
             frame,
             assets,
             root,
+            source,
+            authoring,
         })
     }
 

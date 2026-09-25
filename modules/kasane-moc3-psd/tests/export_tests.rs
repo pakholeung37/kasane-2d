@@ -51,7 +51,9 @@ fn exports_real_model_with_layers_and_composite() {
         .as_ref()
         .unwrap()
         .data
-        .chunks_exact(4)
+        .as_chunks::<4>()
+        .0
+        .iter()
         .any(|pixel| pixel[3] != 0)));
     assert!(psd.windows(4).any(|bytes| bytes == b"luni"));
     let composite = layer_section + 4 + u32be(&psd, layer_section) as usize;

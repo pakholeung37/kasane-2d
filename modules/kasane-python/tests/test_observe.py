@@ -2,8 +2,10 @@
 
 from pathlib import Path
 import json
+import subprocess
 import struct
 import shutil
+import sys
 from tempfile import TemporaryDirectory
 import unittest
 import zlib
@@ -22,9 +24,109 @@ BACKGROUND = "00000000-0000-4000-8000-000000000004"
 MASK = "00000000-0000-4000-8000-000000000005"
 PART = "00000000-0000-4000-8000-000000000006"
 OFFSCREEN = "00000000-0000-4000-8000-000000000007"
+PART_B = "00000000-0000-4000-8000-000000000008"
+POSE = "00000000-0000-4000-8000-000000000009"
 
 
 class GpuWheelTests(unittest.TestCase):
+    def test_animation_capture_preserves_pose_part_opacity(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("two pose parts") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_part(PART, "first")
+            edit.create_part(PART_B, "second")
+            edit.create_rectangle(MESH, "left", ASSET, (15, 35), (40, 65))
+            edit.create_rectangle(BACKGROUND, "right", ASSET, (60, 35), (85, 65))
+            edit.set_mesh_part(MESH, PART)
+            edit.set_mesh_part(BACKGROUND, PART_B)
+            edit.create_pose(POSE, [[(PART, []), (PART_B, [])]], fade_in=0.5)
+        preview = model.motion_preview()
+        self.assertEqual(preview.snapshot().part_opacities[PART_B], 0)
+        with kasane.Observer(64, 64, 64) as observer:
+            static = observer.render_scene(
+                observer.capture_scene(model), roi=(0, 0, 100, 100),
+                resolution=(128, 128),
+            )
+            animated = observer.capture_animation_scene(model, preview)
+            actual = observer.render_scene(
+                animated, roi=(0, 0, 100, 100), resolution=(128, 128),
+            )
+            self.assertNotEqual(actual.frame.rgba, static.frame.rgba)
+            self.assertEqual(animated.source["snapshot"]["part_opacities"][PART_B], 0)
+            self.assertEqual(preview.snapshot().part_opacities[PART_B], 0)
+
+    def test_frozen_scene_roi_reopens_without_live_session(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("base") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
+        with kasane.Observer(64, 64, 64) as observer:
+            scene = observer.capture_scene(model)
+            captured_positions = scene.authoring["meshes"][0]["base_positions"]
+            preview = model.motion_preview()
+            before_preview = preview.snapshot()
+            animated = observer.capture_animation_scene(model, preview)
+            self.assertEqual(preview.snapshot(), before_preview)
+            self.assertEqual(animated.source["source_kind"], "animation")
+            self.assertEqual(animated.source["history_status"], "not_recorded")
+            self.assertFalse(animated.source["apply_model_opacity"])
+            self.assertEqual(animated.source["snapshot"]["time"], before_preview.time)
+            view = observer.render_scene(
+                scene, roi=(38.25, 39.5, 61.75, 60.5),
+                resolution=(128, 96), padding_canvas=2,
+            )
+            self.assertEqual((view.frame.width, view.frame.height), (128, 96))
+            point = (51.125, 52.25)
+            restored = view.image_to_canvas(view.canvas_to_image(point))
+            self.assertAlmostEqual(restored[0], point[0], places=5)
+            self.assertAlmostEqual(restored[1], point[1], places=5)
+            with model.edit("move later") as edit:
+                edit.update_positions(MESH, [0, 1, 2, 3], [
+                    (50, 40), (70, 40), (70, 60), (50, 60),
+                ])
+                edit.rename_mesh(MESH, "renamed later")
+            self.assertEqual(scene.authoring["meshes"][0]["base_positions"],
+                             captured_positions)
+            self.assertEqual(scene.authoring["meshes"][0]["name"], "face")
+            self.assertEqual(model.mesh(MESH).name, "renamed later")
+            self.assertNotEqual(model.mesh(MESH).positions[0][0],
+                                captured_positions[0]["x"])
+            with self.assertRaises(kasane.ObservationFailure) as stale:
+                observer.capture_animation_scene(model, preview)
+            self.assertEqual(stale.exception.code, "STALE_ANIMATION_PREVIEW")
+            self.assertNotEqual(
+                view.frame.rgba,
+                observer.observe(model).rgba,
+            )
+            with TemporaryDirectory() as directory:
+                bundle = Path(directory).resolve() / "scene"
+                scene.save_scene(bundle)
+                reopened = observer.open_scene(bundle)
+                self.assertEqual(reopened.authoring, scene.authoring)
+                again = observer.render_scene(
+                    reopened, roi=(38.25, 39.5, 61.75, 60.5),
+                    resolution=(128, 96), padding_canvas=2,
+                )
+                self.assertEqual(again.frame.rgba, view.frame.rgba)
+                animated_bundle = Path(directory).resolve() / "animated"
+                animated.save_scene(animated_bundle)
+                self.assertEqual(observer.open_scene(animated_bundle).source, animated.source)
+                child = subprocess.run(
+                    [sys.executable, "-c", """
+import sys
+from pathlib import Path
+import kasane
+with kasane.Observer(64, 64, 64) as observer:
+    scene = observer.open_scene(Path(sys.argv[1]))
+    frame = observer.render_scene(scene, roi=(38.25, 39.5, 61.75, 60.5),
+                                  resolution=(128, 96), padding_canvas=2).frame
+    assert any(frame.rgba[3::4])
+print('REOPEN_OK')
+""", str(bundle)],
+                    capture_output=True, text=True, check=True,
+                )
+                self.assertIn("REOPEN_OK", child.stdout)
+
     def test_oversize_texture_reports_error_and_observer_recovers(self):
         def chunk(kind, data):
             payload = kind + data

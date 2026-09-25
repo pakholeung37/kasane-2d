@@ -11,7 +11,7 @@ use crate::seek_cache::{Checkpoint, SeekCache};
 use crate::{AnimationError, CompiledCurve, SeekCacheStats};
 
 /// A motion event crossed during the last update, returned without side effects.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MotionEventFired {
     /// Source clip UUID.
     pub motion_id: String,
@@ -22,7 +22,7 @@ pub struct MotionEventFired {
 }
 
 /// Combined values after Motion, Expression, Physics and Pose evaluation.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MotionSnapshot {
     /// Absolute preview time in seconds.
     pub time: f32,

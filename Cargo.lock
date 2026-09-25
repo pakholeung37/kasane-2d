@@ -520,6 +520,7 @@ version = "0.1.0"
 dependencies = [
  "kasane-core",
  "kasane-project",
+ "serde",
  "serde_json",
  "thiserror",
 ]
@@ -647,6 +648,8 @@ dependencies = [
  "kasane-render-wgpu",
  "kasane-sdk",
  "png",
+ "serde",
+ "serde_json",
  "sha2",
  "wgpu",
 ]

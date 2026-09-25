@@ -1,0 +1,20 @@
+{
+  "files": {
+    "projects/assets/99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7.png": "99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7",
+    "projects/assets/ac95ca2be961d2bd036e1646f99b464913a905bbd1292bd8ea9b5bd280e67631.png": "ac95ca2be961d2bd036e1646f99b464913a905bbd1292bd8ea9b5bd280e67631",
+    "projects/assets/e5bd6392b1aa04c6c7ed71eb22c79982315a89ecbf9dfd147edd9b73298788c3.png": "e5bd6392b1aa04c6c7ed71eb22c79982315a89ecbf9dfd147edd9b73298788c3",
+    "projects/masked-offscreen.kasane.json": "1256786b7836f5b36c01a2ccccfad5ad776ea2a2f730ff73cd14542e1258dc51",
+    "projects/pixel-binding.kasane.json": "10823751bde183a5ea2883095a2e7a52fb318d6b7c4685c84677259e46534365",
+    "projects/rotated-warp.kasane.json": "71ff7d170bf1bb8f88b622dd2f2e9d8ddfdc1aa3ae2fd712e336c19b1127ee34",
+    "textures/round-mask.png": "e5bd6392b1aa04c6c7ed71eb22c79982315a89ecbf9dfd147edd9b73298788c3",
+    "textures/thin-line.png": "ac95ca2be961d2bd036e1646f99b464913a905bbd1292bd8ea9b5bd280e67631",
+    "textures/transparent-padding.png": "99f2934890d59becd85db747b678b830d9b0cbdb234e1ef5def77fad1b07b8b7"
+  },
+  "license": "CC0-1.0; generated locally by build_fixtures.py",
+  "projects": [
+    "projects/pixel-binding.kasane.json",
+    "projects/rotated-warp.kasane.json",
+    "projects/masked-offscreen.kasane.json"
+  ],
+  "schema_version": 1
+}
