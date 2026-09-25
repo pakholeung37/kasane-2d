@@ -113,6 +113,7 @@ pub(super) enum DrawKey {
 #[derive(Clone, PartialEq, Eq)]
 struct BoundViews {
     texture: wgpu::TextureView,
+    texture_repeat: bool,
     mask: Option<wgpu::TextureView>,
     destination: Option<wgpu::TextureView>,
 }
@@ -121,6 +122,7 @@ impl BoundViews {
     fn from_input(input: &ResourceInput<'_>) -> Self {
         Self {
             texture: input.texture_view.clone(),
+            texture_repeat: input.texture_repeat,
             mask: input.mask.map(|mask| mask.view.clone()),
             destination: input
                 .destination
@@ -499,6 +501,7 @@ impl WgpuRenderer {
             ResourceInput {
                 device,
                 texture_view: &self.color.view,
+                texture_repeat: false,
                 vertices: &presentation_vertices,
                 indices: &presentation_indices,
                 uniform: draw_uniform(

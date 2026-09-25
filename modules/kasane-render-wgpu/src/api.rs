@@ -80,6 +80,7 @@ pub struct WgpuTexture<'a> {
 pub struct WgpuTextureCatalog<'a> {
     textures: HashMap<String, WgpuTexture<'a>>,
     revisions: HashMap<String, u64>,
+    repeating: HashSet<String>,
 }
 
 impl<'a> WgpuTextureCatalog<'a> {
@@ -87,11 +88,27 @@ impl<'a> WgpuTextureCatalog<'a> {
         Self {
             textures,
             revisions: HashMap::new(),
+            repeating: HashSet::new(),
         }
     }
 
     pub fn get(&self, id: &str) -> Option<&WgpuTexture<'a>> {
         self.textures.get(id)
+    }
+
+    /// Use Framework-style repeating UVs for one source texture. Other
+    /// textures continue to clamp at their edges.
+    pub fn set_repeat(&mut self, id: impl Into<String>, repeat: bool) {
+        let id = id.into();
+        if repeat {
+            self.repeating.insert(id);
+        } else {
+            self.repeating.remove(&id);
+        }
+    }
+
+    pub fn repeats(&self, id: &str) -> bool {
+        self.repeating.contains(id)
     }
 
     /// Declare the content revision of a host texture. Reusing a revision

@@ -6,6 +6,10 @@ rust-version.workspace = true
 license.workspace = true
 description = "Immutable observation inputs and wgpu harness for Kasane SDK"
 
+[features]
+default = ["framework-texture-filtering"]
+framework-texture-filtering = []
+
 [dependencies]
 kasane-animation = { path = "../kasane-animation" }
 kasane-core = { path = "../kasane-core" }

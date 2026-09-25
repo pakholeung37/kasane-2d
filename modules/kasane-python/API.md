@@ -38,7 +38,7 @@ For installation and runnable recipes, start with the [SDK README](README.md).
 | `Session(document_id, width, height, origin, pixels_per_unit)` | Create an empty authoring session. `origin` is a `Point`. |
 | `Session.with_history_limits(document_id, width, height, origin, pixels_per_unit, max_steps, max_bytes)` | Create a session with explicit undo capacity. |
 | `open_project(absolute_path)` | Open a saved project and return a `Session`. This is a package function, not a `Session` method. |
-| `capabilities()` | Return booleans including `gpu_observation`, `purism_core_validation`, and `official_core_validation`. |
+| `capabilities()` | Return booleans including `gpu_observation`, `gpu_texture_mipmaps`, `purism_core_validation`, and `official_core_validation`. |
 | `Session.save(absolute_path, expected_version=None, *, on_exists="error")` | Save to a project directory or `.kasane.json` manifest path; return `SaveResult`. `on_exists="new"` chooses a numbered sibling if another project occupies the destination. |
 | `SaveResult` | `manifest: Path` is the **actual** manifest path; `durable: bool`, `warnings: list[str]`, `history_warnings: list[str]` describe publication. |
 | `Session.import_model3(absolute_path, expected_version=None)` | Replace the current project from a model3 JSON file; return `ImportResult`. |
@@ -481,9 +481,12 @@ content, including metadata and texture descriptors/content hashes, while
 excluding the acquisition ID, live animation operation identity, and
 session/evaluation revision counters.
 `RenderedSceneView.render_digest` adds the explicit ROI, dimensions, padding,
-and fixed raw context render policy. The digest identifies inputs and policy,
-not GPU pixel equivalence across adapters. The legacy `ObservedFrame.input_sha256`
-keeps its original behavior and is separate from these digests. Opening a v1
+and fixed raw context render policy, including compiled source texture
+mipmaps. The digest identifies inputs and policy,
+not GPU pixel equivalence across adapters. `ObservedFrame.input_sha256`
+includes the enabled texture sampling policy and is separate from these
+digests. A `--no-default-features --features observe` wheel preserves the
+previous single-sample hash and pixels. Opening a v1
 bundle computes the scene digest and assigns a new capture ID.
 They currently render the legacy raw transparent pixel policy. The O1 packet
 uses `RawInspectionRequest`; the full `InspectionRequest`, labels, display

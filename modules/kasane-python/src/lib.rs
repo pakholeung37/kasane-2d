@@ -40,6 +40,13 @@ fn capabilities(py: Python<'_>) -> PyResult<Py<PyDict>> {
     #[cfg(not(feature = "observe"))]
     let gpu_observation = false;
     result.set_item("gpu_observation", gpu_observation)?;
+    result.set_item(
+        "gpu_texture_mipmaps",
+        cfg!(all(
+            feature = "observe",
+            feature = "framework-texture-filtering"
+        )),
+    )?;
     Ok(result.unbind())
 }
 

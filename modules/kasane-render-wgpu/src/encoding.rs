@@ -223,6 +223,7 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 let input = ResourceInput {
                     device: self.device,
                     texture_view: texture.view,
+                    texture_repeat: self.textures.repeats(&drawable.texture_asset_id),
                     vertices: &vertices,
                     indices: &indices,
                     uniform,
@@ -538,6 +539,7 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 let input = ResourceInput {
                     device: self.device,
                     texture_view: texture.view,
+                    texture_repeat: self.textures.repeats(&drawable.texture_asset_id),
                     vertices: &vertices,
                     indices: &indices,
                     uniform,
@@ -696,6 +698,7 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 let input = ResourceInput {
                     device: self.device,
                     texture_view: &surface.view,
+                    texture_repeat: false,
                     vertices: &vertices,
                     indices: &indices,
                     uniform,

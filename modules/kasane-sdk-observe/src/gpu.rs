@@ -212,6 +212,11 @@ impl Observer {
             }) {
                 continue;
             }
+            let mipmaps = if cfg!(feature = "framework-texture-filtering") {
+                straight_rgba_mipmaps(texture.data.width, texture.data.height, &texture.data.rgba)
+            } else {
+                Vec::new()
+            };
             let source = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("sdk-observe.source"),
                 size: wgpu::Extent3d {
@@ -219,7 +224,7 @@ impl Observer {
                     height: texture.data.height,
                     depth_or_array_layers: 1,
                 },
-                mip_level_count: 1,
+                mip_level_count: 1 + mipmaps.len() as u32,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
                 format: wgpu::TextureFormat::Rgba8Unorm,
@@ -240,6 +245,27 @@ impl Observer {
                     depth_or_array_layers: 1,
                 },
             );
+            for (index, (width, height, rgba)) in mipmaps.iter().enumerate() {
+                self.queue.write_texture(
+                    wgpu::TexelCopyTextureInfo {
+                        texture: &source,
+                        mip_level: 1 + index as u32,
+                        origin: wgpu::Origin3d::ZERO,
+                        aspect: wgpu::TextureAspect::All,
+                    },
+                    rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(width * 4),
+                        rows_per_image: Some(*height),
+                    },
+                    wgpu::Extent3d {
+                        width: *width,
+                        height: *height,
+                        depth_or_array_layers: 1,
+                    },
+                );
+            }
             let view = source.create_view(&wgpu::TextureViewDescriptor::default());
             let revision = self.next_texture_revision;
             self.next_texture_revision += 1;
@@ -328,6 +354,9 @@ impl Observer {
                 digest.update(value.to_bits().to_le_bytes());
             }
         }
+        if cfg!(feature = "framework-texture-filtering") {
+            digest.update(b"source-texture:linear-mipmap-linear-repeat-v1");
+        }
         let input_sha256 = format!("{:x}", digest.finalize());
         self.upload_textures(resolved)?;
         self.renderer
@@ -357,6 +386,7 @@ impl Observer {
         );
         for (id, texture) in &self.textures {
             catalog.set_revision(id.clone(), texture.revision);
+            catalog.set_repeat(id.clone(), cfg!(feature = "framework-texture-filtering"));
         }
         let status = |s: kasane_core::Status| error(&s.code, s.message);
         self.renderer
@@ -409,103 +439,17 @@ impl Observer {
                 }
             })
             .collect();
-        let view = ViewportConfig {
-            transform: Affine2 {
-                a: Vec2::new(scale, 0.0),
-                b: Vec2::new(0.0, scale),
-                origin: Vec2::new(offset_x, offset_y),
-            },
-            target_extent: Vec2::new(width as f32, height as f32),
-            mask_scale: scale as f64,
-        };
-        self.renderer
-            .update_view(&self.device, view)
-            .map_err(status)?;
-        let output = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("sdk-observe.output"),
-            size: wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("sdk-observe.encode"),
-            });
-        self.renderer
-            .encode(
-                WgpuEncodeTarget {
-                    device: &self.device,
-                    queue: &self.queue,
-                    encoder: &mut encoder,
-                    output: &output_view,
-                    output_mode: WgpuOutputMode::Replace,
-                },
-                &catalog,
-            )
-            .map_err(status)?;
-        self.queue.submit([encoder.finish()]);
-        let unpadded_row = width * 4;
-        let padded_row = unpadded_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
-            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let readback = self.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("sdk-observe.readback"),
-            size: u64::from(padded_row) * u64::from(height),
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("sdk-observe.copy"),
-            });
-        encoder.copy_texture_to_buffer(
-            output.as_image_copy(),
-            wgpu::TexelCopyBufferInfo {
-                buffer: &readback,
-                layout: wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(padded_row),
-                    rows_per_image: Some(height),
-                },
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-        );
-        self.queue.submit([encoder.finish()]);
-        let (sender, receiver) = mpsc::channel();
-        readback.map_async(wgpu::MapMode::Read, .., move |result| {
-            let _ = sender.send(result);
-        });
-        self.device
-            .poll(wgpu::PollType::Wait {
-                submission_index: None,
-                timeout: Some(Duration::from_secs(30)),
-            })
-            .map_err(|failure| error("GPU_POLL", failure.to_string()))?;
-        receiver
-            .recv_timeout(Duration::from_secs(1))
-            .map_err(|failure| error("GPU_READBACK", failure.to_string()))?
-            .map_err(|failure| error("GPU_READBACK", failure.to_string()))?;
-        let mapped = readback.get_mapped_range(..);
-        let mut rgba = Vec::with_capacity((unpadded_row as usize) * (height as usize));
-        for row in mapped.chunks_exact(padded_row as usize) {
-            rgba.extend_from_slice(&row[..unpadded_row as usize]);
-        }
-        drop(mapped);
-        readback.unmap();
+        let rgba = render_sample(
+            &mut self.renderer,
+            &self.device,
+            &self.queue,
+            &catalog,
+            width,
+            height,
+            scale,
+            offset_x,
+            offset_y,
+        )?;
         let mut texture_revisions: Vec<_> = self
             .textures
             .iter()
@@ -554,4 +498,153 @@ impl Observer {
             adapter_backend: self.adapter_backend.clone(),
         })
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_sample(
+    renderer: &mut WgpuRenderer,
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    catalog: &WgpuTextureCatalog<'_>,
+    width: u32,
+    height: u32,
+    scale: f32,
+    offset_x: f32,
+    offset_y: f32,
+) -> Result<Vec<u8>, ObservationError> {
+    let view = ViewportConfig {
+        transform: Affine2 {
+            a: Vec2::new(scale, 0.0),
+            b: Vec2::new(0.0, scale),
+            origin: Vec2::new(offset_x, offset_y),
+        },
+        target_extent: Vec2::new(width as f32, height as f32),
+        mask_scale: scale as f64,
+    };
+    let status = |s: kasane_core::Status| error(&s.code, s.message);
+    renderer.update_view(device, view).map_err(status)?;
+    let output = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("sdk-observe.output"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let output_view = output.create_view(&wgpu::TextureViewDescriptor::default());
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sdk-observe.encode"),
+    });
+    renderer
+        .encode(
+            WgpuEncodeTarget {
+                device,
+                queue,
+                encoder: &mut encoder,
+                output: &output_view,
+                output_mode: WgpuOutputMode::Replace,
+            },
+            catalog,
+        )
+        .map_err(status)?;
+    queue.submit([encoder.finish()]);
+    let unpadded_row = width * 4;
+    let padded_row = unpadded_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+        * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("sdk-observe.readback"),
+        size: u64::from(padded_row) * u64::from(height),
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("sdk-observe.copy"),
+    });
+    encoder.copy_texture_to_buffer(
+        output.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &readback,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(padded_row),
+                rows_per_image: Some(height),
+            },
+        },
+        wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+    );
+    queue.submit([encoder.finish()]);
+    let (sender, receiver) = mpsc::channel();
+    readback.map_async(wgpu::MapMode::Read, .., move |result| {
+        let _ = sender.send(result);
+    });
+    device
+        .poll(wgpu::PollType::Wait {
+            submission_index: None,
+            timeout: Some(Duration::from_secs(30)),
+        })
+        .map_err(|failure| error("GPU_POLL", failure.to_string()))?;
+    receiver
+        .recv_timeout(Duration::from_secs(1))
+        .map_err(|failure| error("GPU_READBACK", failure.to_string()))?
+        .map_err(|failure| error("GPU_READBACK", failure.to_string()))?;
+    let mapped = readback.get_mapped_range(..);
+    let mut rgba = Vec::with_capacity(unpadded_row as usize * height as usize);
+    for row in mapped.chunks_exact(padded_row as usize) {
+        rgba.extend_from_slice(&row[..unpadded_row as usize]);
+    }
+    drop(mapped);
+    readback.unmap();
+    Ok(rgba)
+}
+
+/// Generate straight-RGBA box-filtered mip levels from the uploaded PNG.
+/// OpenGL's glGenerateMipmap is implementation-defined, so this matches its
+/// filtering setup without claiming byte-identical mip texels.
+fn straight_rgba_mipmaps(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut levels: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+    let (mut source_width, mut source_height) = (width, height);
+    while source_width > 1 || source_height > 1 {
+        let source = levels
+            .last()
+            .map_or(rgba, |(_, _, pixels)| pixels.as_slice());
+        let next_width = (source_width / 2).max(1);
+        let next_height = (source_height / 2).max(1);
+        let mut next = vec![0u8; next_width as usize * next_height as usize * 4];
+        for y in 0..next_height {
+            for x in 0..next_width {
+                let mut sums = [0u32; 4];
+                let mut count = 0u32;
+                for dy in 0..2 {
+                    for dx in 0..2 {
+                        let (sx, sy) = (x * 2 + dx, y * 2 + dy);
+                        if sx >= source_width || sy >= source_height {
+                            continue;
+                        }
+                        let offset = (sy as usize * source_width as usize + sx as usize) * 4;
+                        for channel in 0..4 {
+                            sums[channel] += u32::from(source[offset + channel]);
+                        }
+                        count += 1;
+                    }
+                }
+                let offset = (y as usize * next_width as usize + x as usize) * 4;
+                for channel in 0..4 {
+                    next[offset + channel] = ((sums[channel] + count / 2) / count) as u8;
+                }
+            }
+        }
+        levels.push((next_width, next_height, next));
+        (source_width, source_height) = (next_width, next_height);
+    }
+    levels
 }

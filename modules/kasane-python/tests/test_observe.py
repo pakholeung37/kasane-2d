@@ -409,9 +409,13 @@ print('REOPEN_OK')
             model.remesh_rectangle_grid(MESH, 8, 8)
             after = [observer.observe(model, {"Turn": value}).rgba for value in (0, 0.5, 1)]
         for original, remeshed in zip(before, after):
-            changed = sum(original[i:i + 4] != remeshed[i:i + 4]
-                          for i in range(0, len(original), 4))
-            self.assertLessEqual(changed, 256 * 256 // 1000)
+            pixel_deltas = [
+                max(abs(a - b) for a, b in zip(original[i:i + 4], remeshed[i:i + 4]))
+                for i in range(0, len(original), 4)
+            ]
+            # Repeated UVs can move a few raster samples at grid boundaries.
+            self.assertLessEqual(sum(delta > 0 for delta in pixel_deltas), 128)
+            self.assertLessEqual(sum(delta > 1 for delta in pixel_deltas), 2)
 
 
 if __name__ == "__main__":

@@ -68,3 +68,27 @@ head PNG SHA-256 was
 `aba4b82868e0c90bfded1eb16fc562d24eb07c7ee24b384f1f562e0a84c32b80`.
 The script writes a new output directory under `target/mao-observe-o1` for
 each run. This local model is not part of the checked-in fixture suite.
+
+## Accepted default texture filtering (2026-09-26)
+
+After visual review, the default Observe GPU profile follows the local Cubism
+Native OpenGL sample's source texture settings: generated mipmaps, linear
+pixel/mip-level filtering, repeating UVs, no anisotropic filtering, and one
+framebuffer sample. It does not add geometric edge antialiasing. Mao renders
+from the accepted build are under `target/mao-observe-o1/run-df37da6db111`;
+the 1024×1024 full PNG SHA-256 is
+`a748ab78f964bdde4c84fb33606157f4260b6d3f0ab008003bc9cb1064d81133`
+and the 1280×1040 head PNG SHA-256 is
+`11ac1cdd4bfd39474f09bc23c251e11dd95e177dc0cb017570d0b020c19c67b1`.
+Saved scene and packet replay remained pixel-identical, including a separate
+Python process.
+
+The O0 raw measurements remain historical. The new default profile's
+five-case measurement is in `docs/OBSERVE-VISUAL-BASELINE.md`; four raw hashes
+changed, while `masked-offscreen` stayed identical. A no-default-features GPU
+wheel reproduced all five O0 raw hashes. The rectangle grid remesh test now
+checks both any changed pixels (at most 128 of 65,536) and changes greater than
+one channel level (at most two). On Apple M4/Metal, the accepted profile had
+112 one-level differences at parameter 0.5, and 111 changed pixels including
+one larger edge difference at parameter 1. All eight `test_observe.py` cases,
+targeted Rust tests and targeted Clippy passed with the accepted default.

@@ -99,6 +99,7 @@ pub(super) struct DestinationBinding<'a> {
 pub(super) struct ResourceInput<'a> {
     pub(super) device: &'a wgpu::Device,
     pub(super) texture_view: &'a wgpu::TextureView,
+    pub(super) texture_repeat: bool,
     pub(super) vertices: &'a [Vertex],
     pub(super) indices: &'a [u32],
     pub(super) uniform: DrawUniform,
@@ -186,6 +187,7 @@ pub struct WgpuBasicRenderer {
     pub(super) mask_layout: wgpu::BindGroupLayout,
     pub(super) destination_layout: wgpu::BindGroupLayout,
     pub(super) sampler: wgpu::Sampler,
+    pub(super) repeat_sampler: wgpu::Sampler,
 }
 
 impl WgpuBasicRenderer {
@@ -455,6 +457,16 @@ impl WgpuBasicRenderer {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             ..Default::default()
         });
+        let repeat_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("kasane.wgpu.basic.repeat-sampler"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            address_mode_w: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            ..Default::default()
+        });
 
         Ok(Self {
             planner,
@@ -476,6 +488,7 @@ impl WgpuBasicRenderer {
             mask_layout,
             destination_layout,
             sampler,
+            repeat_sampler,
         })
     }
 
@@ -528,6 +541,7 @@ impl WgpuBasicRenderer {
         let ResourceInput {
             device,
             texture_view,
+            texture_repeat,
             vertices: _,
             indices,
             uniform,
@@ -549,7 +563,11 @@ impl WgpuBasicRenderer {
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    resource: wgpu::BindingResource::Sampler(if texture_repeat {
+                        &self.repeat_sampler
+                    } else {
+                        &self.sampler
+                    }),
                 },
             ],
         });
@@ -646,6 +664,7 @@ impl WgpuBasicRenderer {
             resources.push(self.create_resources(ResourceInput {
                 device,
                 texture_view: texture.view,
+                texture_repeat: textures.repeats(draw.texture_id),
                 vertices: &vertices,
                 indices: &indices,
                 uniform,

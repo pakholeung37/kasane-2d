@@ -46,6 +46,19 @@ uv run --locked maturin build --manifest-path modules/kasane-python/Cargo.toml -
 
 The GPU build still needs a working graphics device at runtime. Query
 `kasane.capabilities()["gpu_observation"]` before using `kasane.Observer`.
+The default `framework-texture-filtering` feature follows the local Cubism
+Native Framework sample: generate source texture mipmaps, use linear filtering
+between pixels and mip levels, repeat source UVs, disable anisotropic
+filtering, and render with one framebuffer sample. It does
+not add MSAA or a postprocess to mesh edges. To build without source mipmaps,
+disable default features while retaining `observe`:
+
+```sh
+uv run --locked maturin build --manifest-path modules/kasane-python/Cargo.toml --release --no-default-features --features observe --out target/python-wheels
+```
+
+`kasane.capabilities()["gpu_texture_mipmaps"]` reports which policy the
+installed wheel uses.
 
 ## First project
 

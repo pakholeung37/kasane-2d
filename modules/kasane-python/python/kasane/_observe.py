@@ -260,7 +260,10 @@ class Observer:
                     "color_space": "linear_unorm_no_gamma_conversion",
                     "alpha_convention": "premultiplied_no_post_conversion",
                     "background": "transparent",
-                    "texture_profile": "linear_no_mipmap",
+                    "texture_profile": (
+                        "linear_mipmap_linear_repeat" if self._native.texture_mipmaps
+                        else "linear_no_mipmap"
+                    ),
                     "crops": crop_entries,
                 })
             sheet = _contact_sheet(captured)

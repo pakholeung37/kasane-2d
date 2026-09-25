@@ -139,9 +139,14 @@ sampling and renderer policy; `artifact_sha256` hashes actual output bytes.
 The current scene/render digest v1 uses UTF-8 canonical JSON with sorted object
 keys, array order preserved, negative zero normalized, and NaN/Inf rejected.
 Future binary array payloads must declare dtype, shape, and little-endian byte
-order in their own format version. GPU pixel bytes may
-differ between adapters. The legacy `input_sha256` stays unchanged and is not
-the new canonical digest. Report records adapter/backend and SDK build.
+order in their own format version. GPU pixel bytes may differ between adapters.
+Default Observe builds follow the local Cubism Native Framework sample's
+source texture policy: mipmaps with linear pixel and mip-level filtering,
+repeating source UVs, no anisotropic filtering, and one framebuffer sample.
+Mesh edges receive no MSAA or postprocess. A
+`--no-default-features` build retains the earlier source texture policy.
+`input_sha256` includes the enabled texture sampling policy and
+is not the new canonical digest. Report records adapter/backend and SDK build.
 
 Evidence tags are `rendered_pixels`, `evaluated_geometry`, `runtime_trace`,
 `derived_measurement`, `authored_metadata`, and `user_annotation`. Names and

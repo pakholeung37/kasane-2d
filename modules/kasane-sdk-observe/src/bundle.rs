@@ -196,7 +196,7 @@ impl ResolvedObservation {
     pub fn render_digest(&self, request: RenderRequest) -> Result<String, ObservationError> {
         request.mapping()?;
         let mut bytes = b"kasane-observe-render-digest-v1\0".to_vec();
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "scene_digest": self.scene_digest,
             "width": request.width,
             "height": request.height,
@@ -206,6 +206,9 @@ impl ResolvedObservation {
             "output": "raw_rgba8_renderer_default",
             "sample_policy": "single_evaluated_frame",
         });
+        if cfg!(feature = "framework-texture-filtering") {
+            request["texture_sampling"] = "linear_mipmap_linear_repeat".into();
+        }
         canonical_json(&request, &mut bytes)?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }

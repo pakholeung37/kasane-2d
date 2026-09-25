@@ -234,6 +234,11 @@ impl NativeObserver {
         })
     }
 
+    #[getter]
+    fn texture_mipmaps(&self) -> bool {
+        cfg!(feature = "framework-texture-filtering")
+    }
+
     fn set_fit_long_side(&self, py: Python<'_>, value: f32) -> PyResult<()> {
         self.inner
             .lock()
