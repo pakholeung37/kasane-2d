@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 struct Activation {
     time: f32,
     motion_id: String,
+    fades: (f32, f32),
 }
 
 #[derive(Clone)]
@@ -19,14 +20,17 @@ struct ParameterInput {
     value: f32,
 }
 
+#[derive(Clone)]
 struct Playing {
     id: String,
     start_time: f32,
     fade_in_start: f32,
     end_time: Option<f32>,
     previous_offset: f32,
+    fades: (f32, f32),
 }
 
+#[derive(Clone)]
 pub(crate) struct MotionRuntime {
     motion_parameters: BTreeMap<String, f32>,
     activations: Vec<Activation>,
@@ -36,6 +40,24 @@ pub(crate) struct MotionRuntime {
     playing: Vec<Playing>,
 }
 impl MotionRuntime {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::seek_cache::{map_bytes, vec_bytes};
+        map_bytes(&self.motion_parameters)
+            + vec_bytes(&self.activations)
+            + self
+                .activations
+                .iter()
+                .map(|v| v.motion_id.capacity())
+                .sum::<usize>()
+            + vec_bytes(&self.parameter_inputs)
+            + self
+                .parameter_inputs
+                .iter()
+                .map(|v| v.parameter_id.capacity())
+                .sum::<usize>()
+            + vec_bytes(&self.playing)
+            + self.playing.iter().map(|v| v.id.capacity()).sum::<usize>()
+    }
     pub(crate) fn new(parameters: BTreeMap<String, f32>) -> Self {
         Self {
             motion_parameters: parameters,
@@ -62,6 +84,7 @@ impl MotionRuntime {
         now: f32,
         id: &str,
         time: f32,
+        fades: (Option<f32>, Option<f32>),
     ) -> Result<(), AnimationError> {
         if !time.is_finite() || time < 0.0 {
             return Err(AnimationError::InvalidTime);
@@ -91,6 +114,10 @@ impl MotionRuntime {
             Activation {
                 time,
                 motion_id: id.into(),
+                fades: (
+                    fades.0.or(clip.fade_in).unwrap_or(1.0),
+                    fades.1.or(clip.fade_out).unwrap_or(1.0),
+                ),
             },
         );
         Ok(())
@@ -165,8 +192,7 @@ impl MotionRuntime {
             && self.activations[self.next_activation].time <= time
         {
             for old in &mut self.playing {
-                let clip = document.get_motion(&old.id).expect("scheduled motion");
-                let fade_out = clip.fade_out.unwrap_or(1.0);
+                let fade_out = old.fades.1;
                 old.end_time = Some(
                     old.end_time
                         .map_or(time + fade_out, |end| end.min(time + fade_out)),
@@ -181,13 +207,13 @@ impl MotionRuntime {
                 fade_in_start: time,
                 end_time: (!clip.looping).then_some(time + clip.duration),
                 previous_offset: 0.0,
+                fades: self.activations[self.next_activation].fades,
             });
             self.next_activation += 1;
         }
         for playing in &mut self.playing {
             let clip = document.get_motion(&playing.id).expect("scheduled motion");
-            let fade_in = clip.fade_in.unwrap_or(1.0);
-            let fade_out = clip.fade_out.unwrap_or(1.0);
+            let (fade_in, fade_out) = playing.fades;
             let elapsed = (time - playing.start_time).max(0.0);
             let cycle = clip.duration + 1.0 / clip.fps;
             let offset = if clip.looping && elapsed > cycle {

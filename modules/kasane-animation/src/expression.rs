@@ -33,6 +33,17 @@ pub(crate) struct ExpressionRuntime {
     playing: Vec<PlayingExpression>,
 }
 impl ExpressionRuntime {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::seek_cache::vec_bytes;
+        vec_bytes(&self.activations)
+            + self
+                .activations
+                .iter()
+                .map(|v| v.expression_id.capacity())
+                .sum::<usize>()
+            + vec_bytes(&self.playing)
+            + self.playing.iter().map(|v| v.id.capacity()).sum::<usize>()
+    }
     /// Schedule a start at a nonnegative preview time. Ties retain call order.
     pub(crate) fn schedule(
         &mut self,

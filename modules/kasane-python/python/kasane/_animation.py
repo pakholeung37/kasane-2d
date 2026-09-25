@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
-from ._types import DrawableSample, Evaluation, ExpressionSnapshot, MotionSnapshot, ParameterSample
+from ._types import DrawableSample, Evaluation, ExpressionSnapshot, MotionSnapshot, ParameterSample, SeekCacheStats
 
 
 class ExpressionPreview:
@@ -76,6 +76,23 @@ class MotionPreview:
     def set_base_parameter(self, parameter_id: str, value: float) -> None:
         self._native.set_base_parameter(parameter_id, value)
 
+    def schedule_motion_entry(self, group: str, index: int, time: float) -> None:
+        """Play a model3 entry with registration fades; track fades take precedence.
+
+        Index is zero-based. Sound metadata is not played by the CPU preview.
+        """
+        self._native.schedule_motion_entry(group, index, time)
+
+    def set_seek_cache_budget(self, size_bytes: int) -> None:
+        """Clear checkpoints and set retained memory budget (default 16 MiB; 0 disables)."""
+        self._native.set_seek_cache_budget(size_bytes)
+
+    def clear_seek_cache(self) -> None:
+        self._native.clear_seek_cache()
+
+    def seek_cache_stats(self) -> SeekCacheStats:
+        return SeekCacheStats(*self._native.seek_cache_stats())
+
     def schedule_motion(self, motion_id: str, time: float) -> None:
         self._native.schedule_motion(motion_id, time)
 
@@ -102,7 +119,10 @@ class MotionPreview:
 
     def seek_with_progress(self, time: float,
                            progress: Callable[[int, int], bool]) -> MotionSnapshot:
-        """Replay with completed/total callbacks; false cancels without changing state."""
+        """Report remaining replay steps; exact cache hits report (0, 0).
+
+        False or an exception cancels without changing playback or cache state.
+        """
         return self._snapshot(self._native.seek_with_progress(time, progress))
 
     def frame(self) -> Evaluation:

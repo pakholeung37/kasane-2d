@@ -781,3 +781,13 @@ class MotionSnapshot(NamedTuple):
     active_expressions: list[str]
     fired_events: list[tuple[str, str, str]]
     coverage: list[str]
+
+
+class SeekCacheStats(NamedTuple):
+    """Retained checkpoint estimates and work performed by the last successful seek."""
+
+    budget_bytes: int
+    estimated_bytes: int
+    checkpoints: int
+    last_restored_time: float
+    last_replayed_steps: int

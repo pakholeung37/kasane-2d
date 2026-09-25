@@ -49,12 +49,14 @@ struct Particle {
     last_gravity: Vector,
 }
 
+#[derive(Clone)]
 struct RigState {
     particles: Vec<Particle>,
     current: Vec<f32>,
     previous: Vec<f32>,
 }
 
+#[derive(Clone)]
 pub(crate) struct PhysicsRuntime {
     remaining: f32,
     initialized_inputs: bool,
@@ -149,6 +151,17 @@ impl PhysicsPreview {
 }
 
 impl PhysicsRuntime {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::seek_cache::{map_bytes, vec_bytes};
+        map_bytes(&self.parameter_cache)
+            + map_bytes(&self.input_cache)
+            + vec_bytes(&self.rigs)
+            + self
+                .rigs
+                .iter()
+                .map(|v| vec_bytes(&v.particles) + vec_bytes(&v.current) + vec_bytes(&v.previous))
+                .sum::<usize>()
+    }
     pub(crate) fn new(document: &Document) -> Self {
         let parameter_cache = document
             .parameter_order()

@@ -87,6 +87,7 @@ from ._types import (
     PoseDiagnostic,
     PhysicsDiagnostic,
     MotionSnapshot,
+    SeekCacheStats,
     ExpressionSnapshot,
 )
 
@@ -161,6 +162,7 @@ for _public_type in (
     PoseDiagnostic,
     PhysicsDiagnostic,
     MotionSnapshot,
+    SeekCacheStats,
     ExpressionSnapshot,
     ExpressionPreview,
     MotionPreview,
@@ -206,6 +208,7 @@ __all__ = [
     "PoseDiagnostic",
     "PhysicsDiagnostic",
     "MotionSnapshot",
+    "SeekCacheStats",
     "MotionPreview",
     "PhysicsPreview",
     "ExpressionSnapshot",

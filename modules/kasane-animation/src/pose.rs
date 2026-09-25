@@ -4,11 +4,16 @@ use std::collections::BTreeMap;
 use kasane_core::document::PosePartRef;
 use kasane_core::Document;
 
+#[derive(Clone)]
 pub(crate) struct PoseRuntime {
     pub(crate) opacities: BTreeMap<String, f32>,
 }
 
 impl PoseRuntime {
+    pub(crate) fn heap_bytes(&self) -> usize {
+        use crate::seek_cache::map_bytes;
+        map_bytes(&self.opacities)
+    }
     pub(crate) fn new(
         document: &Document,
         real: &mut BTreeMap<String, f32>,

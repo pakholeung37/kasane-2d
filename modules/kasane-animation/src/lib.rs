@@ -3,7 +3,9 @@
 
 mod motion;
 mod replay;
+mod seek_cache;
 pub use motion::{sample_motion_curve, CompiledCurve};
+pub use seek_cache::SeekCacheStats;
 mod motion_preview;
 mod motion_runtime;
 mod physics;
@@ -22,6 +24,8 @@ pub enum AnimationError {
     MissingExpression(String),
     #[error("motion {0} does not exist")]
     MissingMotion(String),
+    #[error("motion registration {group}[{index}] does not exist")]
+    MissingMotionEntry { group: String, index: usize },
     #[error("motion {motion_id} has unresolved {category} target {runtime_id}")]
     UnresolvedMotionTarget {
         motion_id: String,

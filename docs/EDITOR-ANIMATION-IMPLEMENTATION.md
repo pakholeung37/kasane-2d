@@ -7,7 +7,7 @@
 - `kasane-live2d` 提供 cdi3、exp3、motion3、physics3、pose3 的 typed codec。导出重建计数并使用已通过官方 Framework JSON parser 验证的数字编码。
 - `kasane-core` 的 v6 工程数据（兼容读取并迁移 v1–v5）持久化 DisplayInfo、Expression、Motion/注册组、Pose、Physics、model3 Groups/Layout/HitAreas，以及 Sound/UserData 的受管字节。相关对象进入 checkpoint、撤销、引用检查和大小估算。
 - `kasane-project` 在候选工程中导入附件，发布时生成 model3 及资源；缺失附件在工程中持久记录并阻止整包发布。编辑器可在修复后或明确决定舍弃时逐项清除记录。未知字段与无法安全重写的 runtime ID 变更执行严格导出保护。
-- Rust SDK 和 Python wheel 暴露相应创建、替换、导入、导出与预览入口。Motion 预览按 Motion → Expression → Physics → Pose 执行，播放状态不修改工程；`seek` 从初态按 60 Hz 重放输入与激活时间表，进度回调可取消且不改变取消前状态。Physics 另有独立预览入口，支持 reset 与 stabilization。
+- Rust SDK 和 Python wheel 暴露相应创建、替换、导入、导出与预览入口。Motion 预览按 Motion → Expression → Physics → Pose 执行，播放状态不修改工程；`seek` 从初态或标准时间格点检查点按 60 Hz 重放输入与激活时间表，进度回调可取消且不改变取消前状态。Physics 另有独立预览入口，支持 reset 与 stabilization。
 - `kasane-sdk-observe` 可直接捕获已求值动画帧，并检查预览所属 session、generation 与 revision。宿主可显式选择把 Motion `Model/Opacity` 作为 Framework renderer color alpha 应用于 Drawable；Offscreen 自身的 opacity 独立计算。Framework 默认不自动应用 Model opacity。
 
 ## 参考验证
@@ -76,4 +76,12 @@ uv run --no-project --no-cache --python 3.14 --with /absolute/path/to/kasane-0.1
 
 修复 Expression 越界目标值在淡入期间的限幅顺序：与 Framework `CubismModel::SetParameterValue` 一致，先对目标值限幅，再与基准值按权重混合。新增回归覆盖 Add、Multiply、Overwrite 以及独立/组合预览；官方 expression probe 增加三种模式的越界差分。全工作区 Rust 测试、animation 严格 Clippy 和扩展后的官方 probe 均通过。
 
-后续优先补齐注册条目级预览：当前预览按 clip UUID 调度，model3 注册条目的 fade override 已支持导出，但尚无按注册条目播放的入口。长时间 seek 仍从初态逐步重放，检查点缓存属于下一步性能优化。
+注册条目级预览和 seek 检查点缓存已补齐，Rust SDK 与 Python 同步开放：
+
+- `schedule_motion_entry(group, index, time)` 按零起始索引选择 model3 注册条目。每次激活保留独立 fade override，优先级为轨道 > 注册条目 > clip > 默认 1 秒；同一 clip 的不同注册不会互相污染。Sound 仍是资源元数据，CPU 预览不播放音频。
+- 组合 `MotionPreview` 每隔 60 个标准回放步（1 秒）保存完整检查点，含各阶段状态、物理粒子/输入缓存/余时、队列游标和事件快照。部分尾步、`seek(0)`、任意 `advance` 和 stabilization 不生成检查点。独立 ExpressionPreview 保持从头回放。
+- 默认缓存预算 16 MiB，`set_seek_cache_budget(bytes)` 可调整或以 0 禁用，`clear_seek_cache()` 可清空；`seek_cache_stats()` 报告保守估算占用、检查点数、恢复时间与本次回放步数。超预算按插入顺序淘汰，单个过大的检查点直接跳过。预算覆盖保留缓存，排除共享文档和原子 seek 的临时工作状态。
+- 成功修改激活/输入时间表、基准值或 reset 会使缓存失效。取消或回调异常保留原来的播放状态和缓存；精确命中时仍调用 `(0, 0)`，允许取消。进度总数是命中后实际剩余回放步数。
+- 完整状态回归比较缓存与禁用缓存的前后跳转、分数时间、零时刻和事件结果；60 秒后 seek 到 61 秒仅回放 60 步，禁用缓存为 3660 步。
+
+本轮验证：`cargo test --workspace`、animation/sdk/python 的严格 Clippy、重建 CPython 3.14 wheel 后的 50 项 Python CPU 测试通过。官方 CPU probe 的已执行检查全部通过；报告仍为 partial，因为该 CPU probe 不运行像素与 offscreen GPU 检查。本轮未修改 GPU 渲染路径。

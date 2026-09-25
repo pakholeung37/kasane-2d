@@ -226,7 +226,8 @@ before changing preview state.
 geometry from real parameter values. Create a new preview after editing the
 document. Dynamic EyeBlink/LipSync model mappings are reported as coverage
 gaps; ordinary Parameter curves work.
-`seek_with_progress(time, callback)` reports `(completed_steps, total_steps)`;
+`seek_with_progress(time, callback)` reports `(completed_steps, total_steps)`
+for remaining replay work after cache restoration (exact hits report `(0, 0)`);
 return `False` to cancel with `SEEK_CANCELLED` while retaining the preceding
 preview state. Exceptions from the callback also leave the state unchanged.
 
@@ -323,3 +324,29 @@ Groups/HitAreas to stable UUIDs using their saved namespace. Older readers must
 reject v6. Python callers that passed capitalized wire-style Groups/HitAreas to
 `set_model3_settings()` must use the typed records shown above; model3 package
 import/export still uses the standard Live2D wire format.
+
+
+Motion registration and seek caching:
+
+```python
+preview = model.motion_preview()
+preview.schedule_motion_entry("Idle", 0, 0.0)  # zero-based model3 group entry
+preview.set_seek_cache_budget(16 * 1024 * 1024)  # default; 0 disables caching
+preview.seek(60.0)
+preview.seek(61.0)
+assert preview.seek_cache_stats().last_replayed_steps == 60
+preview.clear_seek_cache()
+```
+
+Registration fades override clip fades per activation; explicit track fades retain
+precedence. Missing groups/indices raise `MISSING_MOTION_ENTRY`. Sound metadata is
+not played. Canonical 60 Hz replay saves complete Motion/Expression/Physics/Pose
+checkpoints every second. The budget conservatively estimates retained state,
+excluding shared documents and temporary seek state. Oversized checkpoints are
+skipped; older checkpoints are evicted first. Schedule edits, base edits and reset
+clear the cache. Arbitrary advance/stabilization never seed it.
+`SeekCacheStats` exposes `budget_bytes`, `estimated_bytes`, `checkpoints`,
+`last_restored_time`, and `last_replayed_steps`. Progress callbacks count remaining
+replay work; exact hits call `(0, 0)`. Returning false or raising an exception leaves
+both playback and cache unchanged. Standalone Expression preview still replays
+from its initial state.

@@ -13,7 +13,7 @@ pub use diagnostics::{GeometryBounds, GeometryChecks, GeometryDiagnostic, Geomet
 pub use edit::EditSession;
 pub use kasane_animation::{
     AnimationError, ExpressionPreview, MotionEventFired, MotionPreview, MotionSnapshot,
-    PhysicsPreview, RuntimeSnapshot,
+    PhysicsPreview, RuntimeSnapshot, SeekCacheStats,
 };
 pub use kasane_project::{
     FileSystem, ImportReport, NativeFileSystem, ProjectResult, PsdImportReport, ResourceDiagnostic,

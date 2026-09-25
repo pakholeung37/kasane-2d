@@ -26,6 +26,9 @@ impl ReplaySteps {
             total,
         })
     }
+    pub(crate) fn resume_after(&mut self, completed: u32) {
+        self.next = completed + 1;
+    }
     pub(crate) fn total(&self) -> u32 {
         self.total
     }

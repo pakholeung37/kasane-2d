@@ -19,6 +19,7 @@ fn failure(py: Python<'_>, error: AnimationError, operation: &'static str) -> Py
     let code = match error {
         AnimationError::MissingExpression(_) => "MISSING_EXPRESSION",
         AnimationError::MissingMotion(_) => "MISSING_MOTION",
+        AnimationError::MissingMotionEntry { .. } => "MISSING_MOTION_ENTRY",
         AnimationError::UnresolvedMotionTarget { .. } => "UNRESOLVED_MOTION_TARGET",
         AnimationError::UnresolvedParameter { .. } => "UNRESOLVED_PARAMETER",
         AnimationError::InvalidTime => "INVALID_TIME",
@@ -159,6 +160,33 @@ fn motion_snapshot(preview: &MotionPreview) -> MotionPreviewTuple {
 
 #[pymethods]
 impl NativeMotionPreview {
+    fn schedule_motion_entry(
+        &mut self,
+        py: Python<'_>,
+        group: &str,
+        index: usize,
+        time: f32,
+    ) -> PyResult<()> {
+        self.inner
+            .schedule_motion_entry(group, index, time)
+            .map_err(|error| failure(py, error, "schedule_motion_entry"))
+    }
+    fn set_seek_cache_budget(&mut self, bytes: usize) {
+        self.inner.set_seek_cache_budget(bytes);
+    }
+    fn clear_seek_cache(&mut self) {
+        self.inner.clear_seek_cache();
+    }
+    fn seek_cache_stats(&self) -> (usize, usize, usize, f32, u32) {
+        let s = self.inner.seek_cache_stats();
+        (
+            s.budget_bytes,
+            s.estimated_bytes,
+            s.checkpoints,
+            s.last_restored_time,
+            s.last_replayed_steps,
+        )
+    }
     fn document_revision(&self) -> u64 {
         self.inner.document_revision()
     }

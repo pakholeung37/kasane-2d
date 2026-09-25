@@ -55,6 +55,53 @@ def session():
 
 
 class CpuWheelTests(unittest.TestCase):
+    def test_motion_registration_and_transactional_seek_cache(self):
+        model = session()
+        with model.edit("registration cache fixture") as edit:
+            edit.create_parameter(PARAMETER, "X", 0, 1, 0, runtime_id="ParamX")
+            edit.create_motion(MOTION, "Idle", 4, 30, fade_in=2, fade_out=0)
+            edit.create_motion_track(MOTION, {
+                "id": MOTION_TRACK,
+                "target": {"kind": "parameter", "parameter_id": PARAMETER},
+                "initial": {"time": 0, "value": 1},
+                "segments": [{"kind": "linear", "end": {"time": 4, "value": 1}}],
+                "fade_in": None, "fade_out": None, "extensions": {},
+            })
+            edit.set_motion_groups([{"name": "Idle", "entries": [{"clip_id": MOTION,
+                "fade_in": 0, "fade_out": 0, "sound": None, "extensions": {}}]}])
+        preview = model.motion_preview()
+        preview.schedule_motion_entry("Idle", 0, 0)
+        self.assertEqual(preview.advance(0).parameters[PARAMETER], 1)
+        preview.seek(2)
+        expected = preview.snapshot()
+        stats = preview.seek_cache_stats()
+        self.assertIsInstance(stats, kasane.SeekCacheStats)
+        self.assertEqual(stats.checkpoints, 2)
+        self.assertLessEqual(stats.estimated_bytes, stats.budget_bytes)
+        with self.assertRaises(kasane.SdkFailure) as missing:
+            preview.schedule_motion_entry("Idle", 1, 2)
+        self.assertEqual(missing.exception.code, "MISSING_MOTION_ENTRY")
+        self.assertEqual(preview.seek_cache_stats(), stats)
+        def fail(done, total):
+            raise ValueError("cancel callback")
+        with self.assertRaisesRegex(ValueError, "cancel callback"):
+            preview.seek_with_progress(2, fail)
+        self.assertEqual(preview.snapshot(), expected)
+        self.assertEqual(preview.seek_cache_stats(), stats)
+        updates = []
+        self.assertEqual(preview.seek_with_progress(2, lambda done, total:
+                         updates.append((done, total)) is None), expected)
+        self.assertEqual(updates, [(0, 0)])
+        self.assertEqual(preview.seek_cache_stats().last_replayed_steps, 0)
+        preview.set_seek_cache_budget(0)
+        self.assertEqual(preview.seek(2), expected)
+        self.assertEqual(preview.seek_cache_stats().last_replayed_steps, 120)
+        self.assertEqual(preview.seek_cache_stats().checkpoints, 0)
+        preview.set_seek_cache_budget(16 * 1024 * 1024)
+        preview.seek(2)
+        preview.clear_seek_cache()
+        self.assertEqual(preview.seek_cache_stats().checkpoints, 0)
+
     def test_model3_metadata_and_managed_attachments_roundtrip(self):
         model = session()
         with model.edit("parameter") as edit:
