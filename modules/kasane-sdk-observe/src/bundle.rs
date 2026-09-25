@@ -181,7 +181,10 @@ impl ResolvedObservation {
                 .iter()
                 .enumerate()
                 .map(|(index, texture)| BundleTexture {
-                    asset: texture.asset.clone(),
+                    asset: ImageAsset {
+                        sha256: texture.data.sha256.clone(),
+                        ..texture.asset.clone()
+                    },
                     path: format!("texture-{index:03}.png"),
                 })
                 .collect(),
@@ -208,6 +211,7 @@ impl ResolvedObservation {
         });
         if cfg!(feature = "framework-texture-filtering") {
             request["texture_sampling"] = "linear_mipmap_linear_repeat".into();
+            request["mipmap_generation"] = "area_box_v2".into();
         }
         canonical_json(&request, &mut bytes)?;
         Ok(format!("{:x}", Sha256::digest(bytes)))
@@ -299,7 +303,9 @@ impl ResolvedObservation {
                 .checked_add(length)
                 .and_then(|bytes| {
                     bytes.checked_add(
-                        u64::from(entry.asset.width) * u64::from(entry.asset.height) * 4,
+                        u64::from(entry.asset.width)
+                            .checked_mul(u64::from(entry.asset.height))?
+                            .checked_mul(4)?,
                     )
                 })
                 .ok_or_else(|| failure("OBSERVATION_BUDGET_EXCEEDED", "Texture size overflow"))?;

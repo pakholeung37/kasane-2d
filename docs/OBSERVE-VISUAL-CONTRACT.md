@@ -143,6 +143,10 @@ order in their own format version. GPU pixel bytes may differ between adapters.
 Default Observe builds follow the local Cubism Native Framework sample's
 source texture policy: mipmaps with linear pixel and mip-level filtering,
 repeating source UVs, no anisotropic filtering, and one framebuffer sample.
+Mip texels use an area-weighted box filter (`area_box_v2`), including the
+full footprint for odd dimensions; the generation policy is part of render
+identity. Bundle texture descriptors always record the resolved content hash,
+even if the source descriptor had no expected hash.
 Mesh edges receive no MSAA or postprocess. A
 `--no-default-features` build retains the earlier source texture policy.
 `input_sha256` includes the enabled texture sampling policy and

@@ -355,7 +355,7 @@ impl Observer {
             }
         }
         if cfg!(feature = "framework-texture-filtering") {
-            digest.update(b"source-texture:linear-mipmap-linear-repeat-v1");
+            digest.update(b"source-texture:linear-mipmap-linear-repeat-area-v2");
         }
         let input_sha256 = format!("{:x}", digest.finalize());
         self.upload_textures(resolved)?;
@@ -622,24 +622,28 @@ fn straight_rgba_mipmaps(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32,
         let mut next = vec![0u8; next_width as usize * next_height as usize * 4];
         for y in 0..next_height {
             for x in 0..next_width {
-                let mut sums = [0u32; 4];
-                let mut count = 0u32;
-                for dy in 0..2 {
-                    for dx in 0..2 {
-                        let (sx, sy) = (x * 2 + dx, y * 2 + dy);
-                        if sx >= source_width || sy >= source_height {
-                            continue;
-                        }
+                // Integrate the entire source footprint, including fractional
+                // edge texels for odd dimensions. A fixed 2x2 kernel drops the
+                // final row/column of every non-power-of-two mip level.
+                let x0 = x as f64 * source_width as f64 / next_width as f64;
+                let x1 = (x + 1) as f64 * source_width as f64 / next_width as f64;
+                let y0 = y as f64 * source_height as f64 / next_height as f64;
+                let y1 = (y + 1) as f64 * source_height as f64 / next_height as f64;
+                let mut sums = [0.0; 4];
+                for sy in y0.floor() as u32..y1.ceil() as u32 {
+                    for sx in x0.floor() as u32..x1.ceil() as u32 {
+                        let weight = (x1.min((sx + 1) as f64) - x0.max(sx as f64))
+                            * (y1.min((sy + 1) as f64) - y0.max(sy as f64));
                         let offset = (sy as usize * source_width as usize + sx as usize) * 4;
                         for channel in 0..4 {
-                            sums[channel] += u32::from(source[offset + channel]);
+                            sums[channel] += f64::from(source[offset + channel]) * weight;
                         }
-                        count += 1;
                     }
                 }
+                let area = (x1 - x0) * (y1 - y0);
                 let offset = (y as usize * next_width as usize + x as usize) * 4;
                 for channel in 0..4 {
-                    next[offset + channel] = ((sums[channel] + count / 2) / count) as u8;
+                    next[offset + channel] = (sums[channel] / area).round() as u8;
                 }
             }
         }
@@ -647,4 +651,24 @@ fn straight_rgba_mipmaps(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32,
         (source_width, source_height) = (next_width, next_height);
     }
     levels
+}
+
+#[cfg(test)]
+mod tests {
+    use super::straight_rgba_mipmaps;
+
+    #[test]
+    fn mipmaps_include_odd_edges_and_single_pixel_axes() {
+        for (width, height) in [(3, 1), (1, 3), (3, 3), (5, 1)] {
+            let mut rgba = vec![0; width * height * 4];
+            rgba[(width * height - 1) * 4..].fill(255);
+            let levels = straight_rgba_mipmaps(width as u32, height as u32, &rgba);
+            let last = levels.last().unwrap();
+            assert_eq!((last.0, last.1), (1, 1));
+            assert_eq!(
+                last.2,
+                vec![(255.0 / (width * height) as f64).round() as u8; 4]
+            );
+        }
+    }
 }

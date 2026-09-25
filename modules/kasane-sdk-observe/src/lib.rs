@@ -147,7 +147,11 @@ impl ResolvedObservation {
             }
         }
         let expected_rgba = assets.values().try_fold(0u64, |total, asset| {
-            total.checked_add(u64::from(asset.width) * u64::from(asset.height) * 4)
+            total.checked_add(
+                u64::from(asset.width)
+                    .checked_mul(u64::from(asset.height))?
+                    .checked_mul(4)?,
+            )
         });
         if expected_rgba.is_none_or(|bytes| bytes > MAX_CAPTURE_TEXTURE_BYTES) {
             return Err(ObservationError {

@@ -99,7 +99,7 @@ pub struct WgpuRenderStats {
 struct MaskSignature {
     attachment: wgpu::TextureView,
     model_generation: u64,
-    sources: Vec<(wgpu::TextureView, u64)>,
+    sources: Vec<(wgpu::TextureView, u64, bool)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -573,7 +573,11 @@ impl WgpuRenderer {
                     .get(&drawable.texture_asset_id)
                     .ok_or_else(|| Status::error("MISSING_TEXTURE", &drawable.texture_asset_id))?;
                 if let Some(revision) = textures.revision(&drawable.texture_asset_id) {
-                    sources.push((texture.view.clone(), revision));
+                    sources.push((
+                        texture.view.clone(),
+                        revision,
+                        textures.repeats(&drawable.texture_asset_id),
+                    ));
                 } else {
                     has_revisions = false;
                 }

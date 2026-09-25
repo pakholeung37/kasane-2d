@@ -458,6 +458,16 @@ fn resolved_capture_rerenders_roi_after_source_disappears_and_restores_legacy_vi
             .code,
         "BUNDLE_HASH_MISMATCH"
     );
+    let mut oversized: serde_json::Value = serde_json::from_str(&manifest).unwrap();
+    oversized["textures"][0]["asset"]["width"] = serde_json::json!(u32::MAX);
+    oversized["textures"][0]["asset"]["height"] = serde_json::json!(u32::MAX);
+    std::fs::write(&manifest_path, serde_json::to_vec(&oversized).unwrap()).unwrap();
+    assert_eq!(
+        ResolvedObservation::open_scene(&scene_directory)
+            .unwrap_err()
+            .code,
+        "OBSERVATION_BUDGET_EXCEEDED"
+    );
     std::fs::write(&manifest_path, manifest).unwrap();
     let texture_path = scene_directory.join("texture-000.png");
     std::fs::write(&texture_path, b"changed").unwrap();
@@ -506,4 +516,45 @@ fn bundle_child_process() {
         .iter()
         .any(|pixel| pixel[3] != 0));
     println!("BUNDLE_REOPEN_OK");
+}
+
+#[test]
+fn unhashed_source_is_hashed_in_bundle_and_reopens() {
+    let mut session = AuthoringSession::new(
+        DOCUMENT,
+        Canvas::new(100.0, 100.0, Vec2::new(50.0, 50.0), 10.0),
+    )
+    .unwrap();
+    let source =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/asymmetric-2x2.png");
+    let mut asset = prepare_png_asset(ASSET, "texture", &source).unwrap();
+    asset.sha256.clear();
+    session
+        .edit("unhashed texture", None, |edit| {
+            edit.create_asset(asset)?;
+            edit.create_mesh(
+                rectangle_mesh(
+                    MESH,
+                    "face",
+                    ASSET,
+                    Vec2::new(40.0, 40.0),
+                    Vec2::new(60.0, 60.0),
+                )
+                .unwrap(),
+            )
+        })
+        .unwrap();
+    let capture = ResolvedObservation::capture(
+        ObservationInput::capture(&session, &PreviewValues::new()).unwrap(),
+    )
+    .unwrap();
+    let directory = std::env::temp_dir().join(format!("observe-unhashed-{}", uuid::Uuid::new_v4()));
+    capture.save_scene(&directory).unwrap();
+    let reopened = ResolvedObservation::open_scene(&directory).unwrap();
+    assert_eq!(capture.scene_digest(), reopened.scene_digest());
+    assert_eq!(
+        reopened.textures()[0].asset.sha256,
+        capture.textures()[0].data.sha256
+    );
+    std::fs::remove_dir_all(directory).unwrap();
 }

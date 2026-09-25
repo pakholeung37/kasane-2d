@@ -53,10 +53,15 @@ def _json(data: object) -> bytes:
 def _parse_json(data: bytes) -> object:
     def reject_constant(value: str) -> None:
         raise ValueError(f"Nonfinite JSON value {value} is forbidden")
-    return json.loads(data, parse_constant=reject_constant)
+    def finite_float(value: str) -> float:
+        result = float(value)
+        if not math.isfinite(result):
+            raise ValueError("Nonfinite JSON number is forbidden")
+        return result
+    return json.loads(data, parse_constant=reject_constant, parse_float=finite_float)
 
 
-def _read_member(directory: Path, relative: str, declared_hash: str) -> bytes:
+def _read_member(directory: Path, relative: str, declared_hash: str, budget: int) -> bytes:
     path_part = PurePosixPath(relative)
     if (path_part.is_absolute() or not path_part.parts or
             any(part in (".", "..") for part in path_part.parts)):
@@ -64,7 +69,7 @@ def _read_member(directory: Path, relative: str, declared_hash: str) -> bytes:
     path = directory.joinpath(*path_part.parts)
     if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(directory):
         raise ValueError("Packet member is missing or not a regular in-bundle file")
-    if path.stat().st_size > MAX_PACKET_BYTES:
+    if path.stat().st_size > budget:
         raise ValueError("Packet member exceeds size limit")
     data = path.read_bytes()
     if _sha(data) != declared_hash:
@@ -337,7 +342,7 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
     if manifest_path.stat().st_size > MAX_MANIFEST_BYTES:
         raise ValueError("Packet manifest exceeds 64 MiB")
     manifest = _parse_json(manifest_path.read_bytes())
-    if (manifest.get("schema_version") != 2 or
+    if (not isinstance(manifest, dict) or manifest.get("schema_version") != 2 or
             manifest.get("kind") != "kasane-inspection-packet"):
         raise ValueError("Unsupported packet schema")
     profile = manifest.get("profile")
@@ -353,7 +358,7 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
     for path, digest in hashes.items():
         if not isinstance(path, str) or not isinstance(digest, str):
             raise ValueError("Invalid packet file descriptor")
-        content = _read_member(directory, path, digest)
+        content = _read_member(directory, path, digest, MAX_PACKET_BYTES - total)
         total += len(content)
         if total > MAX_PACKET_BYTES:
             raise ValueError("Packet exceeds 512 MiB read budget")
@@ -365,6 +370,19 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
                 width <= 0 or height <= 0 or width > 4096 or height > 4096 or
                 width * height > MAX_PAGE_PIXELS):
             raise ValueError("Invalid packet view dimensions")
+        scale = entry["view_scale"]
+        if (type(scale) not in (int, float) or not math.isfinite(scale) or scale <= 0
+                or not math.isfinite(1 / scale)):
+            raise ValueError("Invalid packet view scale")
+        for key, length in (("requested_roi", 4), ("padded_roi", 4),
+                            ("visible_roi", 4), ("view_offset", 2)):
+            values = entry[key]
+            if (not isinstance(values, list) or len(values) != length or
+                    any(type(value) not in (int, float) or not math.isfinite(value)
+                        for value in values)):
+                raise ValueError(f"Invalid packet {key}")
+            if length == 4 and (values[2] <= values[0] or values[3] <= values[1]):
+                raise ValueError(f"Empty packet {key}")
         png = members[entry["png_path"]]
         if _sha(png) != entry["artifact_sha256"]:
             raise ValueError("Packet view artifact hash mismatch")

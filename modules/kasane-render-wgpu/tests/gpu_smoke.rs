@@ -353,6 +353,27 @@ fn render_fixture_with_texture_change(
     assert_eq!(stats.geometry_buffer_creations, 0);
     assert_eq!(stats.mask_redraws, 0);
     queue.submit([scene_encoder.finish()]);
+    // Sampling changes invalidate masks even with the same texture revision.
+    for repeat in [true, false] {
+        for (name, _) in colors {
+            textures.set_repeat(name, repeat);
+        }
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let changed = renderer
+            .encode(
+                WgpuEncodeTarget {
+                    device: &device,
+                    queue: &queue,
+                    encoder: &mut encoder,
+                    output: &output_view,
+                    output_mode: WgpuOutputMode::Replace,
+                },
+                &textures,
+            )
+            .unwrap();
+        assert_eq!(changed.mask_redraws, changed.masks);
+        queue.submit([encoder.finish()]);
+    }
     let mut rejected = frame.clone();
     rejected.canvas.width = 0.0;
     assert_eq!(

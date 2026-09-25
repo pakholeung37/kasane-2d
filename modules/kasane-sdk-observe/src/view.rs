@@ -89,6 +89,20 @@ impl RenderRequest {
             x1: (self.width as f32 - offset.0) / scale,
             y1: (self.height as f32 - offset.1) / scale,
         };
+        if ![
+            visible_roi.x0,
+            visible_roi.y0,
+            visible_roi.x1,
+            visible_roi.y1,
+            1.0 / scale,
+        ]
+        .into_iter()
+        .all(f32::is_finite)
+        {
+            return Err(invalid(
+                "Inverse ROI mapping is outside the representable range",
+            ));
+        }
         Ok(ViewMapping {
             requested_roi: self.roi,
             padded_roi,
@@ -141,6 +155,22 @@ mod tests {
             assert!((restored.0 - point.0).abs() < 0.00001);
             assert!((restored.1 - point.1).abs() < 0.00001);
         }
+    }
+
+    #[test]
+    fn rejects_overflowing_inverse_view() {
+        let request = RenderRequest {
+            width: 4096,
+            height: 1,
+            roi: CanvasRoi {
+                x0: 0.0,
+                y0: 0.0,
+                x1: 1.0,
+                y1: f32::MAX,
+            },
+            padding_canvas: 0.0,
+        };
+        assert_eq!(request.mapping().unwrap_err().code, "INVALID_VIEW");
     }
 
     #[test]
