@@ -98,6 +98,46 @@ fn cached_asset_reads_still_validate_disk_content_and_metadata() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[test]
+fn store_png_verification_cache_detects_external_edits() {
+    let root = std::env::temp_dir().join(format!(
+        "kasane-store-resource-cache-{}",
+        std::process::id()
+    ));
+    let path = root.join("assets/texture.png");
+    let (original, hash) = create_test_png(&path);
+    let mut document = Document::new();
+    assert!(document
+        .initialize(id(1), Canvas::new(100.0, 100.0, Vec2::default(), 1.0))
+        .is_ok());
+    assert!(document
+        .add_asset(ImageAsset {
+            id: id(2),
+            source: "assets/texture.png".into(),
+            width: 8,
+            height: 8,
+            sha256: hash,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let store = DocumentStore::new();
+    assert!(store.diagnose(&document, &root).is_empty());
+    assert!(store.diagnose(&document, &root).is_empty());
+
+    fs::write(&path, b"corrupt image").unwrap();
+    assert_eq!(store.diagnose(&document, &root)[0].code, "INVALID_PNG");
+    fs::write(&path, &original).unwrap();
+    let mut wrong = document.get_asset(&id(2)).unwrap().clone();
+    wrong.width = 9;
+    assert!(document.replace_asset(wrong).status.is_ok());
+    assert_eq!(
+        store.diagnose(&document, &root)[0].code,
+        "RESOURCE_DIMENSIONS"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn fixture_doc(sha1: &str, sha2: &str) -> Document {
     let mut doc = Document::new();
     assert!(doc
@@ -256,8 +296,10 @@ fn test_project_encode_decode_roundtrip() {
     let before = fixture_doc(sha1, sha2);
 
     let encoded = encode_project(&before).expect("encode_project failed");
-    assert!(encoded.contains("\"format\": \"kasane-directory-project\""));
-    assert!(encoded.contains("\"format_version\": 4"));
+    assert_eq!(encoded.bytes().filter(|&byte| byte == b'\n').count(), 1);
+    let root: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(root["format"], "kasane-directory-project");
+    assert_eq!(root["format_version"], 4);
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(before.same_content(&decoded));
@@ -286,6 +328,86 @@ fn test_project_encode_decode_roundtrip() {
     let moc1 = encode_moc3(&before).unwrap();
     let moc2 = encode_moc3(&decoded).unwrap();
     assert_eq!(moc1.bytes, moc2.bytes);
+}
+
+#[cfg(feature = "binary-prototype")]
+#[test]
+fn cbor_prototype_preserves_project_content_and_rejects_bad_header() {
+    use kasane_project::{decode_project_cbor, encode_project_cbor};
+
+    let original = fixture_doc(&"0".repeat(64), &"f".repeat(64));
+    let binary = encode_project_cbor(&original).unwrap();
+    let decoded = decode_project_cbor(&binary).unwrap();
+    assert!(original.same_content(&decoded));
+
+    let mut invalid = binary.clone();
+    invalid[0] = 0;
+    assert_eq!(
+        decode_project_cbor(&invalid).unwrap_err().code,
+        "INVALID_PROJECT"
+    );
+    assert_eq!(
+        decode_project_cbor(&binary[..binary.len() - 1])
+            .unwrap_err()
+            .code,
+        "INVALID_PROJECT"
+    );
+}
+
+#[test]
+fn project_roundtrip_preserves_precise_rotation_origin() {
+    let mut document = Document::new();
+    assert!(document
+        .initialize(id(1), Canvas::new(640.0, 480.0, Vec2::new(0.0, 0.0), 100.0))
+        .is_ok());
+    let origin = 0.9545455574989319_f64;
+    let transform = Transform {
+        id: id(2),
+        runtime_id: "rotation".into(),
+        data: TransformData::Rotation(RotationTransform {
+            base_angle: 0.0,
+            pose: RotationPose {
+                origin: kasane_core::types::PreciseVec2::new(0.06838598102331161, origin),
+                ..Default::default()
+            },
+        }),
+        ..Default::default()
+    };
+    assert!(document.create_transform(transform).status.is_ok());
+
+    let reopened = decode_project(&encode_project(&document).unwrap()).unwrap();
+    assert_eq!(
+        reopened
+            .get_transform(&id(2))
+            .unwrap()
+            .rotation()
+            .unwrap()
+            .pose
+            .origin
+            .y
+            .to_bits(),
+        origin.to_bits()
+    );
+    assert!(document.same_content(&reopened));
+
+    #[cfg(feature = "binary-prototype")]
+    {
+        let binary = kasane_project::encode_project_cbor(&document).unwrap();
+        let binary_reopened = kasane_project::decode_project_cbor(&binary).unwrap();
+        assert_eq!(
+            binary_reopened
+                .get_transform(&id(2))
+                .unwrap()
+                .rotation()
+                .unwrap()
+                .pose
+                .origin
+                .y
+                .to_bits(),
+            origin.to_bits()
+        );
+        assert!(document.same_content(&binary_reopened));
+    }
 }
 
 #[test]
@@ -1530,11 +1652,16 @@ fn test_project_v2_blendshape_and_glue_roundtrip() {
         .is_ok());
 
     let encoded = encode_project(&doc).expect("encode_project failed");
-    assert!(encoded.contains("\"format_version\": 4"));
-    assert!(encoded.contains("blend_key_tables"));
-    assert!(encoded.contains("blend_constraints"));
-    assert!(encoded.contains("blend_bindings"));
-    assert!(encoded.contains("glues"));
+    let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(wire["format_version"], 4);
+    for field in [
+        "blend_key_tables",
+        "blend_constraints",
+        "blend_bindings",
+        "glues",
+    ] {
+        assert!(wire["document"].get(field).is_some(), "missing {field}");
+    }
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert!(doc.same_content(&decoded));
@@ -1551,18 +1678,22 @@ fn test_project_v1_v2_v3_migration_to_v4() {
     let doc = fixture_doc(sha1, sha2);
 
     for old_ver in [1, 2, 3] {
-        let mut encoded = encode_project(&doc).unwrap();
-        encoded = encoded.replace(
-            "\"format_version\": 4",
-            &format!("\"format_version\": {}", old_ver),
-        );
+        let mut wire: serde_json::Value =
+            serde_json::from_str(&encode_project(&doc).unwrap()).unwrap();
+        wire["format_version"] = old_ver.into();
         if old_ver == 1 {
             // v1 had no blend or glue fields
-            encoded = encoded.replace("\"blend_key_tables\": [],\n", "");
-            encoded = encoded.replace("\"blend_constraints\": [],\n", "");
-            encoded = encoded.replace("\"blend_bindings\": [],\n", "");
-            encoded = encoded.replace("\"glues\": [],\n", "");
+            let fields = wire["document"].as_object_mut().unwrap();
+            for field in [
+                "blend_key_tables",
+                "blend_constraints",
+                "blend_bindings",
+                "glues",
+            ] {
+                fields.remove(field);
+            }
         }
+        let encoded = serde_json::to_string(&wire).unwrap();
 
         let decoded = decode_project(&encoded)
             .unwrap_or_else(|e| panic!("Failed to decode v{} project: {:?}", old_ver, e));
@@ -1578,7 +1709,8 @@ fn test_project_v1_v2_v3_migration_to_v4() {
 
         // Saving automatically upgrades to v4
         let re_encoded = encode_project(&decoded).expect("Failed to re-encode project");
-        assert!(re_encoded.contains("\"format_version\": 4"));
+        let re_wire: serde_json::Value = serde_json::from_str(&re_encoded).unwrap();
+        assert_eq!(re_wire["format_version"], 4);
     }
 }
 
@@ -1601,13 +1733,10 @@ fn test_project_v4_rejects_unimplemented_collections() {
     let sha1 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
     let sha2 = "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
     let doc = fixture_doc(sha1, sha2);
-    let encoded_v4 = encode_project(&doc).unwrap();
-
     // Inject non-empty deformers collection (unsupported prototype relationships)
-    let bad_project = encoded_v4.replace(
-        "\"document\": {",
-        "\"document\": {\n    \"deformers\": [{\"id\": \"def1\"}],",
-    );
+    let mut wire: serde_json::Value = serde_json::from_str(&encode_project(&doc).unwrap()).unwrap();
+    wire["document"]["deformers"] = serde_json::json!([{ "id": "def1" }]);
+    let bad_project = serde_json::to_string(&wire).unwrap();
     let err = decode_project(&bad_project).expect_err("Non-empty deformers must be rejected");
     assert_eq!(err.code, "LEGACY_PROJECT");
     assert!(err.message.contains("Prototype relationships"));
@@ -1642,9 +1771,15 @@ fn test_project_v4_preserves_offscreen() {
     assert!(doc.create_offscreen(os.clone()).status.is_ok());
 
     let encoded = encode_project(&doc).expect("encode_project failed");
-    assert!(encoded.contains("\"offscreens\":"));
-    assert!(encoded.contains("\"Offscreen0\""));
-    assert!(encoded.contains("\"raw_blend_mode\": 262"));
+    let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+        wire["document"]["offscreens"][0]["runtime_id"],
+        "Offscreen0"
+    );
+    assert_eq!(
+        wire["document"]["meshes"][0]["properties"]["raw_blend_mode"],
+        262
+    );
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     assert_eq!(decoded.offscreen_count(), 1);
@@ -1679,8 +1814,9 @@ fn test_project_v4_preserves_repeat_parameter() {
     assert!(doc.replace_parameter(p).status.is_ok());
 
     let encoded = encode_project(&doc).expect("encode_project failed");
-    assert!(encoded.contains("\"format_version\": 4"));
-    assert!(encoded.contains("\"repeat\": true"));
+    let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(wire["format_version"], 4);
+    assert_eq!(wire["document"]["parameters"][0]["repeat"], true);
 
     let decoded = decode_project(&encoded).expect("decode_project failed");
     let decoded_param = decoded.get_parameter(&param_id).unwrap();
@@ -1800,11 +1936,20 @@ fn test_project_v4_blendshape_glue_roundtrip() {
 
     // Encode to project JSON
     let encoded = encode_project(&doc).expect("encode_project failed");
-    assert!(encoded.contains("\"glue\""));
-    assert!(encoded.contains("\"intensity\": 0.5"));
+    let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(
+        wire["document"]["blend_bindings"][0]["keyforms"]["items"][1]["intensity"],
+        0.5
+    );
 
     // Decode and verify
     let decoded = decode_project(&encoded).expect("decode_project failed");
+    #[cfg(feature = "binary-prototype")]
+    {
+        let binary = kasane_project::encode_project_cbor(&doc).unwrap();
+        let binary_decoded = kasane_project::decode_project_cbor(&binary).unwrap();
+        assert!(doc.same_content(&binary_decoded));
+    }
     let re_glue = decoded.get_glue(&id(21)).unwrap();
     assert_eq!(re_glue.intensity, 0.3);
 

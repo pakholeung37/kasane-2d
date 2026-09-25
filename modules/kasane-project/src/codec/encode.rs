@@ -4,6 +4,14 @@ use kasane_core::Document;
 use super::types::*;
 
 pub fn encode_project(document: &Document) -> Result<String, Status> {
+    let project = encode_wire(document)?;
+    let mut out = serde_json::to_string(&project)
+        .map_err(|e| Status::error("INVALID_PROJECT", e.to_string()))?;
+    out.push('\n');
+    Ok(out)
+}
+
+pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
     if !document.initialized() {
         return Err(Status::error(
             "NOT_INITIALIZED",
@@ -308,8 +316,5 @@ pub fn encode_project(document: &Document) -> Result<String, Status> {
         },
     };
 
-    let mut out = serde_json::to_string_pretty(&project)
-        .map_err(|e| Status::error("INVALID_PROJECT", e.to_string()))?;
-    out.push('\n');
-    Ok(out)
+    Ok(project)
 }

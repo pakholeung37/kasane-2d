@@ -22,7 +22,7 @@ authors = ["Kasane 2D Contributors"]
 
 [workspace.dependencies]
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde_json = { version = "1.0", features = ["float_roundtrip"] }
 thiserror = "2.0"
 sha2 = "0.10"
 png = "0.17"

@@ -12,7 +12,7 @@ pub struct DecodedImage {
 fn convert_to_rgba8(
     color_type: ColorType,
     bit_depth: BitDepth,
-    data: &[u8],
+    mut data: Vec<u8>,
     width: u32,
     height: u32,
 ) -> Result<Vec<u8>, Status> {
@@ -31,7 +31,8 @@ fn convert_to_rgba8(
             if data.len() < expected_rgba_len {
                 return Err(Status::error("INVALID_PNG", "Incomplete RGBA PNG data"));
             }
-            Ok(data[..expected_rgba_len].to_vec())
+            data.truncate(expected_rgba_len);
+            Ok(data)
         }
         ColorType::Rgb => {
             let mut out = Vec::with_capacity(expected_rgba_len);
@@ -110,7 +111,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<DecodedImage, Status> {
     let rgba = convert_to_rgba8(
         output_info.color_type,
         output_info.bit_depth,
-        &buf,
+        buf,
         width,
         height,
     )?;

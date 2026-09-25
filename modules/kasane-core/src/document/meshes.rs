@@ -106,13 +106,11 @@ impl Document {
         if mesh.runtime_id.is_empty() {
             mesh.runtime_id = mesh.id.clone();
         }
-        for (id, other) in &self.meshes {
-            if other.runtime_id == mesh.runtime_id {
-                return self.failed(Status::error(
-                    "DUPLICATE_RUNTIME_ID",
-                    format!("{}.runtime_id duplicates {}", mesh.id, id),
-                ));
-            }
+        if let Some(id) = self.mesh_runtime_ids.get(&mesh.runtime_id) {
+            return self.failed(Status::error(
+                "DUPLICATE_RUNTIME_ID",
+                format!("{}.runtime_id duplicates {}", mesh.id, id),
+            ));
         }
         if mesh.vertex_ids.len() != mesh.base_positions.len() {
             return self.failed(Status::error(
@@ -148,6 +146,8 @@ impl Document {
             return self.failed(s);
         }
         let key = mesh.id.clone();
+        self.mesh_runtime_ids
+            .insert(mesh.runtime_id.clone(), key.clone());
         self.meshes.insert(key.clone(), mesh);
         self.vertex_slots.insert(key.clone(), slots);
         self.mesh_order.push(key.clone());
@@ -239,8 +239,8 @@ impl Document {
         if !s.is_ok() {
             return self.failed(s);
         }
-        for (id, other) in &self.meshes {
-            if id != &mesh.id && other.runtime_id == mesh.runtime_id {
+        if let Some(id) = self.mesh_runtime_ids.get(&mesh.runtime_id) {
+            if id != &mesh.id {
                 return self.failed(Status::error(
                     "DUPLICATE_RUNTIME_ID",
                     format!("{}.runtime_id duplicates {}", mesh.id, id),
@@ -281,6 +281,12 @@ impl Document {
             return self.failed(s);
         }
         let key = mesh.id.clone();
+        let previous_runtime_id = previous.runtime_id.clone();
+        if previous_runtime_id != mesh.runtime_id {
+            self.mesh_runtime_ids.remove(&previous_runtime_id);
+            self.mesh_runtime_ids
+                .insert(mesh.runtime_id.clone(), key.clone());
+        }
         self.meshes.insert(key.clone(), mesh);
         self.vertex_slots.insert(key.clone(), slots);
         self.changed(ChangeKind::Structure, vec![key], Vec::new())
@@ -319,6 +325,7 @@ impl Document {
             return self.failed(rebound.status);
         }
         self.meshes = candidate.meshes;
+        self.mesh_runtime_ids = candidate.mesh_runtime_ids;
         self.vertex_slots = candidate.vertex_slots;
         self.bindings = candidate.bindings;
         self.changed(
@@ -437,6 +444,7 @@ impl Document {
             }
         }
         self.meshes = candidate.meshes;
+        self.mesh_runtime_ids = candidate.mesh_runtime_ids;
         self.vertex_slots = candidate.vertex_slots;
         self.bindings = candidate.bindings;
         self.blend_bindings = candidate.blend_bindings;

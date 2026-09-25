@@ -125,6 +125,10 @@ pub fn decode_project(text: &str) -> Result<Document, Status> {
         }
     };
 
+    decode_wire(root)
+}
+
+pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
     if root.format == "kasane-project" {
         return Err(Status::error(
             "LEGACY_PROJECT",

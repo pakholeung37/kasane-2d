@@ -178,8 +178,8 @@ impl Document {
         if !status.is_ok() {
             return status;
         }
-        for (id, other) in &self.meshes {
-            if id != &mesh.id && other.runtime_id == mesh.runtime_id {
+        if let Some(id) = self.mesh_runtime_ids.get(&mesh.runtime_id) {
+            if id != &mesh.id {
                 return Status::error(
                     "DUPLICATE_RUNTIME_ID",
                     format!("{}.runtime_id duplicates {}", mesh.id, id),

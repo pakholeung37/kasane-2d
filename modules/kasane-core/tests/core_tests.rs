@@ -30,6 +30,55 @@ fn sample() -> Mesh {
 }
 
 #[test]
+fn mesh_runtime_ids_remain_unique_after_replace_restore_and_erase() {
+    let mut doc = Document::new();
+    assert!(doc
+        .initialize(DOC, Canvas::new(100.0, 100.0, Vec2::default(), 1.0))
+        .is_ok());
+    assert!(doc
+        .add_asset(ImageAsset {
+            id: ASSET.to_string(),
+            source: "memory://test".into(),
+            width: 32,
+            height: 32,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut first = sample();
+    first.runtime_id = "shared".into();
+    assert!(doc.create_mesh(first).status.is_ok());
+
+    let mut second = sample();
+    second.id = "44444444-4444-4444-8444-444444444444".into();
+    second.runtime_id = "shared".into();
+    assert_eq!(
+        doc.create_mesh(second.clone()).status.code,
+        "DUPLICATE_RUNTIME_ID"
+    );
+
+    let mut renamed = doc.get_mesh(MESH).unwrap().clone();
+    renamed.runtime_id = "renamed".into();
+    assert!(doc.replace_mesh(renamed).status.is_ok());
+    assert!(doc.create_mesh(second.clone()).status.is_ok());
+
+    let mut old = doc.checkpoint();
+    let mut renamed_again = doc.get_mesh(MESH).unwrap().clone();
+    renamed_again.runtime_id = "after-checkpoint".into();
+    assert!(doc.replace_mesh(renamed_again).status.is_ok());
+    assert!(doc.exchange_checkpoint(&mut old).is_ok());
+    let mut conflict = doc.get_mesh(MESH).unwrap().clone();
+    conflict.runtime_id = "shared".into();
+    assert_eq!(
+        doc.replace_mesh(conflict).status.code,
+        "DUPLICATE_RUNTIME_ID"
+    );
+
+    assert!(doc.erase_object(&second.id).status.is_ok());
+    assert!(doc.create_mesh(second).status.is_ok());
+}
+
+#[test]
 fn test_core_lifecycle_and_topology() {
     let mut doc = Document::new();
     assert!(!doc.create_mesh(sample()).status.is_ok());

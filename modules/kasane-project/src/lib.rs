@@ -5,6 +5,8 @@ pub mod resources;
 pub mod store;
 
 pub use codec::{decode_project, encode_project};
+#[cfg(feature = "binary-prototype")]
+pub use codec::{decode_project_cbor, encode_project_cbor};
 pub use filesystem::{FileSystem, NativeFileSystem, Publication};
 pub use kasane_moc3::ImportReport;
 pub use kasane_psd::ImportReport as PsdImportReport;

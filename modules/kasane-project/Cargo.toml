@@ -7,6 +7,9 @@ license.workspace = true
 authors.workspace = true
 description = "Project persistence, document codec, resource management and publication for Kasane 2D"
 
+[features]
+binary-prototype = ["dep:ciborium"]
+
 [dependencies]
 kasane-core = { path = "../kasane-core" }
 kasane-moc3 = { path = "../kasane-moc3" }
@@ -16,6 +19,11 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 png = { workspace = true }
+ciborium = { version = "0.2.2", optional = true }
+
+[[example]]
+name = "project_binary_prototype"
+required-features = ["binary-prototype"]
 
 [[bench]]
 name = "codec_benchmark"

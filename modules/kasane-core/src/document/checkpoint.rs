@@ -146,6 +146,11 @@ impl Document {
         swap_field!(transform_order);
         swap_field!(meshes);
         swap_field!(mesh_order);
+        self.mesh_runtime_ids = self
+            .meshes
+            .iter()
+            .map(|(id, mesh)| (mesh.runtime_id.clone(), id.clone()))
+            .collect();
         swap_field!(parameters);
         swap_field!(parameter_order);
         swap_field!(bindings);

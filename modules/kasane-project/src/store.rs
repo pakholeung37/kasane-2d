@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::filesystem::{self as io, FileSystem, NativeFileSystem, Publication};
 
@@ -11,6 +11,8 @@ use kasane_moc3::{import_from_bare_moc3, import_from_model3_json, ImportReport};
 use kasane_psd::{import_psd, ImportReport as PsdImportReport};
 
 use crate::codec::{decode_project, encode_project};
+#[cfg(feature = "binary-prototype")]
+use crate::codec::{decode_project_cbor, encode_project_cbor};
 use crate::package::{
     publish_with_filesystem, ArtifactValidation, PackageOptions, RuntimeValidation,
 };
@@ -80,6 +82,49 @@ pub fn project_manifest(path: &Path) -> PathBuf {
     }
 }
 
+#[derive(Clone, Copy)]
+enum ProjectEncoding {
+    Json,
+    #[cfg(feature = "binary-prototype")]
+    Cbor,
+}
+
+impl ProjectEncoding {
+    fn manifest(self, path: &Path) -> PathBuf {
+        match self {
+            Self::Json => project_manifest(path),
+            #[cfg(feature = "binary-prototype")]
+            Self::Cbor => {
+                if path.extension().is_some_and(|ext| ext == "cbor") {
+                    path.to_path_buf()
+                } else {
+                    path.join("project.kasane.cbor")
+                }
+            }
+        }
+    }
+
+    fn decode(self, bytes: &[u8]) -> Result<Document, Status> {
+        match self {
+            Self::Json => {
+                let text = std::str::from_utf8(bytes)
+                    .map_err(|_| Status::error("INVALID_PROJECT", "Manifest is not valid UTF-8"))?;
+                decode_project(text)
+            }
+            #[cfg(feature = "binary-prototype")]
+            Self::Cbor => decode_project_cbor(bytes),
+        }
+    }
+
+    fn encode(self, document: &Document) -> Result<Vec<u8>, Status> {
+        match self {
+            Self::Json => encode_project(document).map(String::into_bytes),
+            #[cfg(feature = "binary-prototype")]
+            Self::Cbor => encode_project_cbor(document),
+        }
+    }
+}
+
 pub fn read_project_asset(root: &Path, asset: &ImageAsset) -> Result<AssetData, Status> {
     read_project_asset_if_changed(root, asset, None).map(|data| data.unwrap())
 }
@@ -130,6 +175,12 @@ pub fn read_project_asset_if_changed(
 
 pub struct DocumentStore {
     filesystem: Arc<dyn FileSystem>,
+    verified_pngs: Mutex<HashMap<String, (u32, u32)>>,
+}
+
+struct VerifiedAsset {
+    bytes: Vec<u8>,
+    sha256: String,
 }
 
 impl Default for DocumentStore {
@@ -144,14 +195,78 @@ impl DocumentStore {
     }
 
     pub fn with_filesystem(filesystem: Arc<dyn FileSystem>) -> Self {
-        Self { filesystem }
+        Self {
+            filesystem,
+            verified_pngs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// A cached entry proves that these exact PNG bytes decoded successfully.
+    /// Every call still reads and hashes current bytes, so external edits are detected.
+    fn read_verified_asset(
+        &self,
+        root: &Path,
+        asset: &ImageAsset,
+    ) -> Result<VerifiedAsset, Status> {
+        let source_path = asset_path(root, asset)?;
+        let bytes = fs::read(&source_path)
+            .map_err(|e| Status::error("PROJECT_IO", format!("{}: {}", asset.id, e)))?;
+        let sha256 = content_sha256(&bytes);
+        let cached_dimensions = self
+            .verified_pngs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&sha256)
+            .copied();
+        let (width, height) = match cached_dimensions {
+            Some(dimensions) => dimensions,
+            None => {
+                let image = kasane_core::image::decode_png(&bytes).map_err(|mut status| {
+                    status.message = format!("{}: {}", asset.id, status.message);
+                    status
+                })?;
+                let dimensions = (image.width, image.height);
+                self.verified_pngs
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .insert(sha256.clone(), dimensions);
+                dimensions
+            }
+        };
+        if width != asset.width || height != asset.height {
+            return Err(Status::error(
+                "RESOURCE_DIMENSIONS",
+                format!("{}: PNG dimensions differ from metadata", asset.id),
+            ));
+        }
+        if !asset.sha256.is_empty() && sha256 != asset.sha256 {
+            return Err(Status::error(
+                "RESOURCE_HASH",
+                format!("{}: PNG differs from saved SHA-256", asset.id),
+            ));
+        }
+        Ok(VerifiedAsset { bytes, sha256 })
+    }
+
+    fn remember_imported_assets(&self, document: &Document) {
+        let mut verified = self
+            .verified_pngs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for id in document.asset_order() {
+            let asset = document.get_asset(id).unwrap();
+            // MOC3 import assigns a hash only after successfully decoding the PNG.
+            if !asset.sha256.is_empty() {
+                verified.insert(asset.sha256.clone(), (asset.width, asset.height));
+            }
+        }
     }
 
     pub fn diagnose(&self, document: &Document, root: &Path) -> Vec<ResourceDiagnostic> {
         let mut result = Vec::new();
         for id in document.asset_order() {
             let asset = document.get_asset(id).unwrap();
-            if let Err(s) = read_project_asset(root, asset) {
+            if let Err(s) = self.read_verified_asset(root, asset) {
                 result.push(ResourceDiagnostic {
                     asset_id: id.clone(),
                     code: s.code,
@@ -163,7 +278,20 @@ impl DocumentStore {
     }
 
     pub fn open(&self, path: &Path) -> (ProjectResult, Option<DocumentSnapshot>) {
-        let manifest = match resolved_manifest(path) {
+        self.open_inner(path, ProjectEncoding::Json)
+    }
+
+    #[cfg(feature = "binary-prototype")]
+    pub fn open_cbor(&self, path: &Path) -> (ProjectResult, Option<DocumentSnapshot>) {
+        self.open_inner(path, ProjectEncoding::Cbor)
+    }
+
+    fn open_inner(
+        &self,
+        path: &Path,
+        encoding: ProjectEncoding,
+    ) -> (ProjectResult, Option<DocumentSnapshot>) {
+        let manifest = match resolved_manifest_for(path, encoding) {
             Ok(path) => path,
             Err(s) => return (ProjectResult::from_status(s), None),
         };
@@ -179,17 +307,7 @@ impl DocumentStore {
         };
 
         let sha256 = content_sha256(&bytes);
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(t) => t,
-            Err(_) => {
-                return (
-                    ProjectResult::failed("INVALID_PROJECT", "Manifest is not valid UTF-8"),
-                    None,
-                )
-            }
-        };
-
-        let document = match decode_project(text) {
+        let document = match encoding.decode(&bytes) {
             Ok(d) => d,
             Err(s) => {
                 return (ProjectResult::from_status(s), None);
@@ -217,7 +335,47 @@ impl DocumentStore {
         path: &Path,
         expected_manifest_sha256: Option<&str>,
     ) -> (ProjectResult, Option<DocumentSnapshot>) {
-        match self.save_inner(document, source_root, path, expected_manifest_sha256) {
+        self.save_with_encoding(
+            document,
+            source_root,
+            path,
+            expected_manifest_sha256,
+            ProjectEncoding::Json,
+        )
+    }
+
+    #[cfg(feature = "binary-prototype")]
+    pub fn save_cbor(
+        &self,
+        document: &Document,
+        source_root: &Path,
+        path: &Path,
+        expected_manifest_sha256: Option<&str>,
+    ) -> (ProjectResult, Option<DocumentSnapshot>) {
+        self.save_with_encoding(
+            document,
+            source_root,
+            path,
+            expected_manifest_sha256,
+            ProjectEncoding::Cbor,
+        )
+    }
+
+    fn save_with_encoding(
+        &self,
+        document: &Document,
+        source_root: &Path,
+        path: &Path,
+        expected_manifest_sha256: Option<&str>,
+        encoding: ProjectEncoding,
+    ) -> (ProjectResult, Option<DocumentSnapshot>) {
+        match self.save_inner(
+            document,
+            source_root,
+            path,
+            expected_manifest_sha256,
+            encoding,
+        ) {
             Ok((result, snapshot)) => (result, Some(snapshot)),
             Err(status) => (ProjectResult::from_status(status), None),
         }
@@ -229,6 +387,7 @@ impl DocumentStore {
         source_root: &Path,
         path: &Path,
         expected: Option<&str>,
+        encoding: ProjectEncoding,
     ) -> Result<(ProjectResult, DocumentSnapshot), Status> {
         if document.transaction_active() {
             return Err(Status::error(
@@ -236,8 +395,13 @@ impl DocumentStore {
                 "Commit or cancel edits first",
             ));
         }
-        encode_project(document)?;
-        let manifest = resolved_manifest(path)?;
+        if !document.initialized() {
+            return Err(Status::error(
+                "NOT_INITIALIZED",
+                "Initialize Document first",
+            ));
+        }
+        let manifest = resolved_manifest_for(path, encoding)?;
         let root = manifest
             .parent()
             .ok_or_else(|| Status::error("INVALID_PATH", "Missing project directory"))?;
@@ -249,10 +413,10 @@ impl DocumentStore {
         fs::create_dir_all(&assets_dir).map_err(io::io_error)?;
         let stage = io::Stage::new(root)?;
         let files = self.filesystem.as_ref();
-        let mut candidate = document.clone();
+        let mut candidate = document.fork_candidate();
         for id in document.asset_order() {
             let mut asset = document.get_asset(id).unwrap().clone();
-            let data = read_project_asset(source_root, &asset)?;
+            let data = self.read_verified_asset(source_root, &asset)?;
             let mut name = format!("{}.png", data.sha256);
             let mut target = assets_dir.join(&name);
             let mut reuse = false;
@@ -283,18 +447,20 @@ impl DocumentStore {
         }
         files.sync_directory(&assets_dir).map_err(io::io_error)?;
         files.sync_directory(root).map_err(io::io_error)?;
-        let text = encode_project(&candidate)?;
+        let manifest_bytes = encoding.encode(&candidate)?;
         let temporary = stage.0.join("manifest.json");
         files
-            .write_new(&temporary, text.as_bytes())
+            .write_new(&temporary, &manifest_bytes)
             .map_err(io::io_error)?;
         check_target(&manifest, expected)?;
+        let manifest_sha256 = content_sha256(&manifest_bytes);
+        drop(manifest_bytes);
         // Prepare committed state before publishing. A post-commit sync failure is a warning.
         candidate.mark_saved();
         let snapshot = DocumentSnapshot {
             document: candidate,
             manifest: manifest.clone(),
-            manifest_sha256: content_sha256(text.as_bytes()),
+            manifest_sha256,
         };
         files.rename(&temporary, &manifest).map_err(io::io_error)?;
         let result = publication_result(Publication::finish(files, root));
@@ -337,6 +503,7 @@ impl DocumentStore {
             project_result.warnings.push(w.clone());
         }
 
+        self.remember_imported_assets(&res.document);
         let snapshot = DocumentSnapshot {
             document: res.document,
             manifest: PathBuf::new(),
@@ -382,6 +549,7 @@ impl DocumentStore {
             project_result.warnings.push(w.clone());
         }
 
+        self.remember_imported_assets(&res.document);
         let snapshot = DocumentSnapshot {
             document: res.document,
             manifest: PathBuf::new(),
@@ -962,7 +1130,11 @@ impl Default for DocumentSession {
 }
 
 fn resolved_manifest(path: &Path) -> Result<PathBuf, Status> {
-    let requested = project_manifest(path);
+    resolved_manifest_for(path, ProjectEncoding::Json)
+}
+
+fn resolved_manifest_for(path: &Path, encoding: ProjectEncoding) -> Result<PathBuf, Status> {
+    let requested = encoding.manifest(path);
     io::reject_symlink(&requested)?;
     io::local_path(&requested)
 }

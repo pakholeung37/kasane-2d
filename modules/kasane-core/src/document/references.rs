@@ -147,7 +147,9 @@ impl Document {
         self.part_order.retain(|k| k != id);
         self.scene_binding_order.retain(|k| k != id);
         self.assets.remove(id);
-        self.meshes.remove(id);
+        if let Some(mesh) = self.meshes.remove(id) {
+            self.mesh_runtime_ids.remove(&mesh.runtime_id);
+        }
         self.vertex_slots.remove(id);
         self.parameters.remove(id);
         self.bindings.remove(id);

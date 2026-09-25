@@ -26,7 +26,7 @@ use crate::types::{
     SceneBinding, Status, Transform, VertexId,
 };
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 pub(super) trait EmptyOr {
     fn empty_or(&self) -> bool;
@@ -59,6 +59,7 @@ pub struct Document {
     transform_order: Vec<String>,
 
     meshes: HashMap<String, Mesh>,
+    mesh_runtime_ids: HashMap<String, String>,
     vertex_slots: HashMap<String, HashMap<VertexId, usize>>,
     mesh_order: Vec<String>,
 
@@ -87,7 +88,7 @@ pub struct Document {
     offscreens: HashMap<String, Offscreen>,
     offscreen_order: Vec<String>,
 
-    saved_content: Option<Box<DocumentContent>>,
+    saved_content: Option<Arc<DocumentContent>>,
     lookup: OnceLock<DocumentLookup>,
     prepared: OnceLock<Result<crate::evaluation::PreparedEvaluation, Status>>,
 }
@@ -407,7 +408,7 @@ impl Document {
     }
 
     pub fn mark_saved(&mut self) {
-        self.saved_content = Some(Box::new(self.content()));
+        self.saved_content = Some(Arc::new(self.content()));
     }
 
     pub fn restore_from(&mut self, source: &Document) {
