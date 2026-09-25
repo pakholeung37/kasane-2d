@@ -78,6 +78,25 @@ def main() -> int:
                 raise AssertionError(f"Framework expression queue drift at frame {index}: {frame}")
         report["checks"]["expression_queue"] = "passed"
         report["expression_queue"] = traces[0]
+        for blend, amount, wanted in [("Add", 4.0, 0.75),
+                                      ("Overwrite", -4.0, -0.25),
+                                      ("Multiply", 4.0, 0.75)]:
+            source = OUTPUT / f"clamp-{blend}-source.exp3.json"
+            encoded = OUTPUT / f"clamp-{blend}.exp3.json"
+            source.write_text(json.dumps({
+                "Type": "Live2D Expression", "FadeInTime": 0.25,
+                "Parameters": [{"Id": "ParamY", "Value": amount, "Blend": blend}],
+            }, indent=2))
+            run(["cargo", "run", "-q", "-p", "kasane-live2d", "--example",
+                 "reencode_exp3", "--", str(source), str(encoded)])
+            result = run([str(PROBE), "--expression-mix", str(FIXTURES / "model.moc3"),
+                          str(encoded), str(OUTPUT / "default.exp3.json")])
+            clamp_trace = json.loads(next(line for line in result.stdout.splitlines() if line.startswith("{")))
+            actual = clamp_trace["frames"][1]["param_y"]
+            if abs(actual - wanted) > 0.00002:
+                raise AssertionError(f"Framework clamp-before-weight drift for {blend}: {actual}")
+            report["checks"][f"clamp_before_weight_{blend}"] = "passed"
+            report["inputs"][str(encoded.relative_to(ROOT))] = digest(encoded)
         report["inputs"]["probe_binary"] = digest(PROBE)
         report["status"] = "passed"
     except Exception as failure:

@@ -198,7 +198,13 @@ impl ExpressionRuntime {
                 .expect("resolved parameter exists");
             values.insert(
                 id,
-                lerp(base, desired, expression_weight).clamp(parameter.minimum, parameter.maximum),
+                // CubismModel::SetParameterValue clamps the target before
+                // applying the manager's fade weight to the current value.
+                lerp(
+                    base,
+                    desired.clamp(parameter.minimum, parameter.maximum),
+                    expression_weight,
+                ),
             );
         }
     }

@@ -163,3 +163,34 @@ fn standalone_and_combined_expression_stages_share_replay_semantics() {
         );
     }
 }
+
+#[test]
+fn expression_clamps_target_before_fade_weight_like_framework() {
+    for (blend, value, base, expected) in [
+        (ExpressionBlend::Add, 4.0, 0.0, 0.5),
+        (ExpressionBlend::Overwrite, -4.0, 0.0, -0.5),
+        (ExpressionBlend::Multiply, 4.0, 0.5, 0.75),
+    ] {
+        let mut doc = document();
+        let mut expression = doc.get_expression(FIRST).unwrap().clone();
+        expression.entries = vec![ExpressionEntry {
+            target: ExpressionTarget::Resolved {
+                parameter_id: X.into(),
+            },
+            value,
+            blend: Some(blend),
+            extensions: Default::default(),
+        }];
+        assert!(doc.replace_expression(expression).status.is_ok());
+        let mut preview = ExpressionPreview::new(&doc);
+        preview.set_base_parameter(X, base).unwrap();
+        preview.schedule_expression(FIRST, 0.0).unwrap();
+        preview.advance(0.0).unwrap();
+        assert!((preview.advance(0.125).unwrap().parameters[X] - expected).abs() < 0.00001);
+        let mut combined = kasane_animation::MotionPreview::new(&doc);
+        combined.set_base_parameter(X, base).unwrap();
+        combined.schedule_expression(FIRST, 0.0).unwrap();
+        combined.advance(0.0).unwrap();
+        assert!((combined.advance(0.125).unwrap().parameters[X] - expected).abs() < 0.00001);
+    }
+}

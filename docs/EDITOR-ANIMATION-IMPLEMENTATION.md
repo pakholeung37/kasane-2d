@@ -71,3 +71,9 @@ uv run --no-project --no-cache --python 3.14 --with /absolute/path/to/kasane-0.1
 
 
 本次架构重构验证：`cargo test --workspace`、`cargo test -p kasane-project --features binary-prototype`、七个相关 crate 的严格 Clippy 全部通过；重新构建并安装 CPython 3.14 wheel 后，49 项 CPU 测试通过。Expression 官方差分、Physics 长序列、独立资源包 probe 均通过。重新执行 18 帧 GPU 差分通过，每通道最大误差仍为 1/255；其覆盖范围及独立报告位置与上文相同。
+
+## 提交后边界复查
+
+修复 Expression 越界目标值在淡入期间的限幅顺序：与 Framework `CubismModel::SetParameterValue` 一致，先对目标值限幅，再与基准值按权重混合。新增回归覆盖 Add、Multiply、Overwrite 以及独立/组合预览；官方 expression probe 增加三种模式的越界差分。全工作区 Rust 测试、animation 严格 Clippy 和扩展后的官方 probe 均通过。
+
+后续优先补齐注册条目级预览：当前预览按 clip UUID 调度，model3 注册条目的 fade override 已支持导出，但尚无按注册条目播放的入口。长时间 seek 仍从初态逐步重放，检查点缓存属于下一步性能优化。
