@@ -438,6 +438,23 @@ fn validate(motion: &Motion3, writer: bool) -> Result<(), Motion3Error> {
         }
     }
     if writer {
+        let stage = |target: MotionTarget| match target {
+            MotionTarget::Model => 0,
+            MotionTarget::Parameter => 1,
+            MotionTarget::PartOpacity => 2,
+        };
+        if !motion
+            .curves
+            .iter()
+            .map(|curve| stage(curve.target))
+            .is_sorted()
+        {
+            return Err(error(
+                "INVALID_CURVE_ORDER",
+                "$.Curves",
+                "Framework requires Model, Parameter, PartOpacity order",
+            ));
+        }
         for (path, extensions) in std::iter::once(("$".to_string(), &motion.extensions))
             .chain(std::iter::once((
                 "$.Meta".to_string(),

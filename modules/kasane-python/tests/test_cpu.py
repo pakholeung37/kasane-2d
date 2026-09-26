@@ -55,6 +55,26 @@ def session():
 
 
 class CpuWheelTests(unittest.TestCase):
+    def test_motion_seek_matches_playback_from_zero(self):
+        model = session()
+        with model.edit("seek origin") as edit:
+            edit.create_parameter(PARAMETER, "X", 0, 1, 0, runtime_id="ParamX")
+            edit.create_motion(MOTION, "Linear", 1, 30, fade_in=0, fade_out=0)
+            edit.create_motion_track(MOTION, {
+                "id": MOTION_TRACK,
+                "target": {"kind": "parameter", "parameter_id": PARAMETER},
+                "initial": {"time": 0, "value": 0},
+                "segments": [{"kind": "linear", "end": {"time": 1, "value": 1}}],
+                "fade_in": None, "fade_out": None, "extensions": {},
+            })
+        seek, played = model.motion_preview(), model.motion_preview()
+        for preview in (seek, played):
+            preview.schedule_motion(MOTION, 0)
+        played.seek(0)
+        self.assertEqual(seek.seek(1 / 60), played.advance(1 / 60))
+        self.assertAlmostEqual(seek.snapshot().parameters[PARAMETER], 1 / 60)
+        self.assertEqual(seek.seek_cache_stats().last_replayed_steps, 2)
+
     def test_motion_operation_identity_is_read_only_and_tracks_success(self):
         model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
         preview = model.motion_preview()
@@ -112,7 +132,7 @@ class CpuWheelTests(unittest.TestCase):
         self.assertEqual(preview.seek_cache_stats().last_replayed_steps, 0)
         preview.set_seek_cache_budget(0)
         self.assertEqual(preview.seek(2), expected)
-        self.assertEqual(preview.seek_cache_stats().last_replayed_steps, 120)
+        self.assertEqual(preview.seek_cache_stats().last_replayed_steps, 121)
         self.assertEqual(preview.seek_cache_stats().checkpoints, 0)
         preview.set_seek_cache_budget(16 * 1024 * 1024)
         preview.seek(2)
@@ -262,7 +282,7 @@ class CpuWheelTests(unittest.TestCase):
                                        updates.append((done, total)) is None and done < 3)
         self.assertEqual(cancelled.exception.code, "SEEK_CANCELLED")
         self.assertEqual(preview.snapshot(), before_cancel)
-        self.assertEqual(updates[0], (0, 60))
+        self.assertEqual(updates[0], (0, 61))
         self.assertEqual(preview.seek_with_progress(0.75, lambda done, total: True),
                          preview.seek(0.75))
         self.assertEqual(model.version, version)

@@ -80,6 +80,71 @@ fn physics3_unresolved_and_opaque_edits_block_strict_export() {
 }
 
 #[test]
+fn opaque_physics_protects_parameters_outside_known_rig_bindings() {
+    const Z: &str = "00000000-0000-4000-8000-000000000f15";
+    let mut doc = document();
+    assert!(doc
+        .create_parameter(Parameter {
+            id: Z.into(),
+            runtime_id: "ParamZ".into(),
+            name: "Z".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut source: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/animation_cpu/thirty.physics3.json"
+    ))
+    .unwrap();
+    source["Vendor"] = serde_json::json!({"ParameterId": "ParamZ"});
+    let imported = import_physics3(&doc, PHYSICS, &source.to_string())
+        .unwrap()
+        .candidate;
+    let baseline = decode_project(&encode_project(&imported).unwrap()).unwrap();
+    assert!(export_physics3(&baseline).is_ok());
+    assert_eq!(
+        baseline
+            .physics()
+            .unwrap()
+            .opaque_source_ids
+            .as_ref()
+            .unwrap()[Z],
+        "ParamZ"
+    );
+    for delete in [false, true] {
+        let mut changed = baseline.clone();
+        if delete {
+            assert!(changed.erase_object(Z).status.is_ok());
+        } else {
+            let mut parameter = changed.get_parameter(Z).unwrap().clone();
+            parameter.runtime_id = "RenamedZ".into();
+            assert!(changed.replace_parameter(parameter).status.is_ok());
+        }
+        assert_eq!(
+            export_physics3(&changed).unwrap_err().code,
+            "OPAQUE_NAMESPACE_CHANGED"
+        );
+    }
+    // Old files only captured the standard rig bindings. Reading is safe, but
+    // filling in missing provenance from today's namespace would bless stale IDs.
+    let mut legacy = baseline;
+    let mut asset = legacy.physics().unwrap().clone();
+    asset.opaque_source_ids = Some(
+        asset
+            .parameter_bindings
+            .keys()
+            .map(|id| (id.clone(), id.clone()))
+            .collect(),
+    );
+    assert!(legacy.set_physics(asset).status.is_ok());
+    let reopened = decode_project(&encode_project(&legacy).unwrap()).unwrap();
+    assert_eq!(
+        export_physics3(&reopened).unwrap_err().code,
+        "OPAQUE_NAMESPACE_CHANGED"
+    );
+}
+
+#[test]
 fn model3_physics_package_roundtrip_and_bad_attachment_rollback() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

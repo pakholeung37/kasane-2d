@@ -24,13 +24,15 @@ pub struct SeekCacheStats {
     pub checkpoints: usize,
     /// Restored checkpoint time in seconds; zero means replay from the initial state.
     pub last_restored_time: f32,
-    /// Steps actually replayed by the last successful seek, including a partial tail.
+    /// Steps actually replayed, including a cold replay's zero-time initialization
+    /// and a partial tail.
     /// An exact cache hit takes zero steps; seek to zero without a checkpoint takes one.
     pub last_replayed_steps: u32,
 }
 
 #[derive(Clone)]
 pub(crate) struct Checkpoint {
+    /// Completed evaluations, including the initial zero-time step.
     pub step: u32,
     pub snapshot: MotionSnapshot,
     pub motion: MotionRuntime,

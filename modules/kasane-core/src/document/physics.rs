@@ -15,6 +15,8 @@ pub struct PhysicsAsset {
     /// Original runtime ID to stable document parameter UUID. Absent entries
     /// remain unresolved and are diagnosed by import and strict export.
     pub parameter_bindings: BTreeMap<String, String>,
+    /// Complete Parameter UUID -> runtime ID namespace captured at import.
+    /// Legacy partial baselines remain readable, but cannot establish safe export.
     pub opaque_source_ids: Option<BTreeMap<String, String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opaque_source_content_hash: Option<String>,

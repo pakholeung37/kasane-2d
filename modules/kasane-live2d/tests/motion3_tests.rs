@@ -52,6 +52,19 @@ fn rejects_broken_segment_and_preserves_small_decimal_without_exponent() {
 }
 
 #[test]
+fn writer_rejects_curve_order_that_framework_would_skip() {
+    let motion = decode_motion3(include_str!(
+        "../../../tests/fixtures/animation_cpu/unordered.motion3.json"
+    ))
+    .unwrap();
+    // Import preserves repairable source data. Writers must not silently emit it.
+    assert_eq!(
+        encode_motion3(&motion).unwrap_err().code,
+        "INVALID_CURVE_ORDER"
+    );
+}
+
+#[test]
 fn accepts_editor_rounded_duration_with_last_point_within_half_frame() {
     let rounded = TYPED.replace("\"Duration\":1", "\"Duration\":0.997");
     assert!(decode_motion3(&rounded).is_ok());

@@ -15,19 +15,17 @@ impl ReplaySteps {
             return Err(AnimationError::SeekLimit);
         }
         let whole = (time * 60.0).floor() as u32;
-        let total = if time == 0.0 {
-            1
-        } else {
-            whole + u32::from(time > whole as f32 / 60.0)
-        };
+        // Every cold replay includes the zero-time evaluation. Otherwise the
+        // first activation starts a frame late relative to seek(0) + advance.
+        let total = 1 + whole + u32::from(time > whole as f32 / 60.0);
         Ok(Self {
             time,
-            next: 1,
+            next: 0,
             total,
         })
     }
     pub(crate) fn resume_after(&mut self, completed: u32) {
-        self.next = completed + 1;
+        self.next = completed;
     }
     pub(crate) fn total(&self) -> u32 {
         self.total
@@ -36,10 +34,10 @@ impl ReplaySteps {
 impl Iterator for ReplaySteps {
     type Item = f32;
     fn next(&mut self) -> Option<f32> {
-        if self.next > self.total {
+        if self.next >= self.total {
             return None;
         }
-        let time = if self.next == self.total {
+        let time = if self.next + 1 == self.total {
             self.time
         } else {
             self.next as f32 / 60.0

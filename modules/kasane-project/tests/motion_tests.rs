@@ -27,6 +27,43 @@ fn document() -> Document {
 }
 
 #[test]
+fn export_orders_curve_stages_stably_and_preserves_opaque_sources() {
+    let source = include_str!("../../../tests/fixtures/animation_cpu/unordered.motion3.json");
+    // ParamY and Part0 remain virtual, and still need the right wire stage.
+    let imported = import_motion3(&document(), MOTION, "Unordered", source)
+        .unwrap()
+        .candidate;
+    let before = imported.get_motion(MOTION).unwrap().clone();
+    let exported: Value =
+        serde_json::from_str(&export_motion3(&imported, MOTION).unwrap()).unwrap();
+    let ids: Vec<_> = exported["Curves"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["Id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["Opacity", "ParamY", "ParamX", "Part0"]);
+    assert_eq!(imported.get_motion(MOTION), Some(&before));
+    let mut opaque: Value = serde_json::from_str(source).unwrap();
+    opaque["Vendor"] = serde_json::json!({"CurveReference": "first"});
+    let imported = import_motion3(&document(), MOTION, "Opaque", &opaque.to_string())
+        .unwrap()
+        .candidate;
+    assert_eq!(
+        export_motion3(&imported, MOTION).unwrap_err().code,
+        "OPAQUE_CURVE_ORDER"
+    );
+    opaque["Curves"] = exported["Curves"].clone();
+    let imported = import_motion3(&document(), MOTION, "Opaque", &opaque.to_string())
+        .unwrap()
+        .candidate;
+    let roundtrip: Value =
+        serde_json::from_str(&export_motion3(&imported, MOTION).unwrap()).unwrap();
+    assert_eq!(roundtrip["Vendor"], opaque["Vendor"]);
+    assert_eq!(roundtrip["Curves"], opaque["Curves"]);
+}
+
+#[test]
 fn motion_import_roundtrips_segments_events_and_v5_project() {
     let source = include_str!("../../../tests/fixtures/animation_cpu/typed.motion3.json");
     let imported = import_motion3(&document(), MOTION, "Idle", source).unwrap();

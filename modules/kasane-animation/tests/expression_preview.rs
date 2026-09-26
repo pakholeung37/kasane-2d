@@ -165,6 +165,23 @@ fn standalone_and_combined_expression_stages_share_replay_semantics() {
 }
 
 #[test]
+fn expression_seek_uses_the_same_origin_as_playback_from_zero() {
+    let doc = document();
+    let mut seek = ExpressionPreview::new(&doc);
+    let mut played = ExpressionPreview::new(&doc);
+    for preview in [&mut seek, &mut played] {
+        preview.schedule_expression(FIRST, 0.0).unwrap();
+    }
+    played.seek(0.0).unwrap();
+    for frame in 1..=15 {
+        let time = frame as f32 / 60.0;
+        let dt = time - played.snapshot().time;
+        assert_eq!(seek.seek(time).unwrap(), played.advance(dt).unwrap());
+    }
+    assert_eq!(seek.snapshot().parameters[X], 0.75);
+}
+
+#[test]
 fn expression_clamps_target_before_fade_weight_like_framework() {
     for (blend, value, base, expected) in [
         (ExpressionBlend::Add, 4.0, 0.0, 0.5),

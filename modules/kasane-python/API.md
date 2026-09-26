@@ -312,7 +312,7 @@ Rust snapshot accessors borrow state. IDs in parameter/Part maps are UUIDs.
 | Motion `schedule_parameter_input(parameter_id, time, value)` | Clamp a finite value and schedule an override before Motion on the first due update; retain it across reset/seek. |
 | Expression/Motion `reset()` | Restore time zero and initial state from the baseline while retaining schedules. Time-zero activations need `advance(0)` or `seek(0)` to evaluate. Motion also clears cache/statistics. |
 | Expression/Motion `advance(dt)` | Finite nonnegative seconds; zero evaluates due activations. Returns a snapshot. |
-| Expression/Motion `seek(time)` | Absolute seconds, 60 Hz replay with a partial final step. Seeking zero evaluates one zero-length step. Expression replays from baseline; Motion may restore a canonical checkpoint. |
+| Expression/Motion `seek(time)` | Absolute seconds, 60 Hz replay with a partial final step. Cold replay always evaluates a zero-length step at time zero first. Expression replays from baseline; Motion may restore a canonical checkpoint. |
 | Physics `parameters()` / `diagnostics()` | Current values / coverage messages from the last advance, without evaluation. |
 | Physics `set_parameter(parameter_id, value)` | Clamp a finite value without resetting particles; this is a temporary input, not a persistent baseline. |
 | Physics `advance(dt)` | Finite nonnegative seconds; uses the asset FPS if present, otherwise the supplied delta. Refreshes diagnostics and returns parameter values. |
@@ -389,7 +389,7 @@ non-integer arguments raise `TypeError`, without modifying state.
 | `estimated_bytes: int` | Conservative retained allocation estimate in bytes, at most the budget; excludes shared document/curve data and temporary seek state. |
 | `checkpoints: int` | Number of retained complete playback checkpoints. |
 | `last_restored_time: float` | Last restored checkpoint time in seconds; zero means replay started from the initial state. |
-| `last_replayed_steps: int` | Actual steps in the last successful seek, including a partial tail; zero for an exact cache hit, one for an uncached seek to time zero. |
+| `last_replayed_steps: int` | Actual evaluations in the last successful seek, including cold replay's zero-time initialization and any partial tail; zero for an exact cache hit, one for an uncached seek to time zero. A cold seek to one second takes 61 evaluations. |
 
 Clearing/invalidation zeros all statistics except `budget_bytes`; failed or
 cancelled seeks preserve them. `advance()` and stabilization do not update the

@@ -39,14 +39,15 @@ fn error(
     }
 }
 
-fn namespace(document: &Document, asset: &PhysicsAsset) -> BTreeMap<String, String> {
-    asset
-        .parameter_bindings
+fn namespace(document: &Document) -> BTreeMap<String, String> {
+    // Opaque fields may refer to parameters absent from standard rig bindings.
+    // UUID keys also distinguish this complete baseline from legacy runtime-ID keys.
+    document
+        .parameter_order()
         .iter()
-        .filter_map(|(runtime, id)| {
-            document
-                .get_parameter(id)
-                .map(|parameter| (runtime.clone(), parameter.runtime_id.clone()))
+        .map(|id| {
+            let parameter = document.get_parameter(id).expect("ordered parameter");
+            (id.clone(), parameter.runtime_id.clone())
         })
         .collect()
 }
@@ -102,7 +103,7 @@ pub fn import_physics3(
     };
     // Unknown extensions cannot be remapped safely when model IDs change.
     if has_extensions(&asset) {
-        asset.opaque_source_ids = Some(namespace(document, &asset));
+        asset.opaque_source_ids = Some(namespace(document));
         asset.opaque_source_content_hash = Some(content_hash(&asset));
     }
     let mut candidate = document.fork_candidate();
@@ -170,11 +171,11 @@ pub fn export_physics3(document: &Document) -> Result<Option<String>, PhysicsPro
         return Ok(None);
     };
     if has_extensions(asset) {
-        if asset.opaque_source_ids.as_ref() != Some(&namespace(document, asset)) {
+        if asset.opaque_source_ids.as_ref() != Some(&namespace(document)) {
             return Err(error(
                 "OPAQUE_NAMESPACE_CHANGED",
                 "$",
-                "Parameter runtime IDs changed since import",
+                "Parameter namespace changed or provenance is incomplete; reimport physics3",
             ));
         }
         if asset.opaque_source_content_hash.as_deref() != Some(content_hash(asset).as_str()) {

@@ -448,8 +448,8 @@ impl MotionPreview {
     }
 
     /// Seek to absolute seconds using canonical checkpoints or the initial state.
-    /// Uses an absolute 60 Hz grid and a partial final step. Time zero evaluates a
-    /// zero-length step. Nonfinite/negative time returns `InvalidTime`; time * 60
+    /// Uses an absolute 60 Hz grid and a partial final step. Cold replay begins
+    /// with a zero-length step at time zero. Nonfinite/negative time returns `InvalidTime`; time * 60
     /// above one million returns `SeekLimit`, even with cached state. Failure preserves
     /// playback and cache. Returned events are data, with no playback side effects.
     pub fn seek(&mut self, time: f32) -> Result<&MotionSnapshot, AnimationError> {
@@ -498,7 +498,8 @@ impl MotionPreview {
             candidate.advance((next - candidate.snapshot.time).max(0.0))?;
             let step = start + index as u32 + 1;
             // Never retain partial tail steps, seek(0), or arbitrary advance state.
-            if step.is_multiple_of(60) && next == step as f32 / 60.0 {
+            let grid_step = step - 1; // The first evaluation is time zero.
+            if grid_step > 0 && grid_step.is_multiple_of(60) && next == grid_step as f32 / 60.0 {
                 cache.insert(candidate.checkpoint_bytes(), || Checkpoint {
                     step,
                     snapshot: candidate.snapshot.clone(),

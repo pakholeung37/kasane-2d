@@ -173,7 +173,7 @@ impl Document {
                 "Commit or cancel first",
             ));
         }
-        if id == self.id || !self.contains_id(id) {
+        if id == self.id || !self.contains_top_level_id(id) {
             return self.failed(Status::error("MISSING_OBJECT", id));
         }
         let metadata_only = self.expressions.contains_key(id)

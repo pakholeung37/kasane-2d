@@ -27,6 +27,88 @@ fn document() -> Document {
 }
 
 #[test]
+fn seek_matches_zero_initialized_playback_including_events_and_cache_hits() {
+    let mut doc = import_motion3(
+        &document(),
+        MOTION,
+        "Linear",
+        include_str!("../../../tests/fixtures/animation_cpu/loop.motion3.json"),
+    )
+    .unwrap()
+    .candidate;
+    let mut clip = doc.get_motion(MOTION).unwrap().clone();
+    clip.events.push(kasane_core::document::MotionEvent {
+        id: "00000000-0000-4000-8000-000000000d20".into(),
+        time: 1.0 / 60.0,
+        value: "first frame".into(),
+        extensions: Default::default(),
+    });
+    assert!(doc.replace_motion(clip).status.is_ok());
+    let mut seek = MotionPreview::new(&doc);
+    let mut played = MotionPreview::new(&doc);
+    for preview in [&mut seek, &mut played] {
+        preview.schedule_motion(MOTION, 0.0).unwrap();
+    }
+    played.seek(0.0).unwrap();
+    for frame in 1..=90 {
+        let time = frame as f32 / 60.0;
+        let dt = time - played.snapshot().time;
+        assert_eq!(
+            seek.seek(time).unwrap(),
+            played.advance(dt).unwrap(),
+            "frame={frame}"
+        );
+        if frame == 1 {
+            assert_eq!(seek.snapshot().parameters[PARAM], 1.0 / 60.0);
+            assert_eq!(seek.snapshot().fired_events.len(), 1);
+        }
+    }
+    assert_eq!(seek.seek_cache_stats().last_restored_time, 1.0);
+    let state = seek.snapshot().clone();
+    let stats = seek.seek_cache_stats();
+    assert_eq!(
+        seek.seek_with_progress(0.5, |done, _| done < 1)
+            .unwrap_err(),
+        kasane_animation::AnimationError::SeekCancelled
+    );
+    assert_eq!(seek.snapshot(), &state);
+    assert_eq!(seek.seek_cache_stats(), stats);
+}
+
+#[test]
+fn parameter_and_part_control_stages_match_exported_playback() {
+    let mut doc = document();
+    assert!(doc
+        .create_part(Part {
+            id: "00000000-0000-4000-8000-000000000d21".into(),
+            runtime_id: "ParamX".into(),
+            name: "Control".into(),
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let mut source: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/animation_cpu/unordered.motion3.json"
+    ))
+    .unwrap();
+    source["Curves"][0]["Id"] = "ParamX".into();
+    source["Curves"][0]["Segments"] = serde_json::json!([0, 0.25, 0, 1, 0.25]);
+    let authored = import_motion3(&doc, MOTION, "Stages", &source.to_string())
+        .unwrap()
+        .candidate;
+    let exported = kasane_project::export_motion3(&authored, MOTION).unwrap();
+    let reopened = import_motion3(&doc, MOTION, "Stages", &exported)
+        .unwrap()
+        .candidate;
+    for doc in [&authored, &reopened] {
+        let mut preview = MotionPreview::new(doc);
+        preview.schedule_motion(MOTION, 0.0).unwrap();
+        preview.advance(0.0).unwrap();
+        assert_eq!(preview.advance(0.5).unwrap().parameters[PARAM], 0.25);
+    }
+}
+
+#[test]
 fn operation_identity_distinguishes_zero_time_actions_and_failed_seek() {
     let mut preview = MotionPreview::new(&document());
     let preview_id = preview.operation().preview_id.clone();
@@ -189,7 +271,7 @@ fn loop_v2_matches_official_framework_frames() {
         kasane_animation::AnimationError::SeekCancelled
     );
     assert_eq!(preview.snapshot(), &before_cancel);
-    assert_eq!(updates[0], (0, 60));
+    assert_eq!(updates[0], (0, 61));
     assert_eq!(
         preview.seek_with_progress(1.0, |_, _| true).unwrap().time,
         1.0
@@ -630,7 +712,7 @@ fn cached_seek_matches_cold_replay_for_complete_runtime_state() {
     }
     assert_eq!(cached.seek_cache_stats().last_restored_time, 60.0);
     assert_eq!(cached.seek_cache_stats().last_replayed_steps, 60);
-    assert_eq!(cold.seek_cache_stats().last_replayed_steps, 3660);
+    assert_eq!(cold.seek_cache_stats().last_replayed_steps, 3661);
     assert_eq!(cold.seek_cache_stats().checkpoints, 0);
     // Noncanonical mutations must never seed checkpoints.
     cached.advance(0.031).unwrap();

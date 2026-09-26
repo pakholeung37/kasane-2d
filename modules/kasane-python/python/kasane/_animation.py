@@ -62,7 +62,8 @@ class ExpressionPreview:
     def seek(self, time: float) -> ExpressionSnapshot:
         """Replay from the baseline on the absolute 60 Hz grid to time in seconds.
 
-        A partial final step is included; time zero evaluates one zero-length step.
+        Replay begins with a zero-length step at time zero, then includes grid
+        steps and a partial final step when needed.
         Schedule and baseline are retained. Nonfinite/negative time raises
         INVALID_TIME; time * 60 above one million raises SEEK_LIMIT. Validation
         occurs before resetting playback. This standalone preview has no cache.
@@ -219,8 +220,8 @@ class MotionPreview:
         """Replay to absolute time in seconds from a canonical checkpoint or baseline.
 
         Uses the absolute 60 Hz grid with a partial final step; repeated seeks with
-        the same baseline/schedules return identical snapshots. Time zero evaluates
-        one zero-length step. INVALID_TIME rejects nonfinite/negative time;
+        the same baseline/schedules return identical snapshots. Cold replay begins
+        with a zero-length step at time zero. INVALID_TIME rejects nonfinite/negative time;
         SEEK_LIMIT rejects time * 60 above one million, even with a warm cache.
         Failed seeks preserve playback and cache. Events are returned as data;
         seeking does not dispatch audio or other event side effects.

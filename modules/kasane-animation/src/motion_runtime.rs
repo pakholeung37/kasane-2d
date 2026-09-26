@@ -224,7 +224,7 @@ impl MotionRuntime {
                 _ => 1.0,
             };
             let weight = in_weight * out_weight;
-            for track in &clip.tracks {
+            for track in clip.tracks_in_evaluation_order() {
                 let value = sample_track(track, &curves[&track.id], offset, clip);
                 match &track.target {
                     MotionTrackTarget::Parameter { parameter_id } => {

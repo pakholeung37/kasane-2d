@@ -581,7 +581,21 @@ impl Document {
         self.transaction_active
     }
 
+    /// Whether an ID is occupied, including nested Motion tracks and events.
     pub fn contains_id(&self, id: &str) -> bool {
+        self.contains_top_level_id(id) || self.contains_motion_child_id(id, None)
+    }
+
+    pub(super) fn contains_motion_child_id(&self, id: &str, except_clip: Option<&str>) -> bool {
+        self.motions.values().any(|clip| {
+            Some(clip.id.as_str()) != except_clip
+                && (clip.tracks.iter().any(|track| track.id == id)
+                    || clip.events.iter().any(|event| event.id == id))
+        })
+    }
+
+    // Nested IDs are occupied, but cannot be removed through erase_object.
+    pub(super) fn contains_top_level_id(&self, id: &str) -> bool {
         self.id == id
             || self.assets.contains_key(id)
             || self.parts.contains_key(id)

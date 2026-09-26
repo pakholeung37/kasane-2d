@@ -94,6 +94,24 @@ def main() -> int:
             report["checks"][name] = "passed"
             report["inputs"][str(source.relative_to(ROOT))] = digest(source)
             report["inputs"][str(encoded.relative_to(ROOT))] = digest(encoded)
+        # Exercise the authoring/project boundary, not just wire roundtrips.
+        # A loader accepts unordered curves, but playback silently skips them.
+        source = FIXTURES / "unordered.motion3.json"
+        encoded = OUTPUT / "ordered.motion3.json"
+        rust = json.loads(run(["cargo", "run", "-q", "-p", "kasane-animation", "--example",
+                               "motion_export_trace", "--", str(source), str(encoded)]))
+        official = curve_trace(encoded)
+        expected_times = [index / 8 for index in range(9)]
+        for trace_data in (rust, official):
+            samples = trace_data["samples"]
+            if len(samples) != len(expected_times):
+                raise AssertionError("unexpected ordered motion sample count")
+            for sample, time in zip(samples, expected_times):
+                if abs(sample["time"] - time) > 0.00002 or abs(sample["param_x"] - time) > 0.00002:
+                    raise AssertionError(f"ordered authoring/export trace drift: {sample}")
+        report["checks"]["authoring_curve_stage_order"] = "passed"
+        report["inputs"][str(source.relative_to(ROOT))] = digest(source)
+        report["inputs"][str(encoded.relative_to(ROOT))] = digest(encoded)
         report["inputs"]["probe_binary"] = digest(PROBE)
         report["status"] = "passed"
     except Exception as failure:

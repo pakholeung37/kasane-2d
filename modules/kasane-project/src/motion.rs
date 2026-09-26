@@ -344,10 +344,20 @@ pub fn export_motion3(document: &Document, id: &str) -> Result<String, MotionPro
         if clip.opaque_source_content_hash.as_deref() != Some(content_hash(clip).as_str()) {
             return Err(error("OPAQUE_CONTENT_CHANGED", "$", "motion content changed since import; reimport to establish an opaque-field baseline"));
         }
+        if !clip
+            .tracks_in_evaluation_order()
+            .map(|track| &track.id)
+            .eq(clip.tracks.iter().map(|track| &track.id))
+        {
+            return Err(error(
+                "OPAQUE_CURVE_ORDER",
+                "$.Curves",
+                "Unknown fields prevent safely reordering curves; reimport a motion in Model, Parameter, PartOpacity order",
+            ));
+        }
     }
     let curves = clip
-        .tracks
-        .iter()
+        .tracks_in_evaluation_order()
         .enumerate()
         .map(|(index, track)| {
             let path = format!("$.Curves[{index}].Id");

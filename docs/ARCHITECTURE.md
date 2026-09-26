@@ -41,8 +41,16 @@ Godot 编辑器、Viewer、demo 和 Rust GDExtension 已从当前应用路径移
 
 组合预览的文档与编译曲线不可变，由 `Arc` 共享；`MotionRuntime` 和 `ExpressionRuntime` 不拥有时钟或文档，使用预览传入的时间和参数。Motion → Expression → Physics → Pose 的执行顺序在 `MotionPreview::advance` 中明确。独立 Expression 预览复用同一阶段。seek 的绝对 60 Hz 格点由 `ReplaySteps` 统一定义，取消组合 seek 时只丢弃候选可变状态。
 
+冷回放统一先求值零时刻，再推进 60 Hz 格点及最后不足一帧的步长。进度和缓存统计计入零时刻初始化，因此冷 seek 到 1 秒需要 61 次求值；从 1 秒 checkpoint 推进到 2 秒只需 60 次。Motion 与独立 Expression 使用同一规则，保证 seek 到某一格点与从零时刻按格点播放一致。
+
+Motion 的编辑顺序保留在文档中；Core 的 `tracks_in_evaluation_order` 定义 Model → Parameter → PartOpacity 的阶段顺序，同阶段保持编辑顺序。animation 和 project 导出共享该规则，live2d writer 独立拒绝错误的 wire 顺序。未知扩展可能包含依赖轨道位置的信息，因此有未知扩展的乱序 Motion 拒绝导出，要求显式修复后重新导入。
+
+Core 的 `contains_id` 检查完整 UUID 占用空间，包括 Motion 的 track/event；“ID 已占用”与“可由 erase_object 删除的对象”分开。编辑 API 必须在成功返回时保持文档合法，SDK commit 的结构检查是最终防线。
+
 文档 Motion 使用共享 clip，轨道 segment 使用写时复制。历史快照和未改动轨道共享存储，预算估算仍保守计入可达内存。编译曲线直接引用不可变 segment，不重复保留 wire 曲线。
 
 发布分为 `build_export_plan`、包级验证和 `publish_export_plan`。计划封装已验证资源的最终字节、SHA-256、文件类型及 model3 引用边；验证器只能读取计划。发布器写入相同字节，并根据验证结果生成报告，再执行同步与原子替换，失败按原契约回滚。
 
 工程格式 v6 保存 typed model3 参数组和 HitArea 引用。v5 原始 JSON 在 codec 边界迁移；v1–v4 补默认空集合。已解析引用统一使用 UUID，导出时才转换 runtime ID。未知扩展与 UserData 内无法安全重写的引用保留严格导出保护。
+
+Physics 未知字段的来源记录覆盖完整 Parameter UUID → runtime ID 命名空间，包含不在标准 rig 绑定中的参数。旧工程中只记录标准绑定的来源信息仍可读取，但不足以证明未知引用安全，严格导出要求重新导入原 Physics 文件；不能从当前文档自动补齐并把它当作导入时的记录。没有未知字段的 Physics 不受此限制。

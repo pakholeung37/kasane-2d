@@ -114,7 +114,7 @@ impl ExpressionPreview {
 
     /// Replay at 60 Hz, with a final short step. The schedule and base inputs
     /// stay fixed, so repeated seeks produce identical snapshots.
-    /// Time zero evaluates one zero-length step. Nonfinite/negative time returns
+    /// Every replay begins with a zero-length step at time zero. Nonfinite/negative time returns
     /// `InvalidTime`; time * 60 above one million returns `SeekLimit` before reset.
     /// This standalone preview has no checkpoint cache.
     pub fn seek(&mut self, time: f32) -> Result<&RuntimeSnapshot, AnimationError> {

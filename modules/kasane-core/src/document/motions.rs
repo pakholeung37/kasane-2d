@@ -121,6 +121,23 @@ pub struct MotionGroup {
 }
 
 impl MotionClip {
+    /// Framework stage order, preserving authored order within each stage.
+    /// Unresolved controls belong to the same stage as their resolved peers.
+    pub fn tracks_in_evaluation_order(&self) -> impl Iterator<Item = &MotionTrack> {
+        let stage = |target: &MotionTrackTarget| match target {
+            MotionTrackTarget::Model { .. } => 0,
+            MotionTrackTarget::Parameter { .. } => 1,
+            MotionTrackTarget::PartOpacity { .. } => 2,
+            MotionTrackTarget::Unresolved { category, .. } if category == "Parameter" => 1,
+            MotionTrackTarget::Unresolved { .. } => 2,
+        };
+        (0..3).flat_map(move |order| {
+            self.tracks
+                .iter()
+                .filter(move |track| stage(&track.target) == order)
+        })
+    }
+
     pub fn has_extensions(&self) -> bool {
         !self.extensions.is_empty()
             || !self.meta_extensions.is_empty()
@@ -251,15 +268,7 @@ impl Document {
         if !super::valid_uuid(&clip.id) {
             return Status::error("INVALID_MOTION_ID", &clip.id);
         }
-        let nested_elsewhere = |id: &str| {
-            self.motions
-                .values()
-                .filter(|other| other.id != clip.id)
-                .any(|other| {
-                    other.tracks.iter().any(|track| track.id == id)
-                        || other.events.iter().any(|event| event.id == id)
-                })
-        };
+        let nested_elsewhere = |id: &str| self.contains_motion_child_id(id, Some(&clip.id));
         if nested_elsewhere(&clip.id) {
             return Status::error("DUPLICATE_ID", &clip.id);
         }
@@ -297,7 +306,7 @@ impl Document {
                     format!("{}.tracks[{index}]", clip.id),
                 );
             }
-            if self.contains_id(&track.id) || nested_elsewhere(&track.id) {
+            if self.contains_top_level_id(&track.id) || nested_elsewhere(&track.id) {
                 return Status::error("DUPLICATE_ID", &track.id);
             }
             if [track.fade_in, track.fade_out]
@@ -401,7 +410,7 @@ impl Document {
                     format!("{}.events[{index}]", clip.id),
                 );
             }
-            if self.contains_id(&event.id) || nested_elsewhere(&event.id) {
+            if self.contains_top_level_id(&event.id) || nested_elsewhere(&event.id) {
                 return Status::error("DUPLICATE_ID", &event.id);
             }
             if !event.time.is_finite() || event.time < 0.0 || event.time > clip.duration {
