@@ -2,6 +2,7 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use kasane_render::DiagnosticOverrides;
 use kasane_sdk_observe::{
     CanvasRoi, ObservationError, ObservationInput, ObservedFrame, Observer, ObserverConfig,
     PresentationBackground, RenderRequest, ResolvedObservation,
@@ -132,6 +133,7 @@ impl NativeCapturedScene {
             "evaluation_revision": input.evaluation_revision(),
             "snapshot_clone_ns": input.snapshot_clone_ns(),
             "source_revision": input.frame().source_revision,
+            "hidden_geometry_captured": input.hidden_geometry_captured(),
             "requested": input.requested(),
             "textures": self.inner.textures().iter().map(|texture| &texture.asset).collect::<Vec<_>>(),
         }))
@@ -302,6 +304,162 @@ impl NativeCapturedScene {
             render_digest,
         ))
     }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_isolated(
+        &self,
+        py: Python<'_>,
+        observer: &NativeObserver,
+        width: u32,
+        height: u32,
+        roi: (f32, f32, f32, f32),
+        padding_canvas: f32,
+        background_kind: &str,
+        light: (u8, u8, u8),
+        dark: (u8, u8, u8),
+        tile_px: u32,
+        origin_px: (i32, i32),
+        straight_alpha: bool,
+        focus: Vec<String>,
+        ignore_masks: bool,
+        ignore_opacity: bool,
+        include_disabled: bool,
+    ) -> PyResult<(NativeFrameTuple, RenderMappingTuple, String)> {
+        let request = RenderRequest {
+            width,
+            height,
+            roi: CanvasRoi {
+                x0: roi.0,
+                y0: roi.1,
+                x1: roi.2,
+                y1: roi.3,
+            },
+            padding_canvas,
+        };
+        let background = match background_kind {
+            "transparent" => PresentationBackground::Transparent,
+            "solid" => PresentationBackground::Solid {
+                rgb: [light.0, light.1, light.2],
+            },
+            "checker" => PresentationBackground::Checker {
+                light: [light.0, light.1, light.2],
+                dark: [dark.0, dark.1, dark.2],
+                tile_px,
+                origin_px,
+            },
+            _ => {
+                return Err(observation_failure(
+                    py,
+                    ObservationError {
+                        code: "INVALID_BACKGROUND".into(),
+                        message: "Unknown presentation background".into(),
+                        asset_id: None,
+                    },
+                ))
+            }
+        };
+        let result = py.detach(|| {
+            observer
+                .inner
+                .lock()
+                .map_err(|_| None)?
+                .render_isolated(
+                    &self.inner,
+                    request,
+                    background,
+                    straight_alpha,
+                    &focus,
+                    DiagnosticOverrides {
+                        ignore_masks,
+                        ignore_opacity,
+                        include_disabled,
+                    },
+                )
+                .map_err(Some)
+        });
+        let (frame, plan) = match result {
+            Ok(value) => value,
+            Err(Some(error)) => return Err(observation_failure(py, error)),
+            Err(None) => return Err(poisoned()),
+        };
+        let mapping = frame
+            .explicit_view
+            .expect("isolated render has ROI mapping");
+        let identity = serde_json::json!({
+            "color_mesh_ids": plan.color_mesh_ids,
+            "mask_only_mesh_ids": plan.mask_only_mesh_ids,
+            "ancestor_target_ids": plan.ancestor_target_ids,
+            "destination_context": plan.destination_context,
+            "raw_render_hash": frame.input_sha256,
+            "overrides": {"ignore_masks": ignore_masks,
+                          "ignore_opacity": ignore_opacity,
+                          "include_disabled": include_disabled},
+        });
+        let roi_tuple = |roi: CanvasRoi| (roi.x0, roi.y0, roi.x1, roi.y1);
+        Ok((
+            frame_tuple(py, frame)?,
+            (
+                roi_tuple(mapping.requested_roi),
+                roi_tuple(mapping.padded_roi),
+                roi_tuple(mapping.visible_roi),
+            ),
+            identity.to_string(),
+        ))
+    }
+
+    fn render_mask(
+        &self,
+        py: Python<'_>,
+        observer: &NativeObserver,
+        width: u32,
+        height: u32,
+        roi: (f32, f32, f32, f32),
+        padding_canvas: f32,
+        consumer_id: &str,
+        source_id: Option<&str>,
+    ) -> PyResult<(String, u32, u32, Py<PyBytes>, Py<PyBytes>)> {
+        let request = RenderRequest {
+            width,
+            height,
+            roi: CanvasRoi {
+                x0: roi.0,
+                y0: roi.1,
+                x1: roi.2,
+                y1: roi.3,
+            },
+            padding_canvas,
+        };
+        let mask = py.detach(|| {
+            observer
+                .inner
+                .lock()
+                .map_err(|_| None)?
+                .render_mask(&self.inner, request, consumer_id, source_id)
+                .map_err(Some)
+        });
+        let mask = match mask {
+            Ok(mask) => mask,
+            Err(Some(error)) => return Err(observation_failure(py, error)),
+            Err(None) => return Err(poisoned()),
+        };
+        let png = mask
+            .png_bytes()
+            .map_err(|error| observation_failure(py, error))?;
+        let metadata = serde_json::json!({
+            "consumer_id": mask.consumer_id, "source_ids": mask.source_ids,
+            "origin_canvas": mask.origin, "logical_size_canvas": mask.logical_size,
+            "scale": mask.scale, "inverted": mask.inverted,
+            "target_format": "RGBA8Unorm", "source": "renderer_mask_attachment",
+        })
+        .to_string();
+        Ok((
+            metadata,
+            mask.width,
+            mask.height,
+            PyBytes::new(py, &mask.rgba).unbind(),
+            PyBytes::new(py, &png).unbind(),
+        ))
+    }
 }
 
 #[pyclass]
@@ -345,6 +503,7 @@ impl NativeObserver {
         session: &NativeSession,
         values: HashMap<String, f32>,
         with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> PyResult<NativeCapturedScene> {
         let session = session.inner.clone();
         let result = py.detach(|| {
@@ -354,8 +513,11 @@ impl NativeObserver {
             };
             let requested =
                 ObservationInput::resolve_requested(&snapshot, &values).map_err(Some)?;
-            let input = ObservationInput::capture_from_snapshot_with_trace(
-                &snapshot, &requested, with_trace,
+            let input = ObservationInput::capture_from_snapshot_with_options(
+                &snapshot,
+                &requested,
+                with_trace,
+                include_hidden_geometry,
             )
             .map_err(Some)?;
             ResolvedObservation::capture(input).map_err(Some)
@@ -373,6 +535,7 @@ impl NativeObserver {
         session: &NativeSession,
         samples: Vec<HashMap<String, f32>>,
         with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> PyResult<Vec<Py<NativeCapturedScene>>> {
         let session = session.inner.clone();
         let result = py.detach(|| {
@@ -385,9 +548,13 @@ impl NativeObserver {
                 .map(|values| ObservationInput::resolve_requested(&snapshot, values))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(Some)?;
-            let inputs =
-                ObservationInput::capture_samples_with_trace(&snapshot, &requested, with_trace)
-                    .map_err(Some)?;
+            let inputs = ObservationInput::capture_samples_with_options(
+                &snapshot,
+                &requested,
+                with_trace,
+                include_hidden_geometry,
+            )
+            .map_err(Some)?;
             ResolvedObservation::capture_many(inputs).map_err(Some)
         });
         let scenes = match result {
@@ -408,6 +575,7 @@ impl NativeObserver {
         preview: &NativeMotionPreview,
         apply_model_opacity: bool,
         with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> PyResult<NativeCapturedScene> {
         let session = session.inner.clone();
         let result = py.detach(|| {
@@ -415,11 +583,12 @@ impl NativeObserver {
                 let session = session.lock().map_err(|_| None)?;
                 session.read_snapshot()
             };
-            let input = ObservationInput::capture_motion_from_snapshot_with_trace(
+            let input = ObservationInput::capture_motion_from_snapshot_with_options(
                 &snapshot,
                 preview.inner(),
                 apply_model_opacity,
                 with_trace,
+                include_hidden_geometry,
             )
             .map_err(Some)?;
             ResolvedObservation::capture(input).map_err(Some)

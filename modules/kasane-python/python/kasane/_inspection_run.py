@@ -235,7 +235,9 @@ def _save_pages(root: Path, report: dict, columns: int, cells: list[dict],
 def _budget(request: InspectionRequest, count: int, comparisons: int,
             layout: SequenceLayout | GridLayout) -> None:
     width, height = request.view.resolution
-    view_pixels = count * len(request.channels) * width * height
+    estimated_views = len(request.channels) + (request.mode != "context") + (
+        3 if "mask" in request.channels else 0)
+    view_pixels = count * estimated_views * width * height
     comparison_pixels = comparisons * 5 * width * height
     columns = len(layout.x_values) if isinstance(layout, GridLayout) else layout.columns
     cell_count = (len(layout.x_values) * len(layout.y_values)
@@ -245,11 +247,23 @@ def _budget(request: InspectionRequest, count: int, comparisons: int,
     if expected > min(request.limits.max_artifact_pixels, MAX_ARTIFACT_PIXELS):
         raise _failure("OBSERVATION_BUDGET_EXCEEDED",
                        f"Requested at least {expected} artifact pixels; limit is {request.limits.max_artifact_pixels}")
-    retained = width * height * 4 * (len(request.channels) * 2 +
-                                     (len(request.channels) if comparisons else 0))
+    retained = width * height * 4 * (estimated_views * 2 +
+                                     (estimated_views if comparisons else 0))
     if retained > request.limits.max_cpu_retained_bytes:
         raise _failure("OBSERVATION_BUDGET_EXCEEDED",
                        f"Estimated {retained} CPU image bytes exceed {request.limits.max_cpu_retained_bytes}")
+
+
+def _render_resources(packet: InspectionPacket) -> tuple[int, int, int]:
+    """Count GPU passes and readbacks; mask passes also read the main target."""
+    gpu_kinds = {"clean", "alpha", "isolated", "xray", "mask_source",
+                 "mask_combined", "mask_coverage"}
+    sources = [view for view in packet.views if view.kind in gpu_kinds]
+    masks = sum(view.kind in ("mask_source", "mask_combined") for view in sources)
+    clean = packet.views[0]
+    return (len(sources), len(sources) + masks,
+            sum(view.width * view.height * 4 for view in sources) +
+            masks * clean.width * clean.height * 4)
 
 
 def _native_binary_sha256() -> str:
@@ -333,8 +347,11 @@ def inspect_run(observer: Observer, session: Session, samples, *,
     publish()
     try:
         _image_library()
-        scenes = observer.capture_scenes(session, samples, with_trace=any(
-            channel in request.channels for channel in geometry_channels))
+        trace_required = request.mode == "xray" or any(
+            channel in request.channels for channel in geometry_channels)
+        scenes = observer.capture_scenes(
+            session, samples, with_trace=trace_required,
+            include_hidden_geometry=request.mode == "xray" and request.xray.include_disabled)
         report["capture"] = scenes[0].metadata
         report["samples"] = [_sample_record(scene, index)
                              for index, scene in enumerate(scenes)]
@@ -358,14 +375,19 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                                  "resolution": request.view.resolution,
                                  "presentation": request.presentation.record(),
                                  "channels": request.channels,
-                                 "trace_used_during_capture": any(channel in request.channels
-                                     for channel in geometry_channels)}
+                                 "mode": request.mode,
+                                 "xray": (request.xray.__dict__ if request.mode == "xray" else None),
+                                 "trace_used_during_capture": trace_required,
+                                 "hidden_geometry_captured": request.mode == "xray" and
+                                 request.xray.include_disabled}
         texture_bytes = sum(item["width"] * item["height"] * 4
                             for item in scenes[0].metadata["textures"])
         report["resources"]["decoded_texture_estimate_bytes"] = texture_bytes
         report["resources"]["peak_cpu_image_estimate_bytes"] = (
             texture_bytes + request.view.resolution[0] * request.view.resolution[1] *
-            4 * len(request.channels) * (3 if baseline_index is not None else 2))
+            4 * (len(request.channels) + (request.mode != "context") +
+                 (3 if "mask" in request.channels else 0)) *
+            (3 if baseline_index is not None else 2))
         if (report["resources"]["peak_cpu_image_estimate_bytes"] >
                 request.limits.max_cpu_retained_bytes):
             raise _failure("OBSERVATION_BUDGET_EXCEEDED",
@@ -375,11 +397,22 @@ def inspect_run(observer: Observer, session: Session, samples, *,
         target_ids = (_focus_and_objects(scenes[baseline_index], request)[1]
                       if baseline_index is not None else ())
         if reference_packet is not None:
-            report["resources"]["render_count"] += 1 + ("alpha" in request.channels)
+            passes, readbacks, readback_bytes = _render_resources(reference_packet)
+            report["resources"]["render_count"] += passes
+            report["resources"]["readback_count"] += readbacks
+            report["resources"]["readback_bytes"] += readback_bytes
         for index, scene in enumerate(scenes):
             packet = (reference_packet if index == baseline_index else
                       observer.inspect_scene(scene, request=render_request))
             assert packet is not None
+            image_bytes = sum(view.width * view.height * 4 for view in packet.views)
+            retained = texture_bytes + image_bytes * (
+                3 if reference_packet is not None else 2)
+            report["resources"]["peak_cpu_image_estimate_bytes"] = max(
+                report["resources"]["peak_cpu_image_estimate_bytes"], retained)
+            if retained > request.limits.max_cpu_retained_bytes:
+                raise _failure("OBSERVATION_BUDGET_EXCEEDED",
+                               "Diagnostic views exceed CPU retained byte budget")
             if (reference_packet is not None and index != baseline_index and
                     any(channel in request.channels for channel in ("displacement", "distortion"))):
                 from ._deformation import add_baseline_diagnostics
@@ -388,11 +421,10 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                                               "baseline_index": baseline_index,
                                               "deformation": packet.deformation})
             if index != baseline_index:
-                report["resources"]["render_count"] += 1 + ("alpha" in request.channels)
-            report["resources"]["readback_count"] = report["resources"]["render_count"]
-            report["resources"]["readback_bytes"] = (
-                report["resources"]["readback_count"] *
-                request.view.resolution[0] * request.view.resolution[1] * 4)
+                passes, readbacks, readback_bytes = _render_resources(packet)
+                report["resources"]["render_count"] += passes
+                report["resources"]["readback_count"] += readbacks
+                report["resources"]["readback_bytes"] += readback_bytes
             if "adapter" not in report:
                 first_view = packet.views[0]
                 report["adapter"] = {"name": first_view.adapter_name,
@@ -430,7 +462,9 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                                    else "straight_alpha_renderer_native_v1" if
                                    (view.presentation or {}).get("alpha") == "straight"
                                    else "opaque_renderer_native_v1"),
-                               "dependencies": [], "overrides": [],
+                               "dependencies": (view.presentation or {}).get(
+                                   "diagnostic_plan", {}).get("mask_only_mesh_ids", []),
+                               "overrides": (view.presentation or {}).get("overrides", {}),
                                "mode": view.mode, "status": view.status}
                 entry["views"].append(view_record)
                 report["views"].append(view_record)

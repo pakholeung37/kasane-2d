@@ -13,6 +13,7 @@ crate-type = ["cdylib"]
 [dependencies]
 kasane-core = { path = "../kasane-core" }
 kasane-sdk = { path = "../kasane-sdk" }
+kasane-render = { path = "../kasane-render" }
 kasane-moc3 = { path = "../kasane-moc3" }
 pyo3 = { version = "=0.29.2", features = ["multiple-pymethods"] }
 serde_json = { workspace = true }

@@ -22,7 +22,7 @@ mod bundle;
 mod gpu;
 mod view;
 pub use gpu::{
-    DrawableBounds, ObservedFrame, Observer, ObserverConfig, PresentationBackground,
+    DrawableBounds, ObservedFrame, ObservedMask, Observer, ObserverConfig, PresentationBackground,
     TextureRevision,
 };
 pub use view::{CanvasRoi, RenderRequest, ViewMapping};
@@ -36,6 +36,7 @@ pub struct ObservationInput {
     requested: PreviewValues,
     frame: DrawableFrame,
     trace: Option<EvaluationTrace>,
+    hidden_geometry_captured: bool,
     assets: Vec<ImageAsset>,
     root: PathBuf,
     source: ObservationSource,
@@ -305,6 +306,9 @@ impl ObservationInput {
     pub fn trace(&self) -> Option<&EvaluationTrace> {
         self.trace.as_ref()
     }
+    pub fn hidden_geometry_captured(&self) -> bool {
+        self.hidden_geometry_captured
+    }
     pub fn assets(&self) -> &[ImageAsset] {
         &self.assets
     }
@@ -338,9 +342,25 @@ impl ObservationInput {
         requested: &PreviewValues,
         with_trace: bool,
     ) -> Result<Self, ObservationError> {
+        Self::capture_from_snapshot_with_options(snapshot, requested, with_trace, false)
+    }
+
+    pub fn capture_from_snapshot_with_options(
+        snapshot: &AuthoringSnapshot,
+        requested: &PreviewValues,
+        with_trace: bool,
+        include_hidden_geometry: bool,
+    ) -> Result<Self, ObservationError> {
+        if include_hidden_geometry && !with_trace {
+            return Err(ObservationError {
+                code: "INVALID_TRACE_REQUEST".into(),
+                message: "Hidden geometry requires an evaluation trace".into(),
+                asset_id: None,
+            });
+        }
         let (frame, trace) = (if with_trace {
             snapshot
-                .evaluate_with_trace(requested)
+                .evaluate_with_trace_and_hidden_geometry(requested, include_hidden_geometry)
                 .map(|(frame, trace)| (frame, Some(trace)))
         } else {
             snapshot.evaluate(requested).map(|frame| (frame, None))
@@ -355,6 +375,7 @@ impl ObservationInput {
             requested.clone(),
             frame,
             trace,
+            include_hidden_geometry,
             ObservationSource::Parameters,
         )
     }
@@ -372,6 +393,15 @@ impl ObservationInput {
         samples: &[PreviewValues],
         with_trace: bool,
     ) -> Result<Vec<Self>, ObservationError> {
+        Self::capture_samples_with_options(snapshot, samples, with_trace, false)
+    }
+
+    pub fn capture_samples_with_options(
+        snapshot: &AuthoringSnapshot,
+        samples: &[PreviewValues],
+        with_trace: bool,
+        include_hidden_geometry: bool,
+    ) -> Result<Vec<Self>, ObservationError> {
         if samples.is_empty() || samples.len() > 64 {
             return Err(ObservationError {
                 code: "OBSERVATION_BUDGET_EXCEEDED".into(),
@@ -381,7 +411,14 @@ impl ObservationInput {
         }
         samples
             .iter()
-            .map(|values| Self::capture_from_snapshot_with_trace(snapshot, values, with_trace))
+            .map(|values| {
+                Self::capture_from_snapshot_with_options(
+                    snapshot,
+                    values,
+                    with_trace,
+                    include_hidden_geometry,
+                )
+            })
             .collect()
     }
 
@@ -421,6 +458,22 @@ impl ObservationInput {
         apply_model_opacity: bool,
         with_trace: bool,
     ) -> Result<Self, ObservationError> {
+        Self::capture_motion_from_snapshot_with_options(
+            snapshot,
+            preview,
+            apply_model_opacity,
+            with_trace,
+            false,
+        )
+    }
+
+    pub fn capture_motion_from_snapshot_with_options(
+        snapshot: &AuthoringSnapshot,
+        preview: &MotionPreview,
+        apply_model_opacity: bool,
+        with_trace: bool,
+        include_hidden_geometry: bool,
+    ) -> Result<Self, ObservationError> {
         let version = snapshot.version();
         if preview.source_identity() != Some((version.session_id, version.generation))
             || preview.document_revision() != version.revision
@@ -438,7 +491,11 @@ impl ObservationInput {
             .iter()
             .map(|(id, value)| (id.clone(), *value))
             .collect();
-        let (mut frame, trace) = (if with_trace {
+        let (mut frame, trace) = (if include_hidden_geometry {
+            preview
+                .evaluate_drawables_with_trace_and_hidden_geometry()
+                .map(|(frame, trace)| (frame, Some(trace)))
+        } else if with_trace {
             preview
                 .evaluate_drawables_with_trace()
                 .map(|(frame, trace)| (frame, Some(trace)))
@@ -468,6 +525,7 @@ impl ObservationInput {
             requested,
             frame,
             trace,
+            include_hidden_geometry,
             ObservationSource::Animation {
                 snapshot: Box::new(preview.snapshot().clone()),
                 apply_model_opacity,
@@ -482,6 +540,7 @@ impl ObservationInput {
         requested: PreviewValues,
         frame: DrawableFrame,
         trace: Option<EvaluationTrace>,
+        hidden_geometry_captured: bool,
         source: ObservationSource,
     ) -> Result<Self, ObservationError> {
         let version = snapshot.version();
@@ -629,6 +688,7 @@ impl ObservationInput {
             requested,
             frame,
             trace,
+            hidden_geometry_captured,
             assets,
             root,
             source,

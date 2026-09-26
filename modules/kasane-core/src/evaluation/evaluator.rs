@@ -60,7 +60,18 @@ impl FrameEvaluator {
         out: &mut DrawableFrame,
         trace: &mut EvaluationTrace,
     ) -> Status {
-        let status = evaluate_into(doc, preview, self, false, true);
+        self.evaluate_with_trace_and_hidden_geometry(doc, preview, out, trace, false)
+    }
+
+    pub fn evaluate_with_trace_and_hidden_geometry(
+        &mut self,
+        doc: &Document,
+        preview: &PreviewValues,
+        out: &mut DrawableFrame,
+        trace: &mut EvaluationTrace,
+        include_hidden_geometry: bool,
+    ) -> Status {
+        let status = evaluate_into(doc, preview, self, include_hidden_geometry, true);
         if !status.is_ok() {
             return status;
         }

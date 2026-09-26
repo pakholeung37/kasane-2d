@@ -28,7 +28,8 @@ mod tests;
 
 pub use api::*;
 pub use modern::{
-    WgpuEncodeTarget, WgpuMainBackground, WgpuOutputMode, WgpuRenderStats, WgpuRenderer,
+    WgpuEncodeTarget, WgpuMainBackground, WgpuMaskAttachment, WgpuOutputMode, WgpuRenderStats,
+    WgpuRenderer,
 };
 pub use pipeline::WgpuBasicRenderer;
 pub use resources::{

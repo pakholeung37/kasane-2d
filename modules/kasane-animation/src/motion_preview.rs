@@ -526,19 +526,28 @@ impl MotionPreview {
     /// Model opacity remains separate in [`MotionSnapshot::model_opacity`].
     /// Does not advance playback. Returns [`AnimationError::Evaluation`] on failure.
     pub fn evaluate_drawables(&self) -> Result<DrawableFrame, AnimationError> {
-        self.evaluate_drawables_inner(false).map(|(frame, _)| frame)
+        self.evaluate_drawables_inner(false, false)
+            .map(|(frame, _)| frame)
     }
 
     pub fn evaluate_drawables_with_trace(
         &self,
     ) -> Result<(DrawableFrame, EvaluationTrace), AnimationError> {
-        self.evaluate_drawables_inner(true)
+        self.evaluate_drawables_inner(true, false)
+            .map(|(frame, trace)| (frame, trace.expect("trace requested")))
+    }
+
+    pub fn evaluate_drawables_with_trace_and_hidden_geometry(
+        &self,
+    ) -> Result<(DrawableFrame, EvaluationTrace), AnimationError> {
+        self.evaluate_drawables_inner(true, true)
             .map(|(frame, trace)| (frame, trace.expect("trace requested")))
     }
 
     fn evaluate_drawables_inner(
         &self,
         with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> Result<(DrawableFrame, Option<EvaluationTrace>), AnimationError> {
         let values: PreviewValues = self
             .snapshot
@@ -550,7 +559,13 @@ impl MotionPreview {
         let mut trace = EvaluationTrace::default();
         let mut evaluator = FrameEvaluator::default();
         let status = if with_trace {
-            evaluator.evaluate_with_trace(&self.document, &values, &mut frame, &mut trace)
+            evaluator.evaluate_with_trace_and_hidden_geometry(
+                &self.document,
+                &values,
+                &mut frame,
+                &mut trace,
+                include_hidden_geometry,
+            )
         } else {
             evaluator.evaluate(&self.document, &values, &mut frame)
         };

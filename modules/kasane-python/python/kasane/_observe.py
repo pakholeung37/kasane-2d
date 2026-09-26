@@ -72,17 +72,17 @@ class Observer:
 
     def capture_scene(
         self, session: Session, values: Mapping[str, float] | None = None, *,
-        with_trace: bool = False,
+        with_trace: bool = False, include_hidden_geometry: bool = False,
     ) -> CapturedScene:
         """Freeze one evaluated scene and its decoded textures for later views."""
         native = self._native.capture_scene(
-            session._native, dict(values or {}), with_trace
+            session._native, dict(values or {}), with_trace, include_hidden_geometry
         )
         return CapturedScene(native)
 
     def capture_scenes(
         self, session: Session, samples: Sequence[Mapping[str, float]], *,
-        with_trace: bool = False,
+        with_trace: bool = False, include_hidden_geometry: bool = False,
     ) -> tuple[CapturedScene, ...]:
         """Freeze 1–64 parameter samples from one document snapshot.
 
@@ -92,11 +92,13 @@ class Observer:
         if not 1 <= len(samples) <= 64:
             raise ValueError("capture_scenes requires 1–64 samples")
         return tuple(CapturedScene(native) for native in
-                     self._native.capture_scenes(session._native, [dict(item) for item in samples], with_trace))
+                     self._native.capture_scenes(session._native, [dict(item) for item in samples],
+                                                 with_trace, include_hidden_geometry))
 
     def capture_animation_scene(
         self, session: Session, preview: MotionPreview, *,
         apply_model_opacity: bool = False, with_trace: bool = False,
+        include_hidden_geometry: bool = False,
     ) -> CapturedScene:
         """Freeze the preview's actual Motion/Expression/Physics/Pose frame.
 
@@ -104,7 +106,8 @@ class Observer:
         current snapshot and Model opacity policy, but no past update journal.
         """
         native = self._native.capture_animation_scene(
-            session._native, preview._native, apply_model_opacity, with_trace
+            session._native, preview._native, apply_model_opacity, with_trace,
+            include_hidden_geometry,
         )
         return CapturedScene(native)
 
@@ -142,6 +145,30 @@ class Observer:
             "clean", presentation.record(),
         )
 
+    def render_isolated_scene(
+        self, scene: CapturedScene, *, roi: tuple[float, float, float, float],
+        resolution: tuple[int, int], padding_canvas: float,
+        presentation: PresentationSpec, focus_mesh_ids: Sequence[str],
+        ignore_masks: bool = False, ignore_opacity: bool = False,
+        include_disabled: bool = False,
+    ) -> RenderedSceneView:
+        """Render selected color draws with their original targets and mask sources."""
+        from ._inspection import _json, _sha
+        kind, light, dark, tile, origin = presentation.native_background()
+        raw, (requested, padded, visible), plan_json = scene._native.render_isolated(
+            self._native, resolution[0], resolution[1], roi, padding_canvas,
+            kind, light, dark, tile, origin, presentation.alpha == "straight",
+            list(focus_mesh_ids), ignore_masks, ignore_opacity, include_disabled,
+        )
+        plan = json.loads(plan_json)
+        digest = _sha(_json({"mode": "isolated", "scene": scene.scene_digest,
+                             "plan": plan, "presentation": presentation.record()}))
+        return RenderedSceneView(
+            _frame_from_native(raw), requested, padded, visible, digest,
+            "isolated", {**presentation.record(), "diagnostic_plan": plan,
+                          "destination_context": "isolated"},
+        )
+
     def inspect_scene(
         self, scene: CapturedScene, *, request: RawInspectionRequest | InspectionRequest,
     ) -> InspectionPacket:
@@ -159,8 +186,26 @@ class Observer:
                 scene, roi=roi, resolution=request.view.resolution,
                 padding_canvas=request.view.padding_canvas,
             ) if "alpha" in request.channels else None)
-            return presentation_packet(scene, rendered, objects, selected,
-                                       request, raw_alpha)
+            packet = presentation_packet(scene, rendered, objects, selected,
+                                         request, raw_alpha)
+            if request.mode == "isolated":
+                if not selected:
+                    raise ValueError("Isolated mode requires mesh or Part focus")
+                isolated = self.render_isolated_scene(
+                    scene, roi=roi, resolution=request.view.resolution,
+                    padding_canvas=request.view.padding_canvas,
+                    presentation=request.presentation, focus_mesh_ids=selected,
+                )
+                from ._inspection import view_from_render
+                extra = replace(view_from_render(isolated), mode="isolated")
+                packet = replace(packet, views=(*packet.views, extra))
+            if request.mode == "xray":
+                from ._xray import add_xray_view
+                packet = add_xray_view(self, scene, packet, request, selected)
+            if "mask" in request.channels:
+                from ._masks import add_mask_views
+                packet = add_mask_views(self, scene, packet, request, selected)
+            return packet
         rendered = self.render_scene(
             scene, roi=request.roi, resolution=request.resolution,
             padding_canvas=request.padding_canvas,
@@ -178,17 +223,22 @@ class Observer:
                 channel in request.channels for channel in ("displacement", "distortion")
             ):
                 raise ValueError("Displacement and distortion require baseline_values")
-            with_trace = isinstance(request, InspectionRequest) and any(
-                channel in request.channels for channel in ("wireframe", "vertices", "deformers")
-            )
-            return self.inspect_scene(self.capture_scene(session, values, with_trace=with_trace), request=request)
+            with_trace = isinstance(request, InspectionRequest) and (
+                request.mode == "xray" or any(channel in request.channels for channel in
+                    ("wireframe", "vertices", "deformers")))
+            hidden = isinstance(request, InspectionRequest) and request.mode == "xray" and request.xray.include_disabled
+            return self.inspect_scene(self.capture_scene(
+                session, values, with_trace=with_trace, include_hidden_geometry=hidden), request=request)
         from ._comparison import CompareOptions, compare_observations
         if isinstance(request, InspectionRequest) and request.view.framing != "fixed_union":
             raise ValueError("Baseline comparison requires fixed_union framing")
         scenes = self.capture_scenes(session, [baseline_values, values or {}],
-                                     with_trace=isinstance(request, InspectionRequest) and any(
+                                     with_trace=isinstance(request, InspectionRequest) and (
+                                         request.mode == "xray" or any(
                                          channel in request.channels for channel in
-                                         ("wireframe", "vertices", "deformers", "displacement", "distortion")))
+                                         ("wireframe", "vertices", "deformers", "displacement", "distortion"))),
+                                     include_hidden_geometry=isinstance(request, InspectionRequest) and
+                                     request.mode == "xray" and request.xray.include_disabled)
         if isinstance(request, InspectionRequest):
             render_request = replace(request, channels=tuple(channel for channel in
                 request.channels if channel not in ("displacement", "distortion")))
@@ -219,9 +269,11 @@ class Observer:
         """Freeze the preview's actual current frame without advancing it."""
         scene = self.capture_animation_scene(
             session, preview, apply_model_opacity=apply_model_opacity,
-            with_trace=isinstance(request, InspectionRequest) and any(
-                channel in request.channels for channel in ("wireframe", "vertices", "deformers")
-            ),
+            with_trace=isinstance(request, InspectionRequest) and
+                (request.mode == "xray" or any(channel in request.channels for channel in
+                 ("wireframe", "vertices", "deformers"))),
+            include_hidden_geometry=isinstance(request, InspectionRequest) and
+                request.mode == "xray" and request.xray.include_disabled,
         )
         return self.inspect_scene(scene, request=request)
 
@@ -267,9 +319,12 @@ class Observer:
         """Freeze parameter samples once, then present them in one view policy."""
         if not 1 <= len(samples) <= request.limits.max_samples:
             raise ValueError("inspect_samples exceeds the sample limit")
-        return self.inspect_scenes(self.capture_scenes(session, samples, with_trace=any(
-            channel in request.channels for channel in ("wireframe", "vertices", "deformers")
-        )), request=request)
+        return self.inspect_scenes(self.capture_scenes(
+            session, samples,
+            with_trace=request.mode == "xray" or any(channel in request.channels
+                for channel in ("wireframe", "vertices", "deformers")),
+            include_hidden_geometry=request.mode == "xray" and request.xray.include_disabled,
+        ), request=request)
 
     def inspect_run(
         self, session: Session, samples: Sequence[Mapping[str, float]], *,
@@ -289,12 +344,11 @@ class Observer:
             from ._inspection import _unavailable
             raise _unavailable("Packet has no open scene for another render")
         if isinstance(request, InspectionRequest):
-            extra_count = len(request.channels)
-            extra_pixels = request.view.resolution[0] * request.view.resolution[1] * extra_count
-            if (len(packet.views) + extra_count > 64 or
-                    sum(view.width * view.height for view in packet.views) + extra_pixels > 64_000_000):
-                raise ValueError("Packet view count or pixel budget exceeded")
             extra = self.inspect_scene(packet._scene, request=request)
+            if (len(packet.views) + len(extra.views) > 64 or
+                    sum(view.width * view.height for view in (*packet.views, *extra.views)) >
+                    min(64_000_000, request.limits.max_artifact_pixels)):
+                raise ValueError("Packet view count or pixel budget exceeded")
             return replace(packet, views=(*packet.views, *extra.views),
                            focus_status=(packet.focus_status if
                                          packet.focus_status == extra.focus_status else "mixed"))

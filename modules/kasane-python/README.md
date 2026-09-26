@@ -272,6 +272,16 @@ canvas-space triangle stretch, orientation, and degeneration results. To
 request these views from a previously captured scene, capture it with
 `observer.capture_scene(..., with_trace=True)`.
 
+For a mesh with masks, use `channels=("clean", "mask")` and a single mesh
+focus. The packet includes each source's actual mask alpha, the combined and
+post-inversion masks, and isolated consumer alpha. `mode="isolated"` adds the
+selected mesh with its mask and offscreen dependencies. `mode="xray"` adds a
+marked view over the clean image; `XraySpec` controls mask, opacity, and
+disabled-object overrides. `include_disabled=True` captures the disabled
+geometry when using `inspect`, `inspect_samples`, `inspect_run`, or
+`inspect_animation`. For an already frozen scene, pass
+`include_hidden_geometry=True` to its capture call.
+
 ## Errors and scripting
 
 SDK validation and IO errors raise `kasane.SdkFailure`. Inspect `code`,

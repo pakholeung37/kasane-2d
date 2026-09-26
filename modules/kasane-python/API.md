@@ -462,13 +462,14 @@ short `evaluate()` when only runtime positions are needed.
 | `frame.save_png(absolute_path)` | Write the PNG bytes to disk. |
 | `observer.set_fit_long_side(value)` | Change the view's fitted long side. |
 | `observer.observe_run(session, samples, output, focus=())` | Render one or more parameter maps into a unique child of absolute `output`; optionally crop visible drawable IDs. Return `ObservationRun`. |
-| `observer.capture_scene(session, values=None, *, with_trace=False)` | Freeze one evaluated frame and decoded textures; optional O4 trace records final mesh/deformer geometry from that evaluation. |
-| `observer.capture_scenes(session, samples, *, with_trace=False)` | Freeze 1–64 parameter samples against one detached document snapshot; optional trace is captured per sample. All scenes share a capture ID and decoded texture union. |
-| `observer.capture_animation_scene(session, preview, *, apply_model_opacity=False, with_trace=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; optional trace uses the preview's parameter values. |
+| `observer.capture_scene(session, values=None, *, with_trace=False, include_hidden_geometry=False)` | Freeze one evaluated frame and decoded textures; optional trace records final mesh/deformer geometry. Hidden geometry is captured only when requested for disabled X-ray. |
+| `observer.capture_scenes(session, samples, *, with_trace=False, include_hidden_geometry=False)` | Freeze 1–64 parameter samples against one detached document snapshot; optional trace is captured per sample. All scenes share a capture ID and decoded texture union. |
+| `observer.capture_animation_scene(session, preview, *, apply_model_opacity=False, with_trace=False, include_hidden_geometry=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; optional trace and hidden geometry use the preview's parameter values. |
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
+| `observer.render_isolated_scene(scene, *, roi, resolution, padding_canvas, presentation, focus_mesh_ids)` | Render selected color draws with original mask inputs and ancestor offscreen targets. Return the isolated plan and `destination_context="isolated"` in view presentation. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
-| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...), baseline_values=None)` | Return raw, presentation, or O4 geometry views. `baseline_values` freezes both states from one snapshot and attaches registered image comparison plus requested deformation diagnostics. |
+| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...), baseline_values=None)` | Return raw, presentation, geometry, isolated/X-ray, or mask views. `baseline_values` freezes both states from one snapshot and attaches registered image comparison plus requested deformation diagnostics. |
 | `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Capture the actual animation frame with the same request choices and current operation identity. |
 | `observer.inspect_samples(session, samples, *, request=InspectionRequest(...))` | Freeze 1–64 parameter samples once; use a fixed union ROI or follow each sample's evaluated geometry. |
 | `observer.inspect_scenes(scenes, *, request=InspectionRequest(...))` | Present already frozen samples sharing one capture ID. |
@@ -494,8 +495,10 @@ digests. A `--no-default-features --features observe` wheel preserves the
 previous single-sample hash and pixels. Opening a v1
 bundle computes the scene digest and assigns a new capture ID.
 `RawInspectionRequest` retains the legacy transparent raw policy. O2's
-`InspectionRequest` supports `context` mode and `clean`, `labels`, `alpha`
-channels. O4 adds `wireframe`, sparse `vertices`, and `deformers` overlays.
+`InspectionRequest` supports `context`, `isolated`, and `xray` modes with
+`clean`, `labels`, and `alpha` channels. O4 adds `wireframe`, sparse `vertices`,
+and `deformers` overlays. O5 adds `mask` views for exactly one focused mesh
+with a mesh mask or masked ancestor offscreen.
 `displacement` and `distortion` require `baseline_values` or a run
 `baseline_index`. Light, dark and checker backgrounds are drawn into the renderer's
 main scene target before destination-reading blends. `PresentationSpec`
@@ -532,8 +535,8 @@ transparent alpha when available. An explicit canvas ROI or evaluated mesh
 union defines the target; its complement is the non-target region. Without a
 target, only the whole-view metric is available. The heatmap retains a fixed
 0–255 scale and records display gain. No automatic alignment or color
-normalization is applied. Geometry/pixel queries and isolated/X-ray modes
-remain later-stage work; unsupported requests fail explicitly.
+normalization is applied. Geometry/pixel queries remain later-stage work;
+unsupported requests fail explicitly.
 `packet.capabilities` marks query/playback channels unavailable.
 An inline baseline comparison is included in all packet save profiles and can
 be read from a report-profile packet without a GPU; new comparisons of saved
@@ -562,6 +565,29 @@ canvas units with Y up; view mapping converts them to source canvas pixels.
 The normal evaluate path does not retain trace storage. Scene/analysis packet
 profiles save the trace; report profiles save derived overlays and numeric
 diagnostics without the full trace.
+
+`isolated` appends a separate view while keeping `clean` as the complete
+scene. Its `diagnostic_plan` lists selected color meshes, mask-only sources,
+ancestor targets, and `destination_context="isolated"`. The renderer retains
+target-local order, masks, inversion, and destination-reading blends. The
+isolated blend reads the isolated background and lower draws, so its pixels
+need not match the full scene. `xray` appends a marked XRAY view over the clean
+view, using isolated alpha and evaluated triangle outlines to show a selected
+mesh through occlusion. `XraySpec(ignore_masks=True, ignore_opacity=True,
+include_disabled=True)` requests explicit diagnostic overrides; each appears
+in the view metadata. Disabled geometry requires capture with
+`include_hidden_geometry=True`; `inspect`, `inspect_samples`, `inspect_run`,
+and `inspect_animation` set it automatically for this request. A previously
+captured scene without it raises `CAPTURE_NOT_AVAILABLE`.
+
+The `mask` channel reads actual renderer mask attachments. For each mask on
+the focused mesh and its ancestor targets it emits `mask_source` (per-source
+alpha and evaluated geometry), `mask_combined` (pre-inversion alpha), and
+`mask_consumer` (post-inversion alpha). `mask_coverage` shows isolated
+consumer composite alpha. Metadata includes consumer/source IDs, target
+resolution, canvas sampling transform, and the isolated plan. Composite alpha
+is a coverage aid, not a final color-contribution percentage. Diagnostic
+passes use frozen scene copies; a later clean render uses the original input.
 
 For a baseline, `packet.deformation` reports per-triangle `F=C*inverse(B)` in
 source canvas pixels, its determinant, two singular values, and flags.

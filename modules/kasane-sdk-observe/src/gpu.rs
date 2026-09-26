@@ -6,7 +6,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use kasane_core::{BlendMode, DrawableFrame, Vec2};
-use kasane_render::{Affine2, ViewportConfig};
+use kasane_render::{Affine2, DiagnosticOverrides, DiagnosticPlan, ViewportConfig};
 use kasane_render_wgpu::{
     WgpuEncodeTarget, WgpuMainBackground, WgpuOutputMode, WgpuRenderer, WgpuTargetConfig,
     WgpuTexture, WgpuTextureCatalog,
@@ -122,6 +122,33 @@ pub struct ObservedFrame {
     pub adapter_backend: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct ObservedMask {
+    pub consumer_id: String,
+    pub source_ids: Vec<String>,
+    pub width: u32,
+    pub height: u32,
+    pub origin: (f32, f32),
+    pub logical_size: (f32, f32),
+    pub scale: f32,
+    pub inverted: bool,
+    pub rgba: Vec<u8>,
+}
+
+impl ObservedMask {
+    pub fn png_bytes(&self) -> Result<Vec<u8>, ObservationError> {
+        let mut output = Vec::new();
+        let mut encoder = png::Encoder::new(&mut output, self.width, self.height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .write_header()
+            .and_then(|mut writer| writer.write_image_data(&self.rgba))
+            .map_err(|failure| error("PNG_ENCODE", failure.to_string()))?;
+        Ok(output)
+    }
+}
+
 impl ObservedFrame {
     pub fn png_bytes(&self) -> Result<Vec<u8>, ObservationError> {
         let mut output = Vec::new();
@@ -187,6 +214,83 @@ fn block_on<F: Future>(future: F) -> F::Output {
 }
 
 impl Observer {
+    /// Read the renderer's actual raw mask target. An optional source narrows
+    /// the consumer's mask inputs for an individual-source diagnostic pass.
+    pub fn render_mask(
+        &mut self,
+        captured: &ResolvedObservation,
+        request: RenderRequest,
+        consumer_id: &str,
+        source_id: Option<&str>,
+    ) -> Result<ObservedMask, ObservationError> {
+        let mut derived = captured.input().clone();
+        let (source_ids, inverted) = if let Some(mesh) = derived
+            .frame
+            .drawables
+            .iter_mut()
+            .find(|mesh| mesh.id == consumer_id)
+        {
+            let sources = mesh.masks.clone();
+            if let Some(source) = source_id {
+                if !sources.iter().any(|id| id == source) {
+                    return Err(error("INVALID_DIAGNOSTIC_MASK", source));
+                }
+                mesh.masks = vec![source.to_owned()];
+            }
+            (sources, mesh.inverted_mask)
+        } else if let Some(group) = derived
+            .frame
+            .offscreens
+            .iter_mut()
+            .find(|group| group.id == consumer_id)
+        {
+            let sources = group.masks.clone();
+            if let Some(source) = source_id {
+                if !sources.iter().any(|id| id == source) {
+                    return Err(error("INVALID_DIAGNOSTIC_MASK", source));
+                }
+                group.masks = vec![source.to_owned()];
+            }
+            (sources, group.flags & 8 != 0)
+        } else {
+            return Err(error("INVALID_DIAGNOSTIC_MASK", consumer_id));
+        };
+        if source_ids.is_empty() {
+            return Err(error(
+                "INVALID_DIAGNOSTIC_MASK",
+                "Consumer has no mask inputs",
+            ));
+        }
+        self.render_resolved(
+            &derived,
+            captured.textures(),
+            Some(request),
+            PresentationBackground::Transparent,
+            false,
+        )?;
+        let attachment = self
+            .renderer
+            .mask_attachment(consumer_id)
+            .ok_or_else(|| error("MASK_NOT_AVAILABLE", consumer_id))?;
+        let rgba = read_texture_rgba(
+            &self.device,
+            &self.queue,
+            &attachment.texture,
+            attachment.width,
+            attachment.height,
+        )?;
+        Ok(ObservedMask {
+            consumer_id: consumer_id.to_owned(),
+            source_ids: attachment.source_ids,
+            width: attachment.width,
+            height: attachment.height,
+            origin: (attachment.origin.x, attachment.origin.y),
+            logical_size: (attachment.logical_size.x, attachment.logical_size.y),
+            scale: attachment.scale,
+            inverted,
+            rgba,
+        })
+    }
     pub fn new(config: ObserverConfig) -> Result<Self, ObservationError> {
         if config.width == 0
             || config.height == 0
@@ -399,6 +503,43 @@ impl Observer {
             background,
             straight_alpha,
         )
+    }
+
+    /// Render selected color draws through their original target path. Raw
+    /// mask sources remain available even when their color draws are hidden.
+    pub fn render_isolated(
+        &mut self,
+        captured: &ResolvedObservation,
+        request: RenderRequest,
+        background: PresentationBackground,
+        straight_alpha: bool,
+        focus: &[String],
+        overrides: DiagnosticOverrides,
+    ) -> Result<(ObservedFrame, DiagnosticPlan), ObservationError> {
+        if overrides.include_disabled && !captured.input().hidden_geometry_captured() {
+            return Err(error(
+                "CAPTURE_NOT_AVAILABLE",
+                "X-ray of disabled objects requires hidden geometry capture",
+            ));
+        }
+        let plan = DiagnosticPlan::isolated(captured.input().frame(), focus)
+            .map_err(|status| error(&status.code, status.message))?;
+        let mut derived = captured.input().clone();
+        derived.frame = plan.apply_with_overrides(&derived.frame, overrides);
+        if straight_alpha && !supports_straight_alpha(&derived.frame) {
+            return Err(error(
+                "UNREPRESENTABLE_TRANSPARENT_OUTPUT",
+                "Special blend modes cannot be faithfully encoded as straight-alpha PNG",
+            ));
+        }
+        let frame = self.render_resolved(
+            &derived,
+            captured.textures(),
+            Some(request),
+            background,
+            straight_alpha,
+        )?;
+        Ok((frame, plan))
     }
 
     fn render_resolved(
@@ -671,6 +812,16 @@ fn render_sample(
         )
         .map_err(status)?;
     queue.submit([encoder.finish()]);
+    read_texture_rgba(device, queue, &output, width, height)
+}
+
+fn read_texture_rgba(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, ObservationError> {
     let unpadded_row = width * 4;
     let padded_row = unpadded_row.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
         * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -684,7 +835,7 @@ fn render_sample(
         label: Some("sdk-observe.copy"),
     });
     encoder.copy_texture_to_buffer(
-        output.as_image_copy(),
+        texture.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
             buffer: &readback,
             layout: wgpu::TexelCopyBufferLayout {

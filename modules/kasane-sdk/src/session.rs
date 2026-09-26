@@ -81,13 +81,22 @@ impl AuthoringSnapshot {
         &self,
         values: &PreviewValues,
     ) -> Result<(DrawableFrame, EvaluationTrace), SdkError> {
+        self.evaluate_with_trace_and_hidden_geometry(values, false)
+    }
+
+    pub fn evaluate_with_trace_and_hidden_geometry(
+        &self,
+        values: &PreviewValues,
+        include_hidden_geometry: bool,
+    ) -> Result<(DrawableFrame, EvaluationTrace), SdkError> {
         let mut frame = DrawableFrame::default();
         let mut trace = EvaluationTrace::default();
-        let status = FrameEvaluator::default().evaluate_with_trace(
+        let status = FrameEvaluator::default().evaluate_with_trace_and_hidden_geometry(
             &self.document,
             values,
             &mut frame,
             &mut trace,
+            include_hidden_geometry,
         );
         if status.is_ok() {
             Ok((frame, trace))

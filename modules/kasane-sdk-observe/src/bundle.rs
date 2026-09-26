@@ -39,6 +39,8 @@ struct SceneBundle {
     frame: DrawableFrame,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     trace: Option<EvaluationTrace>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    hidden_geometry_captured: bool,
     textures: Vec<BundleTexture>,
 }
 
@@ -59,6 +61,10 @@ fn failure(code: &'static str, message: impl Into<String>) -> ObservationError {
 
 fn is_zero(value: &u64) -> bool {
     *value == 0
+}
+
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn write_atomically(path: &Path, bytes: &[u8]) -> Result<(), ObservationError> {
@@ -179,6 +185,7 @@ impl ResolvedObservation {
             authoring: input.authoring.clone(),
             frame: input.frame.clone(),
             trace: input.trace.clone(),
+            hidden_geometry_captured: input.hidden_geometry_captured,
             textures: self
                 .textures
                 .iter()
@@ -412,6 +419,7 @@ impl ResolvedObservation {
                 authoring: bundle.authoring,
                 frame: bundle.frame,
                 trace: bundle.trace,
+                hidden_geometry_captured: bundle.hidden_geometry_captured,
                 assets,
                 root: directory.to_path_buf(),
             },
@@ -463,6 +471,7 @@ mod tests {
             },
             frame: DrawableFrame::default(),
             trace: None,
+            hidden_geometry_captured: false,
             textures: vec![],
         }
     }

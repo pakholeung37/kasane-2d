@@ -614,6 +614,7 @@ version = "0.1.0"
 dependencies = [
  "kasane-core",
  "kasane-moc3",
+ "kasane-render",
  "kasane-sdk",
  "kasane-sdk-observe",
  "pyo3",

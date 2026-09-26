@@ -217,6 +217,23 @@ class DiagnosticSpec:
 
 
 @dataclass(frozen=True)
+class XraySpec:
+    ignore_masks: bool = False
+    ignore_opacity: bool = False
+    include_disabled: bool = False
+    highlight_rgb: tuple[int, int, int] = (255, 96, 16)
+
+    def __post_init__(self) -> None:
+        if any(type(value) is not bool for value in
+               (self.ignore_masks, self.ignore_opacity, self.include_disabled)):
+            raise ValueError("X-ray overrides must be explicit booleans")
+        if len(self.highlight_rgb) != 3 or any(type(value) is not int or
+                                               not 0 <= value <= 255 for value in
+                                               self.highlight_rgb):
+            raise ValueError("X-ray highlight must be an RGB8 triple")
+
+
+@dataclass(frozen=True)
 class InspectionLimits:
     max_view_side: int = 4096
     max_page_pixels: int = MAX_PAGE_PIXELS
@@ -246,19 +263,20 @@ class InspectionRequest:
     presentation: PresentationSpec = PresentationSpec()
     overlay: OverlaySpec = OverlaySpec()
     diagnostics: DiagnosticSpec = DiagnosticSpec()
+    xray: XraySpec = XraySpec()
     channels: tuple[str, ...] = ("clean", "labels")
     mode: str = "context"
     limits: InspectionLimits = InspectionLimits()
     allow_partial: bool = False
 
     def __post_init__(self) -> None:
-        if self.mode != "context":
-            raise ValueError("O2 inspection supports context mode")
+        if self.mode not in ("context", "isolated", "xray"):
+            raise ValueError("Unsupported inspection mode")
         if not self.channels or len(set(self.channels)) != len(self.channels) or any(
             channel not in ("clean", "labels", "alpha", "wireframe", "vertices",
-                            "deformers", "displacement", "distortion") for channel in self.channels
+                            "deformers", "displacement", "distortion", "mask") for channel in self.channels
         ):
-            raise ValueError("O2 channels are clean, labels and alpha")
+            raise ValueError("Unsupported inspection channel")
         if "clean" not in self.channels:
             raise ValueError("Inspection must retain a clean view")
         if self.allow_partial:
@@ -266,7 +284,8 @@ class InspectionRequest:
         width, height = self.view.resolution
         if (max(width, height) > self.limits.max_view_side or
                 width * height > self.limits.max_page_pixels or
-                width * height * len(self.channels) > self.limits.max_artifact_pixels or
+                width * height * (len(self.channels) + (self.mode != "context")) >
+                self.limits.max_artifact_pixels or
                 self.overlay.max_labels > self.limits.max_labels):
             raise ValueError("Inspection request exceeds declared limits")
 
@@ -391,7 +410,10 @@ class InspectionPacket:
             "raw_pixel_data": all(view.rgba is not None for view in self.views),
             "evaluated_geometry_data": self.evaluated_frame is not None,
             "rerender_scene": self._scene is not None and not self._closed,
-            "presentation": any(view.kind in ("clean", "labels", "alpha") for view in self.views),
+            "presentation": any(view.kind in ("clean", "labels", "alpha", "isolated") for view in self.views),
+            "isolated": any(view.kind == "isolated" for view in self.views),
+            "mask": any(view.kind.startswith("mask_") for view in self.views),
+            "xray": any(view.kind == "xray" for view in self.views),
             "comparison": self.comparison is not None,
             "evaluation_trace": self.evaluation_trace is not None,
             "deformation": self.deformation is not None,
@@ -528,7 +550,10 @@ class InspectionPacket:
                 "raw_pixel_data": profile != "report",
                 "evaluated_geometry_data": profile != "report",
                 "rerender_scene": profile == "scene",
-                "presentation": any(view.kind in ("clean", "labels", "alpha") for view in self.views), "geometry_query": False,
+                "presentation": any(view.kind in ("clean", "labels", "alpha", "isolated") for view in self.views), "geometry_query": False,
+                "isolated": any(view.kind == "isolated" for view in self.views),
+                "mask": any(view.kind.startswith("mask_") for view in self.views),
+                "xray": any(view.kind == "xray" for view in self.views),
                 "comparison": self.comparison is not None,
                 "evaluation_trace": self.evaluation_trace is not None and profile != "report",
                 "deformation": self.deformation is not None,
@@ -919,11 +944,12 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
         members[path] = content
     views = []
     for entry in entries:
-        if entry.get("kind") not in ("raw_context", "clean", "labels", "alpha",
+        if entry.get("kind") not in ("raw_context", "clean", "labels", "alpha", "isolated", "xray",
+                                     "mask_source", "mask_combined", "mask_consumer", "mask_coverage",
                                      "wireframe", "vertices", "deformers", "displacement",
                                      "distortion"):
             raise ValueError("Unsupported packet view kind")
-        if entry.get("mode", "context") != "context" or entry.get("status", "complete") != "complete":
+        if entry.get("mode", "context") not in ("context", "isolated", "xray") or entry.get("status", "complete") != "complete":
             raise ValueError("Unsupported packet view mode or status")
         width, height = entry["width"], entry["height"]
         if (type(width) is not int or type(height) is not int or

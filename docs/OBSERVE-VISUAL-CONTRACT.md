@@ -7,8 +7,9 @@ save-profile slice is available. O2 adds presentation, evaluated-geometry
 focus, fixed/follow sample views, numeric labels, and an object table. O3 adds
 registered image comparison, explicit two-axis layouts, paged contact sheets,
 and a recoverable report v2. O4 adds optional Rust evaluation traces,
-geometry overlays, and canvas-space deformation diagnostics. Queries and
-isolation remain delivery targets. The existing
+geometry overlays, and canvas-space deformation diagnostics. O5 adds
+diagnostic isolation, X-ray and renderer mask attachment views. Queries remain
+a delivery target. The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -71,6 +72,7 @@ class InspectionRequest:
     diagnostics: DiagnosticSpec = DiagnosticSpec()
     channels: tuple[str, ...] = ("clean", "labels")
     mode: Literal["context", "isolated", "xray"] = "context"
+    xray: XraySpec = XraySpec()
     limits: InspectionLimits = InspectionLimits()
     allow_partial: bool = False
 ```
@@ -121,7 +123,13 @@ The O1 raw subset uses `RawInspectionRequest(roi, resolution,
 padding_canvas)`. O2 `InspectionRequest` supports `context` mode with clean,
 labels, and alpha channels. O4 adds wireframe, vertices, deformers,
 displacement, and distortion channels; the last two require an explicit
-baseline. Isolated/X-ray modes remain unsupported.
+baseline. O5 implements isolated and X-ray modes plus a mask channel for one
+focused mesh with a mesh or ancestor offscreen mask. X-ray uses an isolated
+alpha pass and evaluated outlines; explicit mask, opacity, and disabled
+overrides are recorded. Disabled X-ray requires an opt-in hidden-geometry
+capture. Mask source, combined, post-inversion consumer, and isolated
+composite-alpha views preserve source IDs and sampling transforms; composite
+alpha is not a final color-contribution measurement.
 `inspect_samples` freezes a batch once and applies fixed-union or follow framing.
 The packet manifest remains `kasane-inspection-packet` schema 2 with per-view
 presentation policy, object marks, focus status and explicit capability flags.

@@ -11,7 +11,9 @@ staged research/plan changes were preserved. Fixture manifest SHA-256:
 | O1 frozen capture and ROI | complete | Detached document snapshot; 1–64 samples with one texture union decode; full frozen authoring source records; static/actual animation frame capture with last successful operation identity; explicit ROI; scene and raw packet round trips; report/analysis/scene payload profiles; canonical capture/scene/render IDs; independent-process reopen and legacy pixel regression | O1 acceptance gate passed. Full playback recipe/runner, query-capable analysis profile, presentation, complete report v2 and full `InspectionRequest` belong to O2/O3 |
 | O2 display and location | complete | Main-target light/dark/checker background, conservative straight alpha and raw-derived alpha view, mesh/Part focus, fixed-union/follow sample views, 3×3/runtime mappings, numeric marks/highlights, object table, omitted-label reasons, packet profile round trips | V01/V02/V03 gates passed with the isolated GPU wheel; comparison/report and geometry/query channels belong to O3–O6 |
 | O3 comparison and report | complete | Same-snapshot inline baseline, compatible packet/external-reference comparison, target and non-target metrics, side-by-side/onion/outline/heatmap, explicit two-axis grid, paged sheets, complete/failed v2 reports and CPU reader | V04 normal/error paths passed with isolated wheels; animation playback runs remain O7 |
-| O4–O7 | not started | — | V05–V07 geometry, diagnostic composition and query; joint acceptance and playback work |
+| O4 geometry diagnostics | complete | Same-pass evaluation trace, geometry overlays and canvas-space deformation diagnostics | V05 passed; query remains O6 |
+| O5 isolation and mask diagnostics | complete | DiagnosticPlan, isolated/X-ray render, actual mask attachment views, hidden-geometry capture and report resources | V06 composition and recovery gates passed; per-object query remains O6 |
+| O6–O7 | not started | — | V07 queries, joint acceptance and playback work |
 
 The Python O1 API includes `capture_scene`, `capture_scenes`,
 `capture_animation_scene`, `render_scene`, `save_scene`, `open_scene`,
@@ -217,3 +219,35 @@ whole evaluated result, including glue and BlendShape, not a keyform delta.
 
 Built wheels are in `/tmp/kasane-observe-o4-wheel/` and
 `/tmp/kasane-observe-o4-cpu-wheel/`. These local paths are test evidence.
+
+## O5 isolation, X-ray and mask diagnostics (2026-09-26)
+
+`DiagnosticPlan` selects color meshes separately from mask-only sources and
+keeps ancestor offscreen targets in render-plan order. The derived frame
+retains target-local commands and mask inputs without editing the captured
+scene or live session. The normal renderer applies destination reads to the
+isolated background and lower draws; the view reports
+`destination_context="isolated"`. `XraySpec` records explicit mask, opacity,
+and disabled overrides, and the output pixels carry an XRAY marker. Opt-in
+hidden-geometry capture evaluates disabled mesh positions for that view,
+including animation preview captures.
+
+The mask channel reads the renderer's raw mask attachments after each source
+pass and combined pass. It exports source alpha with evaluated geometry,
+combined alpha, post-inversion consumer alpha, and isolated consumer
+composite alpha. Each view records target dimensions, source IDs, origin,
+scale, and both mask/canvas sampling matrices. Composite alpha is labeled as
+an aid rather than a color-contribution estimate. Report resources count the
+main-target readback incurred by every mask attachment pass. Scene/profile
+reopen retains diagnostic views and hidden-geometry capture identity.
+
+| O5 evidence | Result |
+| --- | --- |
+| `cargo test --workspace --locked -q`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed |
+| release observe wheel, CPython 3.14 | 35 Observe tests passed, including 8 O5 cases for mask-only dependencies, inversion, nested masked offscreen targets with destination read, disabled and animation X-ray, diagnostic cache recovery, budgets, and report resources |
+| release CPU-only wheel, CPython 3.14 | 52 CPU tests passed; reopened the O5 analysis packet and v2 run with six diagnostic views |
+| visual QA | inspected seven-view strip at `/tmp/kasane-o5-qa.png` |
+| default raw path | all five raw and legacy input SHA-256 values match `/tmp/kasane-o4-baseline.json` |
+
+Built wheels are in `/tmp/kasane-observe-o5-wheel/` and
+`/tmp/kasane-observe-o5-cpu-wheel/`. These local paths are test evidence.

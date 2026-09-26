@@ -4,6 +4,7 @@
 //! host-engine resource. Backends consume the same plan but
 //! are free to choose different physical resource implementations.
 
+mod diagnostic;
 mod plan;
 mod scene;
 mod validation;
@@ -12,6 +13,7 @@ use std::collections::{HashMap, HashSet};
 
 use kasane_core::types::Vec2;
 
+pub use diagnostic::{DiagnosticOverrides, DiagnosticPlan};
 pub use plan::{build_plan, prepare_frame};
 pub use scene::{
     surface_layout, Bounds2, MaskId, MaskPlan, MeshId, MeshPlan, ScenePlan, TargetId, TargetItem,

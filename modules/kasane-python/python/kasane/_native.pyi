@@ -61,14 +61,17 @@ class NativeObserver:
     def texture_mipmaps(self) -> bool: ...
     def set_fit_long_side(self, value: float) -> None: ...
     def capture_scene(
-        self, session: NativeSession, values: dict[str, float], with_trace: bool
+        self, session: NativeSession, values: dict[str, float], with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> NativeCapturedScene: ...
     def capture_scenes(
-        self, session: NativeSession, samples: list[dict[str, float]], with_trace: bool
+        self, session: NativeSession, samples: list[dict[str, float]], with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> list[NativeCapturedScene]: ...
     def capture_animation_scene(
         self, session: NativeSession, preview: NativeMotionPreview,
         apply_model_opacity: bool, with_trace: bool,
+        include_hidden_geometry: bool,
     ) -> NativeCapturedScene: ...
     def observe(
         self, session: NativeSession, values: dict[str, float]
@@ -96,6 +99,19 @@ class NativeCapturedScene:
         background_kind: str, light: tuple[int, int, int], dark: tuple[int, int, int],
         tile_px: int, origin_px: tuple[int, int], straight_alpha: bool,
     ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]], str]: ...
+    def render_isolated(
+        self, observer: NativeObserver, width: int, height: int,
+        roi: tuple[float, float, float, float], padding_canvas: float,
+        background_kind: str, light: tuple[int, int, int], dark: tuple[int, int, int],
+        tile_px: int, origin_px: tuple[int, int], straight_alpha: bool,
+        focus: list[str], ignore_masks: bool, ignore_opacity: bool,
+        include_disabled: bool,
+    ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]], str]: ...
+    def render_mask(
+        self, observer: NativeObserver, width: int, height: int,
+        roi: tuple[float, float, float, float], padding_canvas: float,
+        consumer_id: str, source_id: str | None,
+    ) -> tuple[str, int, int, bytes, bytes]: ...
 
 
 class ObjectHandle:

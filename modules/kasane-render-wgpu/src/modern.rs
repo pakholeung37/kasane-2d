@@ -23,6 +23,18 @@ pub struct WgpuRenderer {
     model_generation: u64,
 }
 
+/// Read-only copy handle for one mask attachment after a scene submission.
+#[derive(Clone)]
+pub struct WgpuMaskAttachment {
+    pub texture: wgpu::Texture,
+    pub width: u32,
+    pub height: u32,
+    pub origin: kasane_core::Vec2,
+    pub logical_size: kasane_core::Vec2,
+    pub scale: f32,
+    pub source_ids: Vec<String>,
+}
+
 /// The render-relevant portion of a submitted frame. Its topology arrays are
 /// copied so the renderer never pins buffers owned by the caller's frame.
 struct RenderSnapshot {
@@ -308,6 +320,18 @@ impl GeometryCache {
 }
 
 impl WgpuRenderer {
+    pub fn mask_attachment(&self, consumer_id: &str) -> Option<WgpuMaskAttachment> {
+        let mask = self.masks.get_for_target(consumer_id)?;
+        Some(WgpuMaskAttachment {
+            texture: mask._texture.clone(),
+            width: mask.width,
+            height: mask.height,
+            origin: mask.origin,
+            logical_size: mask.logical_size,
+            scale: mask.scale,
+            source_ids: mask.source_ids.clone(),
+        })
+    }
     pub fn new(device: &wgpu::Device, target: WgpuTargetConfig) -> Result<Self, Status> {
         validate_target(device, target)?;
         let renderer = WgpuBasicRenderer::new(device, target)?;

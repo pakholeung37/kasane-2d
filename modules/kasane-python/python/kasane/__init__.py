@@ -14,7 +14,7 @@ from ._session import Session, open_project
 from ._observe import CapturedScene, Observer, ObservationFailure, RenderedSceneView
 from ._inspection import (
     DiagnosticSpec, Focus, InspectionLimits, InspectionPacket, InspectionRequest, InspectionView,
-    OverlaySpec, PacketSaveReceipt, PresentationSpec, RawInspectionRequest, ViewSpec,
+    OverlaySpec, PacketSaveReceipt, PresentationSpec, RawInspectionRequest, ViewSpec, XraySpec,
     open_inspection_packet,
 )
 from ._comparison import (
@@ -195,6 +195,7 @@ for _public_type in (
     InspectionLimits,
     InspectionRequest,
     DiagnosticSpec,
+    XraySpec,
     CompareOptions,
     ComparisonArtifact,
     ComparisonResult,
@@ -278,6 +279,7 @@ __all__ = [
     "InspectionLimits",
     "InspectionRequest",
     "DiagnosticSpec",
+    "XraySpec",
     "CompareOptions",
     "ComparisonArtifact",
     "ComparisonResult",
