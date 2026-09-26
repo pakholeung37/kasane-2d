@@ -3,8 +3,9 @@
 Date: 2026-09-25. Contract version: `inspection-v2-draft-1`. This fixes the O0
 interface and semantics for implementation. The basic Rust/Python frozen
 capture, ROI rerender, scene bundle, canonical digest, raw packet, and bounded
-save-profile slice is available; the full presentation/query packet and report
-v2 below remain delivery targets. The existing
+save-profile slice is available. O2 adds presentation, evaluated-geometry
+focus, fixed/follow sample views, numeric labels, and an object table. Query,
+comparison, diagnostic channels and report v2 below remain delivery targets. The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -112,13 +113,14 @@ profile reopens for artifact reading, `analysis` adds CPU geometry/probe data,
 and `scene` adds frozen render scene and decoded textures for new GPU views.
 Uncaptured capability returns `CAPTURE_NOT_AVAILABLE`, never a fresh snapshot.
 
-The O1 public subset uses `RawInspectionRequest(roi, resolution,
-padding_canvas)` and exposes `inspect`, `inspect_animation`, `render`,
-`InspectionPacket.save`, and `open_inspection_packet` for raw context views.
-Its manifest is `kasane-inspection-packet` schema 2, with explicit capability
-flags. The full `InspectionRequest`/`InspectionView` contract above, label and
-presentation channels, CPU queries after analysis reopen, batch layout and
-complete run report v2 are implemented in O2/O3. A live preview capture keeps
+The O1 raw subset uses `RawInspectionRequest(roi, resolution,
+padding_canvas)`. O2 `InspectionRequest` supports `context` mode with clean,
+labels, and alpha channels; unsupported diagnostic modes/channels fail early.
+`inspect_samples` freezes a batch once and applies fixed-union or follow framing.
+The packet manifest remains `kasane-inspection-packet` schema 2 with per-view
+presentation policy, object marks, focus status and explicit capability flags.
+CPU queries after analysis reopen, comparison layout and complete run report
+v2 remain later work. A live preview capture keeps
 the last successful operation identity while reporting history as
 `not_recorded`; it does not claim a playback recipe or resumable runtime.
 
@@ -203,15 +205,17 @@ conversion.
 
 | Rendering path | raw | opaque background | straight transparent | coverage |
 | --- | --- | --- | --- | --- |
-| Normal source-over, ordinary alpha | existing | required | supported after numeric equivalence test | local alpha × gates |
-| Additive | existing | required in main target | conditional on actual output; reject RGB≠0 at alpha=0 | local coverage only |
-| Multiply | existing | required in main target | conditional on background independence | local coverage only |
-| Extended/destination-read | existing | required in main target | reject when output depends on background or cannot fold to RGBA | per-mode explicit support or unsupported |
-| Mesh mask/inverted mask | existing | required | conditional on ordinary RGBA equivalence | mask-aware |
-| Nested offscreen | existing | required | conditional on full composition equivalence | ancestor gates required |
+| Normal source-over, ordinary alpha | existing | O2 implemented | O2 implemented with round-half-up unpremultiply | O6 local alpha × gates |
+| Additive | existing | O2 implemented | O2 rejects | O6 local coverage only |
+| Multiply | existing | O2 implemented | O2 rejects | O6 local coverage only |
+| Extended/destination-read | existing | O2 implemented | O2 rejects | O6 per-mode coverage or unsupported |
+| Mesh mask/inverted mask | existing | O2 implemented | O2 normal-blend path | O6 mask-aware |
+| Nested offscreen | existing | O2 implemented | O2 normal-blend path | O6 ancestor gates |
 
-The conditional cells are gates, not claims of current support. If a requested
-straight output fails or cannot be established, return
+O2 rejects any special drawable or Offscreen blend for straight output. This
+is conservative because one transparent RGBA image cannot promise the same
+result on every destination. If a requested straight output cannot be
+established, return
 `UNREPRESENTABLE_TRANSPARENT_OUTPUT`; do not silently save premultiplied PNG.
 The alpha channel image comes from a transparent raw pass, not opaque output.
 Pixel probes and comparison metrics retain the policy and background used.

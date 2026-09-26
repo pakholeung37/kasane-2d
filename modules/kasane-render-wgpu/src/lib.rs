@@ -27,7 +27,9 @@ mod shaders;
 mod tests;
 
 pub use api::*;
-pub use modern::{WgpuEncodeTarget, WgpuOutputMode, WgpuRenderStats, WgpuRenderer};
+pub use modern::{
+    WgpuEncodeTarget, WgpuMainBackground, WgpuOutputMode, WgpuRenderStats, WgpuRenderer,
+};
 pub use pipeline::WgpuBasicRenderer;
 pub use resources::{
     WgpuDestination, WgpuDestinationPool, WgpuMask, WgpuMaskPool, WgpuSurface, WgpuSurfacePool,

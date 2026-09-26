@@ -217,6 +217,31 @@ impl ResolvedObservation {
         Ok(format!("{:x}", Sha256::digest(bytes)))
     }
 
+    pub fn presentation_digest(
+        &self,
+        request: RenderRequest,
+        background: crate::PresentationBackground,
+        straight_alpha: bool,
+    ) -> Result<String, ObservationError> {
+        request.mapping()?;
+        let value = serde_json::json!({
+            "scene_digest": self.scene_digest,
+            "view": {
+                "width": request.width,
+                "height": request.height,
+                "roi": [request.roi.x0, request.roi.y0, request.roi.x1, request.roi.y1],
+                "padding_canvas": request.padding_canvas,
+            },
+            "mode": "context",
+            "background": background,
+            "alpha_policy": if straight_alpha { "straight_alpha_round_half_up_zero_rgb_at_zero_alpha" } else { "renderer_native_v1" },
+            "texture_sampling": if cfg!(feature = "framework-texture-filtering") { "linear_mipmap_linear_repeat_area_box_v2" } else { "renderer_default" },
+        });
+        let mut bytes = b"kasane-observe-presentation-digest-v1\0".to_vec();
+        canonical_json(&value, &mut bytes)?;
+        Ok(format!("{:x}", Sha256::digest(bytes)))
+    }
+
     /// Save an evaluated scene and its exact source PNG bytes to a new absolute
     /// directory. The output is data only and cannot continue animation state.
     pub fn save_scene(&self, directory: &Path) -> Result<(), ObservationError> {

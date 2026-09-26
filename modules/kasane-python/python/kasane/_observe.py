@@ -1,7 +1,7 @@
 """GPU observation and reproducible observation-run reports."""
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 from importlib.metadata import version as package_version
 import json
@@ -16,7 +16,8 @@ from . import _native as _native_module
 from ._animation import MotionPreview
 from ._session import Session
 from ._inspection import (
-    InspectionPacket, RawInspectionRequest, append_view, check_next_view,
+    InspectionPacket, InspectionRequest, PresentationSpec, RawInspectionRequest,
+    _focus_and_objects, append_view, check_next_view, presentation_packet,
     open_inspection_packet, packet_from_scene,
 )
 
@@ -123,10 +124,39 @@ class Observer:
             _frame_from_native(raw), requested, padded, visible, render_digest,
         )
 
+    def render_presentation_scene(
+        self, scene: CapturedScene, *, roi: tuple[float, float, float, float],
+        resolution: tuple[int, int], padding_canvas: float,
+        presentation: PresentationSpec,
+    ) -> RenderedSceneView:
+        """Render display pixels with a background inside the main target."""
+        kind, light, dark, tile, origin = presentation.native_background()
+        raw, (requested, padded, visible), digest = scene._native.render_presentation(
+            self._native, resolution[0], resolution[1], roi, padding_canvas,
+            kind, light, dark, tile, origin, presentation.alpha == "straight",
+        )
+        return RenderedSceneView(
+            _frame_from_native(raw), requested, padded, visible, digest,
+            "clean", presentation.record(),
+        )
+
     def inspect_scene(
-        self, scene: CapturedScene, *, request: RawInspectionRequest,
+        self, scene: CapturedScene, *, request: RawInspectionRequest | InspectionRequest,
     ) -> InspectionPacket:
-        """Create a raw O1 packet from a frozen scene without live session reads."""
+        """Create a raw or presented packet from a frozen scene."""
+        if isinstance(request, InspectionRequest):
+            roi, selected, objects = _focus_and_objects(scene, request)
+            rendered = self.render_presentation_scene(
+                scene, roi=roi, resolution=request.view.resolution,
+                padding_canvas=request.view.padding_canvas,
+                presentation=request.presentation,
+            )
+            raw_alpha = (self.render_scene(
+                scene, roi=roi, resolution=request.view.resolution,
+                padding_canvas=request.view.padding_canvas,
+            ) if "alpha" in request.channels else None)
+            return presentation_packet(scene, rendered, objects, selected,
+                                       request, raw_alpha)
         rendered = self.render_scene(
             scene, roi=request.roi, resolution=request.resolution,
             padding_canvas=request.padding_canvas,
@@ -135,14 +165,14 @@ class Observer:
 
     def inspect(
         self, session: Session, values: Mapping[str, float] | None = None, *,
-        request: RawInspectionRequest,
+        request: RawInspectionRequest | InspectionRequest,
     ) -> InspectionPacket:
         """Freeze one parameter frame and return its raw inspection packet."""
         return self.inspect_scene(self.capture_scene(session, values), request=request)
 
     def inspect_animation(
         self, session: Session, preview: MotionPreview, *,
-        request: RawInspectionRequest, apply_model_opacity: bool = False,
+        request: RawInspectionRequest | InspectionRequest, apply_model_opacity: bool = False,
     ) -> InspectionPacket:
         """Freeze the preview's actual current frame without advancing it."""
         scene = self.capture_animation_scene(
@@ -150,13 +180,67 @@ class Observer:
         )
         return self.inspect_scene(scene, request=request)
 
+    def inspect_scenes(
+        self, scenes: Sequence[CapturedScene], *, request: InspectionRequest,
+    ) -> tuple[InspectionPacket, ...]:
+        """Present frozen samples with a shared ROI or per-sample follow ROI."""
+        if not 1 <= len(scenes) <= request.limits.max_samples:
+            raise ValueError("inspect_scenes exceeds the sample limit")
+        first = scenes[0]
+        if any(scene.capture_id != first.capture_id or
+               scene.metadata["document_id"] != first.metadata["document_id"] or
+               scene.metadata["version"] != first.metadata["version"]
+               for scene in scenes):
+            raise ValueError("Inspection samples must share one document capture")
+        if request.view.framing == "fixed_union" and request.view.roi is None:
+            rois = []
+            for scene in scenes:
+                try:
+                    roi, _, _ = _focus_and_objects(scene, request)
+                    rois.append(roi)
+                except ObservationFailure as error:
+                    if getattr(error, "code", None) != "EMPTY_FOCUS":
+                        raise
+            if not rois:
+                from ._inspection import _failure
+                raise _failure("EMPTY_FOCUS", "No sample has selected evaluated geometry")
+            union = (min(roi[0] for roi in rois), min(roi[1] for roi in rois),
+                     max(roi[2] for roi in rois), max(roi[3] for roi in rois))
+            request = replace(request, view=replace(request.view, roi=union))
+        result = []
+        for index, scene in enumerate(scenes):
+            packet = self.inspect_scene(scene, request=request)
+            result.append(replace(packet, views=tuple(
+                replace(view, sample_index=index) for view in packet.views
+            )))
+        return tuple(result)
+
+    def inspect_samples(
+        self, session: Session, samples: Sequence[Mapping[str, float]], *,
+        request: InspectionRequest,
+    ) -> tuple[InspectionPacket, ...]:
+        """Freeze parameter samples once, then present them in one view policy."""
+        if not 1 <= len(samples) <= request.limits.max_samples:
+            raise ValueError("inspect_samples exceeds the sample limit")
+        return self.inspect_scenes(self.capture_scenes(session, samples), request=request)
+
     def render(
-        self, packet: InspectionPacket, *, request: RawInspectionRequest,
+        self, packet: InspectionPacket, *, request: RawInspectionRequest | InspectionRequest,
     ) -> InspectionPacket:
         """Append a raw view while preserving the packet's capture identity."""
         if packet.closed or packet._scene is None:
             from ._inspection import _unavailable
             raise _unavailable("Packet has no open scene for another render")
+        if isinstance(request, InspectionRequest):
+            extra_count = len(request.channels)
+            extra_pixels = request.view.resolution[0] * request.view.resolution[1] * extra_count
+            if (len(packet.views) + extra_count > 64 or
+                    sum(view.width * view.height for view in packet.views) + extra_pixels > 64_000_000):
+                raise ValueError("Packet view count or pixel budget exceeded")
+            extra = self.inspect_scene(packet._scene, request=request)
+            return replace(packet, views=(*packet.views, *extra.views),
+                           focus_status=(packet.focus_status if
+                                         packet.focus_status == extra.focus_status else "mixed"))
         check_next_view(packet, request)
         rendered = self.render_scene(
             packet._scene, roi=request.roi, resolution=request.resolution,
@@ -360,6 +444,8 @@ class RenderedSceneView:
     padded_roi: tuple[float, float, float, float]
     visible_roi: tuple[float, float, float, float]
     render_digest: str
+    kind: str = "raw_context"
+    presentation: dict | None = None
 
     def canvas_to_image(self, point: tuple[float, float]) -> tuple[float, float]:
         scale, (ox, oy) = self.frame.view_scale, self.frame.view_offset

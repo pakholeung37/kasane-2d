@@ -153,6 +153,7 @@ pub(super) struct TargetEncoding<'frame, 'context> {
     pub(super) draw_transform: Affine2,
     pub(super) composite_transform: Affine2,
     pub(super) label: &'static str,
+    pub(super) initial_load: wgpu::LoadOp<wgpu::Color>,
 }
 
 impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'frame, 'texture> {
@@ -321,6 +322,7 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 draw_transform: self.prepared.surface_transform,
                 composite_transform: Affine2::IDENTITY,
                 label: "kasane.wgpu.scene.offscreen-pass",
+                initial_load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
             },
             events,
         )
@@ -345,7 +347,7 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                     self.resources,
                     &commands,
                     if first_pass {
-                        wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                        target.initial_load
                     } else {
                         wgpu::LoadOp::Load
                     },
@@ -372,7 +374,7 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 self.resources,
                 &commands,
                 if first_pass {
-                    wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)
+                    target.initial_load
                 } else {
                     wgpu::LoadOp::Load
                 },

@@ -468,9 +468,11 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
-| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...))` | Return an O1 raw `InspectionPacket` with a frozen scene and one transparent context view. |
-| `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Return the actual animation frame in the same raw packet form, with current operation identity. |
-| `observer.render(packet, *, request)` | Append a raw ROI view to a new packet value with the same capture ID, without reading a session or source asset. |
+| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...))` | Return a raw O1 view or O2 clean/labels/alpha presentation views from one frozen scene. |
+| `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Capture the actual animation frame with the same request choices and current operation identity. |
+| `observer.inspect_samples(session, samples, *, request=InspectionRequest(...))` | Freeze 1–64 parameter samples once; use a fixed union ROI or follow each sample's evaluated geometry. |
+| `observer.inspect_scenes(scenes, *, request=InspectionRequest(...))` | Present already frozen samples sharing one capture ID. |
+| `observer.render(packet, *, request)` | Append raw or O2 presentation views to a new packet value with the same capture ID, without reading a session or source asset. |
 | `packet.save(absolute_directory, profile="analysis")` | Save a new packet with checked artifact hashes; `report` stores PNG/metadata, `analysis` also stores evaluated geometry and raw RGBA, `scene` also stores frozen textures for rerendering. |
 | `kasane.open_inspection_packet(absolute_directory)` / `observer.open(...)` | Validate and open a saved packet. Report/analysis profiles can be read from a CPU-only wheel; scene profile requires the observe wheel. |
 
@@ -488,12 +490,26 @@ includes the enabled texture sampling policy and is separate from these
 digests. A `--no-default-features --features observe` wheel preserves the
 previous single-sample hash and pixels. Opening a v1
 bundle computes the scene digest and assigns a new capture ID.
-They currently render the legacy raw transparent pixel policy. The O1 packet
-uses `RawInspectionRequest`; the full `InspectionRequest`, labels, display
-backgrounds, query/comparison APIs, batch layout and complete report v2 remain
-later-stage work. `packet.capabilities` explicitly marks those channels
-unavailable. The `analysis` profile preserves query inputs but does not yet
-implement the O2 geometry/probe query. A saved scene contains an evaluated frame,
+`RawInspectionRequest` retains the legacy transparent raw policy. O2's
+`InspectionRequest` supports `context` mode and `clean`, `labels`, `alpha`
+channels. Light, dark and checker backgrounds are drawn into the renderer's
+main scene target before destination-reading blends. `PresentationSpec`
+records actual RGB8 colors, checker tile/origin, and `renderer_native_v1`
+color policy; transparent straight-alpha PNG is available for normal blends
+and rejects special blends with `UNREPRESENTABLE_TRANSPARENT_OUTPUT`.
+The alpha view comes from an independent transparent raw pass and describes
+composite alpha. It is not a color-contribution map. The built-in numeric
+label renderer needs no Pillow runtime dependency. Marks come from sorted
+mesh UUIDs and are stable within a capture; each packet keeps an unannotated
+clean view, object table, focus status, and omitted-label reasons. Each view
+exposes canvas/image 3×3 matrices and runtime/canvas conversion. `fixed_union`
+shares an evaluated-geometry ROI across samples; `follow` uses each sample's
+ROI and should not be used for absolute displacement comparison.
+Query/comparison APIs, diagnostic modes/channels, contact-sheet layout and
+complete report v2 remain later-stage work; unsupported requests fail
+explicitly. `packet.capabilities` marks query/playback channels unavailable.
+The `analysis` profile preserves query inputs but does not yet implement
+geometry or pixel-probe queries. A saved scene contains an evaluated frame,
 not a resumable animation preview. `CapturedScene.source` reports
 `source_kind`, and for animation, current snapshot, host Model opacity policy
 and `history_status="not_recorded"`. Snapshot events cover only the most recent
@@ -527,6 +543,22 @@ with kasane.Observer(256, 256, 256) as observer:
     receipt = packet.save(Path("/absolute/path/to/new-packet"), profile="scene")
     reopened_packet = observer.open(receipt.directory)
     assert observer.render(reopened_packet, request=request).capture_id == packet.capture_id
+```
+
+```python
+request = kasane.InspectionRequest(
+    focus=kasane.Focus(mesh_ids=(mesh_id,)),
+    view=kasane.ViewSpec(resolution=(1024, 768), padding_canvas=8),
+    presentation=kasane.PresentationSpec(background="checker"),
+    channels=("clean", "labels", "alpha"),
+)
+with kasane.Observer(256, 256, 256) as observer:
+    packet = observer.inspect(session, {"Shift": 0.25}, request=request)
+    clean, labels, alpha = packet.views
+    assert clean.kind == "clean" and labels.kind == "labels"
+    canvas_point = clean.image_to_canvas((512.5, 384.5))
+    object_id = next(row["id"] for row in packet.objects if row.get("mark") == 1)
+    packet.save(Path("/absolute/path/to/presentation"), profile="analysis")
 ```
 
 `ObservationRun.directory` (also `output`) is the actual run directory;

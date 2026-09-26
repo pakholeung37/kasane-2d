@@ -5,11 +5,11 @@ use std::future::Future;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use kasane_core::Vec2;
+use kasane_core::{BlendMode, DrawableFrame, Vec2};
 use kasane_render::{Affine2, ViewportConfig};
 use kasane_render_wgpu::{
-    WgpuEncodeTarget, WgpuOutputMode, WgpuRenderer, WgpuTargetConfig, WgpuTexture,
-    WgpuTextureCatalog,
+    WgpuEncodeTarget, WgpuMainBackground, WgpuOutputMode, WgpuRenderer, WgpuTargetConfig,
+    WgpuTexture, WgpuTextureCatalog,
 };
 use kasane_sdk::Version;
 use sha2::{Digest, Sha256};
@@ -24,6 +24,63 @@ pub struct ObserverConfig {
     pub width: u32,
     pub height: u32,
     pub fit_long_side: f32,
+}
+
+/// Exact colors used to initialize the main scene target. Checker coordinates
+/// are output pixels, with a stable origin independent of the scene camera.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum PresentationBackground {
+    #[default]
+    Transparent,
+    Solid {
+        rgb: [u8; 3],
+    },
+    Checker {
+        light: [u8; 3],
+        dark: [u8; 3],
+        tile_px: u32,
+        origin_px: (i32, i32),
+    },
+}
+
+impl PresentationBackground {
+    fn gpu(self) -> Result<WgpuMainBackground, ObservationError> {
+        let opaque = |rgb: [u8; 3]| {
+            [
+                f32::from(rgb[0]) / 255.0,
+                f32::from(rgb[1]) / 255.0,
+                f32::from(rgb[2]) / 255.0,
+                1.0,
+            ]
+        };
+        match self {
+            Self::Transparent => Ok(WgpuMainBackground::Transparent),
+            Self::Solid { rgb } => Ok(WgpuMainBackground::Solid(opaque(rgb))),
+            Self::Checker {
+                light,
+                dark,
+                tile_px,
+                origin_px,
+            } => {
+                if !(1..=4096).contains(&tile_px)
+                    || origin_px.0.unsigned_abs() > 1_000_000
+                    || origin_px.1.unsigned_abs() > 1_000_000
+                {
+                    return Err(error(
+                        "INVALID_BACKGROUND",
+                        "Checker tile or origin is outside its supported range",
+                    ));
+                }
+                Ok(WgpuMainBackground::Checker {
+                    light: opaque(light),
+                    dark: opaque(dark),
+                    tile_size: tile_px,
+                    origin: origin_px,
+                })
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -286,7 +343,13 @@ impl Observer {
 
     pub fn observe(&mut self, input: &ObservationInput) -> Result<ObservedFrame, ObservationError> {
         let resolved = input.resolve_textures()?;
-        self.render_resolved(input, &resolved, None)
+        self.render_resolved(
+            input,
+            &resolved,
+            None,
+            PresentationBackground::Transparent,
+            false,
+        )
     }
 
     /// Rerender a previously resolved scene at a source-canvas ROI without
@@ -296,7 +359,46 @@ impl Observer {
         captured: &ResolvedObservation,
         request: RenderRequest,
     ) -> Result<ObservedFrame, ObservationError> {
-        self.render_resolved(captured.input(), captured.textures(), Some(request))
+        self.render_resolved(
+            captured.input(),
+            captured.textures(),
+            Some(request),
+            PresentationBackground::Transparent,
+            false,
+        )
+    }
+
+    /// Render presentation pixels with the background in the actual main
+    /// target. Straight alpha is available only for transparent normal blend.
+    pub fn render_presentation(
+        &mut self,
+        captured: &ResolvedObservation,
+        request: RenderRequest,
+        background: PresentationBackground,
+        straight_alpha: bool,
+    ) -> Result<ObservedFrame, ObservationError> {
+        background.gpu()?;
+        if straight_alpha {
+            if background != PresentationBackground::Transparent {
+                return Err(error(
+                    "INVALID_PRESENTATION",
+                    "Straight alpha requires a transparent background",
+                ));
+            }
+            if !supports_straight_alpha(captured.input().frame()) {
+                return Err(error(
+                    "UNREPRESENTABLE_TRANSPARENT_OUTPUT",
+                    "Special blend modes cannot be faithfully encoded as straight-alpha PNG",
+                ));
+            }
+        }
+        self.render_resolved(
+            captured.input(),
+            captured.textures(),
+            Some(request),
+            background,
+            straight_alpha,
+        )
     }
 
     fn render_resolved(
@@ -304,6 +406,8 @@ impl Observer {
         input: &ObservationInput,
         resolved: &[ResolvedTexture],
         request: Option<RenderRequest>,
+        background: PresentationBackground,
+        straight_alpha: bool,
     ) -> Result<ObservedFrame, ObservationError> {
         let explicit_view = request.map(RenderRequest::mapping).transpose()?;
         let (width, height) = request.map_or((self.config.width, self.config.height), |view| {
@@ -356,6 +460,11 @@ impl Observer {
         }
         if cfg!(feature = "framework-texture-filtering") {
             digest.update(b"source-texture:linear-mipmap-linear-repeat-area-v2");
+        }
+        if background != PresentationBackground::Transparent || straight_alpha {
+            digest.update(
+                format!("presentation:{background:?}:straight={straight_alpha}").as_bytes(),
+            );
         }
         let input_sha256 = format!("{:x}", digest.finalize());
         self.upload_textures(resolved)?;
@@ -449,7 +558,13 @@ impl Observer {
             scale,
             offset_x,
             offset_y,
+            background.gpu()?,
         )?;
+        let rgba = if straight_alpha {
+            unpremultiply_rgba(rgba)
+        } else {
+            rgba
+        };
         let mut texture_revisions: Vec<_> = self
             .textures
             .iter()
@@ -511,6 +626,7 @@ fn render_sample(
     scale: f32,
     offset_x: f32,
     offset_y: f32,
+    background: WgpuMainBackground,
 ) -> Result<Vec<u8>, ObservationError> {
     let view = ViewportConfig {
         transform: Affine2 {
@@ -542,7 +658,7 @@ fn render_sample(
         label: Some("sdk-observe.encode"),
     });
     renderer
-        .encode(
+        .encode_with_background(
             WgpuEncodeTarget {
                 device,
                 queue,
@@ -551,6 +667,7 @@ fn render_sample(
                 output_mode: WgpuOutputMode::Replace,
             },
             catalog,
+            background,
         )
         .map_err(status)?;
     queue.submit([encoder.finish()]);
@@ -607,6 +724,27 @@ fn render_sample(
     Ok(rgba)
 }
 
+fn unpremultiply_rgba(mut pixels: Vec<u8>) -> Vec<u8> {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
+        let alpha = u32::from(pixel[3]);
+        for channel in &mut pixel[..3] {
+            *channel = (u32::from(*channel) * 255 + alpha / 2)
+                .checked_div(alpha)
+                .unwrap_or(0)
+                .min(255) as u8;
+        }
+    }
+    pixels
+}
+
+fn supports_straight_alpha(frame: &DrawableFrame) -> bool {
+    frame
+        .drawables
+        .iter()
+        .all(|item| item.raw_blend_mode.is_none() && item.blend_mode == BlendMode::Normal)
+        && frame.offscreens.iter().all(|item| item.blend_mode == 0)
+}
+
 /// Generate straight-RGBA box-filtered mip levels from the uploaded PNG.
 /// OpenGL's glGenerateMipmap is implementation-defined, so this matches its
 /// filtering setup without claiming byte-identical mip texels.
@@ -655,7 +793,35 @@ fn straight_rgba_mipmaps(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32,
 
 #[cfg(test)]
 mod tests {
-    use super::straight_rgba_mipmaps;
+    use super::{straight_rgba_mipmaps, supports_straight_alpha, unpremultiply_rgba};
+    use kasane_core::evaluation::OffscreenFrame;
+    use kasane_core::{BlendMode, Drawable, DrawableFrame};
+
+    #[test]
+    fn straight_alpha_rejects_every_special_blend_and_zeros_invisible_rgb() {
+        let mut frame = DrawableFrame {
+            drawables: vec![Drawable::default()],
+            ..Default::default()
+        };
+        assert!(supports_straight_alpha(&frame));
+        frame.drawables[0].blend_mode = BlendMode::Additive;
+        assert!(!supports_straight_alpha(&frame));
+        frame.drawables[0].blend_mode = BlendMode::Multiplicative;
+        assert!(!supports_straight_alpha(&frame));
+        frame.drawables[0].blend_mode = BlendMode::Normal;
+        frame.drawables[0].raw_blend_mode = Some(3);
+        assert!(!supports_straight_alpha(&frame));
+        frame.drawables[0].raw_blend_mode = None;
+        frame.offscreens.push(OffscreenFrame {
+            blend_mode: 4,
+            ..Default::default()
+        });
+        assert!(!supports_straight_alpha(&frame));
+        assert_eq!(
+            unpremultiply_rgba(vec![90, 30, 50, 0, 64, 32, 16, 128]),
+            vec![0, 0, 0, 0, 128, 64, 32, 128]
+        );
+    }
 
     #[test]
     fn mipmaps_include_odd_edges_and_single_pixel_axes() {

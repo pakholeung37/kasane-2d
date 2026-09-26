@@ -809,6 +809,7 @@ impl WgpuBasicRenderer {
                     draw_transform: viewport.transform,
                     composite_transform: surface_to_target,
                     label: "kasane.wgpu.scene.main-pass",
+                    initial_load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                 },
                 scene.main.iter().copied(),
             )?;

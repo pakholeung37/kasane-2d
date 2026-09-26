@@ -13,6 +13,7 @@ pub struct WgpuRenderer {
     model: Option<RenderSnapshot>,
     viewport: Option<ViewportConfig>,
     color: WgpuSurface,
+    checker_pipeline: wgpu::RenderPipeline,
     surfaces: WgpuSurfacePool,
     masks: WgpuMaskPool,
     destinations: WgpuDestinationPool,
@@ -79,6 +80,21 @@ pub enum WgpuOutputMode {
     #[default]
     Replace,
     Composite,
+}
+
+/// Initial contents of the main scene target. Offscreen and mask targets
+/// always start transparent, including when the main target is opaque.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum WgpuMainBackground {
+    #[default]
+    Transparent,
+    Solid([f32; 4]),
+    Checker {
+        light: [f32; 4],
+        dark: [f32; 4],
+        tile_size: u32,
+        origin: (i32, i32),
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -296,6 +312,7 @@ impl WgpuRenderer {
         validate_target(device, target)?;
         let renderer = WgpuBasicRenderer::new(device, target)?;
         let color = create_color(device, target);
+        let checker_pipeline = create_checker_pipeline(device, target.format);
         Ok(Self {
             device: device.clone(),
             renderer,
@@ -303,6 +320,7 @@ impl WgpuRenderer {
             model: None,
             viewport: None,
             color,
+            checker_pipeline,
             surfaces: WgpuSurfacePool::new(target.format),
             masks: WgpuMaskPool::new(),
             destinations: WgpuDestinationPool::new(),
@@ -330,6 +348,7 @@ impl WgpuRenderer {
         }
         if self.target().format != target.format {
             self.renderer = WgpuBasicRenderer::new(device, target)?;
+            self.checker_pipeline = create_checker_pipeline(device, target.format);
             self.surfaces = WgpuSurfacePool::new(target.format);
             self.masks.clear();
             self.destinations.clear();
@@ -388,6 +407,17 @@ impl WgpuRenderer {
         target: WgpuEncodeTarget<'_>,
         textures: &WgpuTextureCatalog<'_>,
     ) -> Result<WgpuRenderStats, Status> {
+        self.encode_with_background(target, textures, WgpuMainBackground::Transparent)
+    }
+
+    /// Encode with a background inside the main scene target, before any
+    /// destination-reading blend operation. The legacy entry remains raw.
+    pub fn encode_with_background(
+        &mut self,
+        target: WgpuEncodeTarget<'_>,
+        textures: &WgpuTextureCatalog<'_>,
+        background: WgpuMainBackground,
+    ) -> Result<WgpuRenderStats, Status> {
         let WgpuEncodeTarget {
             device,
             queue,
@@ -396,6 +426,28 @@ impl WgpuRenderer {
             output_mode,
         } = target;
         self.ensure_device(device)?;
+        let opaque_color = |rgba: [f32; 4]| {
+            rgba[3] == 1.0
+                && rgba
+                    .into_iter()
+                    .all(|value| value.is_finite() && (0.0..=1.0).contains(&value))
+        };
+        let valid_background = match background {
+            WgpuMainBackground::Transparent => true,
+            WgpuMainBackground::Solid(rgba) => opaque_color(rgba),
+            WgpuMainBackground::Checker {
+                light,
+                dark,
+                tile_size,
+                ..
+            } => tile_size > 0 && opaque_color(light) && opaque_color(dark),
+        };
+        if !valid_background {
+            return Err(Status::error(
+                "INVALID_BACKGROUND",
+                "Display colors must be opaque, finite RGBA in 0..1; checker tile size must be positive.",
+            ));
+        }
         let frame = &self
             .model
             .as_ref()
@@ -440,6 +492,34 @@ impl WgpuRenderer {
         let surface_size = surface_extent(prepared.surface_size)?;
         let surface_to_model = inverse_affine(prepared.surface_transform)?;
         let surface_to_target = compose_affine(viewport.transform, surface_to_model);
+        let main_load = match background {
+            WgpuMainBackground::Transparent => wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+            WgpuMainBackground::Solid(rgba) => wgpu::LoadOp::Clear(wgpu::Color {
+                r: f64::from(rgba[0]),
+                g: f64::from(rgba[1]),
+                b: f64::from(rgba[2]),
+                a: f64::from(rgba[3]),
+            }),
+            WgpuMainBackground::Checker {
+                light,
+                dark,
+                tile_size,
+                origin,
+            } => {
+                encode_checker_background(
+                    device,
+                    encoder,
+                    &self.color.view,
+                    &self.checker_pipeline,
+                    CheckerUniform {
+                        light,
+                        dark,
+                        tile_origin: [tile_size as f32, origin.0 as f32, origin.1 as f32, 0.0],
+                    },
+                );
+                wgpu::LoadOp::Load
+            }
+        };
         let mut resources = Vec::new();
         let mut rendered_surfaces = HashSet::new();
         {
@@ -475,6 +555,7 @@ impl WgpuRenderer {
                     draw_transform: viewport.transform,
                     composite_transform: surface_to_target,
                     label: "kasane.wgpu.scene-plan.main",
+                    initial_load: main_load,
                 },
                 graph.main.iter().copied(),
             )?;
@@ -712,6 +793,91 @@ fn create_color(device: &wgpu::Device, target: WgpuTargetConfig) -> WgpuSurface 
         view,
         _texture: texture,
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Pod, Zeroable)]
+struct CheckerUniform {
+    light: [f32; 4],
+    dark: [f32; 4],
+    tile_origin: [f32; 4],
+}
+
+fn create_checker_pipeline(
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+) -> wgpu::RenderPipeline {
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("kasane.wgpu.checker.shader"),
+        source: wgpu::ShaderSource::Wgsl(include_str!("../shaders/checker_background.wgsl").into()),
+    });
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("kasane.wgpu.checker.pipeline"),
+        layout: None,
+        vertex: wgpu::VertexState {
+            module: &shader,
+            entry_point: Some("vs_main"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: None,
+        multisample: wgpu::MultisampleState::default(),
+        fragment: Some(wgpu::FragmentState {
+            module: &shader,
+            entry_point: Some("fs_main"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
+}
+
+fn encode_checker_background(
+    device: &wgpu::Device,
+    encoder: &mut wgpu::CommandEncoder,
+    target: &wgpu::TextureView,
+    pipeline: &wgpu::RenderPipeline,
+    data: CheckerUniform,
+) {
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("kasane.wgpu.checker.uniform"),
+        contents: bytemuck::bytes_of(&data),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let binding = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("kasane.wgpu.checker.binding"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: uniform.as_entire_binding(),
+        }],
+    });
+    let color_attachments = [Some(wgpu::RenderPassColorAttachment {
+        view: target,
+        depth_slice: None,
+        resolve_target: None,
+        ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            store: wgpu::StoreOp::Store,
+        },
+    })];
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("kasane.wgpu.checker.background"),
+        color_attachments: &color_attachments,
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, &binding, &[]);
+    pass.draw(0..3, 0..1);
 }
 
 fn lower_scene<'a>(

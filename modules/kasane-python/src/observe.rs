@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use kasane_sdk_observe::{
     CanvasRoi, ObservationError, ObservationInput, ObservedFrame, Observer, ObserverConfig,
-    RenderRequest, ResolvedObservation,
+    PresentationBackground, RenderRequest, ResolvedObservation,
 };
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -199,6 +199,87 @@ impl NativeCapturedScene {
         let mapping = frame
             .explicit_view
             .expect("explicit render has an ROI mapping");
+        let roi_tuple = |roi: CanvasRoi| (roi.x0, roi.y0, roi.x1, roi.y1);
+        Ok((
+            frame_tuple(py, frame)?,
+            (
+                roi_tuple(mapping.requested_roi),
+                roi_tuple(mapping.padded_roi),
+                roi_tuple(mapping.visible_roi),
+            ),
+            render_digest,
+        ))
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn render_presentation(
+        &self,
+        py: Python<'_>,
+        observer: &NativeObserver,
+        width: u32,
+        height: u32,
+        roi: (f32, f32, f32, f32),
+        padding_canvas: f32,
+        background_kind: &str,
+        light: (u8, u8, u8),
+        dark: (u8, u8, u8),
+        tile_px: u32,
+        origin_px: (i32, i32),
+        straight_alpha: bool,
+    ) -> PyResult<(NativeFrameTuple, RenderMappingTuple, String)> {
+        let request = RenderRequest {
+            width,
+            height,
+            roi: CanvasRoi {
+                x0: roi.0,
+                y0: roi.1,
+                x1: roi.2,
+                y1: roi.3,
+            },
+            padding_canvas,
+        };
+        let background = match background_kind {
+            "transparent" => PresentationBackground::Transparent,
+            "solid" => PresentationBackground::Solid {
+                rgb: [light.0, light.1, light.2],
+            },
+            "checker" => PresentationBackground::Checker {
+                light: [light.0, light.1, light.2],
+                dark: [dark.0, dark.1, dark.2],
+                tile_px,
+                origin_px,
+            },
+            _ => {
+                return Err(observation_failure(
+                    py,
+                    ObservationError {
+                        code: "INVALID_BACKGROUND".into(),
+                        message: "Unknown presentation background".into(),
+                        asset_id: None,
+                    },
+                ))
+            }
+        };
+        let render_digest = self
+            .inner
+            .presentation_digest(request, background, straight_alpha)
+            .map_err(|error| observation_failure(py, error))?;
+        let frame = py.detach(|| {
+            observer
+                .inner
+                .lock()
+                .map_err(|_| None)?
+                .render_presentation(&self.inner, request, background, straight_alpha)
+                .map_err(Some)
+        });
+        let frame = match frame {
+            Ok(frame) => frame,
+            Err(Some(error)) => return Err(observation_failure(py, error)),
+            Err(None) => return Err(poisoned()),
+        };
+        let mapping = frame
+            .explicit_view
+            .expect("presentation render has an ROI mapping");
         let roi_tuple = |roi: CanvasRoi| (roi.x0, roi.y0, roi.x1, roi.y1);
         Ok((
             frame_tuple(py, frame)?,

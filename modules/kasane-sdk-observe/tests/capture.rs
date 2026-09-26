@@ -2,8 +2,70 @@ use kasane_core::{Canvas, Parameter, PreviewValues, Vec2};
 use kasane_sdk::{prepare_png_asset, rectangle_mesh, AuthoringSession};
 use kasane_sdk_observe::{
     CanvasRoi, HistoryStatus, ObservationInput, ObservationSource, Observer, ObserverConfig,
-    RenderRequest, ResolvedObservation,
+    PresentationBackground, RenderRequest, ResolvedObservation,
 };
+
+#[test]
+fn presentation_background_is_in_main_target_and_legacy_stays_transparent() {
+    let session =
+        AuthoringSession::new(DOCUMENT, Canvas::new(4.0, 4.0, Vec2::new(2.0, 2.0), 1.0)).unwrap();
+    let scene = ResolvedObservation::capture(
+        ObservationInput::capture(&session, &PreviewValues::new()).unwrap(),
+    )
+    .unwrap();
+    let mut observer = Observer::new(ObserverConfig {
+        width: 4,
+        height: 4,
+        fit_long_side: 4.0,
+    })
+    .unwrap();
+    let request = RenderRequest {
+        width: 4,
+        height: 4,
+        roi: CanvasRoi {
+            x0: 0.0,
+            y0: 0.0,
+            x1: 4.0,
+            y1: 4.0,
+        },
+        padding_canvas: 0.0,
+    };
+    let raw = observer.render(&scene, request).unwrap();
+    assert!(raw.rgba.iter().all(|channel| *channel == 0));
+    let solid = observer
+        .render_presentation(
+            &scene,
+            request,
+            PresentationBackground::Solid { rgb: [32, 64, 128] },
+            false,
+        )
+        .unwrap();
+    assert!(solid
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .all(|pixel| *pixel == [32, 64, 128, 255]));
+    let checker = observer
+        .render_presentation(
+            &scene,
+            request,
+            PresentationBackground::Checker {
+                light: [240, 240, 240],
+                dark: [16, 16, 16],
+                tile_px: 2,
+                origin_px: (0, 0),
+            },
+            false,
+        )
+        .unwrap();
+    let pixel = |x: usize, y: usize| &checker.rgba[(y * 4 + x) * 4..(y * 4 + x + 1) * 4];
+    assert_eq!(pixel(0, 0), [240, 240, 240, 255]);
+    assert_eq!(pixel(2, 0), [16, 16, 16, 255]);
+    assert_eq!(pixel(0, 2), [16, 16, 16, 255]);
+    assert_eq!(pixel(2, 2), [240, 240, 240, 255]);
+    assert_eq!(observer.render(&scene, request).unwrap().rgba, raw.rgba);
+}
 
 const DOCUMENT: &str = "00000000-0000-4000-8000-000000000001";
 const ASSET: &str = "00000000-0000-4000-8000-000000000002";

@@ -6,8 +6,8 @@ use kasane_core::{
 };
 use kasane_render::{Affine2, ViewportConfig};
 use kasane_render_wgpu::{
-    WgpuEncodeTarget, WgpuOutputMode, WgpuRenderer, WgpuTargetConfig, WgpuTexture,
-    WgpuTextureCatalog,
+    WgpuEncodeTarget, WgpuMainBackground, WgpuOutputMode, WgpuRenderer, WgpuTargetConfig,
+    WgpuTexture, WgpuTextureCatalog,
 };
 
 fn block_on<F: Future>(future: F) -> F::Output {
@@ -194,6 +194,14 @@ fn render_fixture(frame: &DrawableFrame) -> (Vec<u8>, kasane_render_wgpu::WgpuRe
 fn render_fixture_with_texture_change(
     frame: &DrawableFrame,
     texture_change: Option<(&str, [u8; 4])>,
+) -> (Vec<u8>, kasane_render_wgpu::WgpuRenderStats) {
+    render_fixture_with_background(frame, texture_change, WgpuMainBackground::Transparent)
+}
+
+fn render_fixture_with_background(
+    frame: &DrawableFrame,
+    texture_change: Option<(&str, [u8; 4])>,
+    background: WgpuMainBackground,
 ) -> (Vec<u8>, kasane_render_wgpu::WgpuRenderStats) {
     let instance = wgpu::Instance::default();
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -435,7 +443,7 @@ fn render_fixture_with_texture_change(
         label: Some("scene-stable"),
     });
     let stable = renderer
-        .encode(
+        .encode_with_background(
             WgpuEncodeTarget {
                 device: &device,
                 queue: &queue,
@@ -444,6 +452,7 @@ fn render_fixture_with_texture_change(
                 output_mode: WgpuOutputMode::Replace,
             },
             &textures,
+            background,
         )
         .unwrap();
     assert_eq!(stable.vertex_upload_bytes, 0);
@@ -581,6 +590,26 @@ fn destination_read_works_without_host_copy_source() {
     let (pixels, stats) = render_fixture(&frame);
     assert_eq!(stats.destination_targets, 1);
     assert_eq!(center(&pixels), [0, 255, 0, 255]);
+}
+
+#[test]
+fn opaque_main_background_precedes_extended_destination_read() {
+    let mut green = quad("green", "green");
+    green.raw_blend_mode = Some(2);
+    let frame = DrawableFrame {
+        canvas: Canvas::new(64.0, 64.0, Vec2::default(), 1.0),
+        drawables: vec![green],
+        ..Default::default()
+    };
+    let (raw, _) = render_fixture(&frame);
+    let (on_red, stats) = render_fixture_with_background(
+        &frame,
+        None,
+        WgpuMainBackground::Solid([1.0, 0.0, 0.0, 1.0]),
+    );
+    assert_eq!(stats.destination_targets, 1);
+    assert_eq!(center(&raw), [0, 0, 0, 0]);
+    assert_eq!(center(&on_red), [0, 0, 0, 255]);
 }
 
 #[test]

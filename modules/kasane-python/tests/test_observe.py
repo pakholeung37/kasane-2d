@@ -14,6 +14,7 @@ import kasane
 
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
+INSPECTION_FIXTURES = Path(__file__).resolve().parents[3] / "tests/fixtures/observe_inspection/projects"
 TEXTURE = FIXTURES / "asymmetric-2x2.png"
 SECOND_TEXTURE = FIXTURES / "texture_00.png"
 DOCUMENT = "00000000-0000-4000-8000-000000000001"
@@ -30,6 +31,382 @@ PARAMETER = "00000000-0000-4000-8000-000000000010"
 
 
 class GpuWheelTests(unittest.TestCase):
+    def test_o2_background_composes_mask_and_nested_offscreen(self):
+        nested = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with nested.edit("nested surfaces") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_part(PART, "outer")
+            edit.create_part(PART_B, "inner", PART)
+            edit.create_rectangle(MESH, "target", ASSET, (30, 30), (70, 70))
+            edit.set_mesh_part(MESH, PART_B)
+            edit.create_offscreen(kasane.OffscreenSpec(
+                OFFSCREEN, "outer surface", PART,
+                keyforms=[kasane.OffscreenKeyform(0.75)],
+            ))
+            edit.create_offscreen(kasane.OffscreenSpec(
+                POSE, "inner surface", PART_B,
+                keyforms=[kasane.OffscreenKeyform(0.5)],
+            ))
+        masked = kasane.open_project(
+            (INSPECTION_FIXTURES / "masked-offscreen.kasane.json").resolve(),
+        )
+        with kasane.Observer(128, 128, 128) as observer:
+            for model in (nested, masked):
+                roi = (0, 0, 100, 100)
+                raw = observer.inspect(model, request=kasane.RawInspectionRequest(
+                    roi, (128, 128),
+                )).views[0].rgba
+                self.assertTrue(any(0 < value < 255 for value in raw[3::4]))
+                for background, channel in (("light", 238), ("dark", 32)):
+                    packet = observer.inspect(model, request=kasane.InspectionRequest(
+                        view=kasane.ViewSpec(roi=roi, resolution=(128, 128)),
+                        presentation=kasane.PresentationSpec(background=background),
+                        channels=("clean", "alpha"),
+                    ))
+                    clean, alpha_view = packet.views
+                    self.assertTrue(all(value == 255 for value in clean.rgba[3::4]))
+                    for offset in range(0, len(raw), 4):
+                        alpha = raw[offset + 3]
+                        self.assertEqual(alpha_view.rgba[offset], alpha)
+                        for color in range(3):
+                            expected = min(255, raw[offset + color] +
+                                           (channel * (255 - alpha) + 127) // 255)
+                            self.assertLessEqual(abs(clean.rgba[offset + color] - expected), 2)
+            focused = observer.inspect(nested, request=kasane.InspectionRequest(
+                focus=kasane.Focus(mesh_ids=(MESH,)),
+                view=kasane.ViewSpec(resolution=(64, 64)), channels=("clean",),
+            ))
+            self.assertEqual(focused.objects[0]["composition_path"],
+                             (OFFSCREEN, POSE))
+
+    def test_o2_rotated_focus_and_high_resolution_rerender(self):
+        rotated = kasane.open_project((INSPECTION_FIXTURES / "rotated-warp.kasane.json").resolve())
+        warped_id = "10000000-0000-4000-8000-000000000017"
+        line_id = "10000000-0000-4000-8000-000000000016"
+        with kasane.Observer(64, 64, 64) as observer:
+            packet = observer.inspect(rotated, request=kasane.InspectionRequest(
+                focus=kasane.Focus(mesh_ids=(warped_id,)),
+                view=kasane.ViewSpec(resolution=(192, 96), padding_canvas=2),
+                channels=("clean",),
+            ))
+            roi = packet.views[0].requested_roi
+            self.assertNotEqual(roi, (20.0, 20.0, 60.0, 60.0))
+            self.assertEqual(packet.views[0].runtime_to_canvas((0, 0)), (37.0, 62.0))
+            self.assertEqual(packet.focus_status, "visible")
+
+            model = kasane.open_project((INSPECTION_FIXTURES / "pixel-binding.kasane.json").resolve())
+            scene = observer.capture_scene(model)
+            low = observer.render_scene(scene, roi=(60, 20, 85, 45),
+                                        resolution=(24, 24)).frame.rgba
+            high = observer.render_scene(scene, roi=(60, 20, 85, 45),
+                                         resolution=(192, 192)).frame.rgba
+            nearest = bytearray(len(high))
+            for y in range(192):
+                for x in range(192):
+                    nearest[(y * 192 + x) * 4:(y * 192 + x + 1) * 4] = low[
+                        ((y // 8) * 24 + x // 8) * 4:
+                        ((y // 8) * 24 + x // 8 + 1) * 4]
+            self.assertNotEqual(high, bytes(nearest))
+            self.assertIn(line_id, {row["id"] for row in
+                                   observer.inspect_scene(scene, request=kasane.InspectionRequest(
+                                       view=kasane.ViewSpec(roi=(60, 20, 85, 45), resolution=(96, 96)),
+                                       channels=("clean",),
+                                   )).objects})
+
+    def test_o2_straight_alpha_rounding_and_empty_focus(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (13, 71), 7)
+        with model.edit("transparent texture") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "edge", ASSET, (35, 35), (65, 65))
+            edit.create_part(PART, "empty")
+        with kasane.Observer(64, 64, 64) as observer:
+            raw = observer.inspect(model, request=kasane.RawInspectionRequest(
+                (0, 0, 100, 100), (64, 64),
+            )).views[0].rgba
+            straight = observer.inspect(model, request=kasane.InspectionRequest(
+                view=kasane.ViewSpec(roi=(0, 0, 100, 100), resolution=(64, 64)),
+                presentation=kasane.PresentationSpec(
+                    background="transparent", alpha="straight",
+                ), channels=("clean",),
+            )).views[0]
+            self.assertTrue(any(0 < alpha < 255 for alpha in raw[3::4]))
+            for offset in range(0, len(raw), 4):
+                alpha = raw[offset + 3]
+                self.assertEqual(straight.rgba[offset + 3], alpha)
+                for channel in range(3):
+                    expected = min(255, (raw[offset + channel] * 255 + alpha // 2) // alpha) if alpha else 0
+                    self.assertEqual(straight.rgba[offset + channel], expected)
+            empty = observer.inspect(model, request=kasane.InspectionRequest(
+                focus=kasane.Focus(part_ids=(PART,)),
+                view=kasane.ViewSpec(roi=(-10, -10, 10, 10), resolution=(48, 24)),
+                channels=("clean",),
+            ))
+            self.assertEqual(empty.focus_status, "empty")
+            self.assertEqual(empty.views[0].runtime_to_canvas((0, 0)), (13, 71))
+            with self.assertRaises(kasane.ObservationFailure) as unknown:
+                observer.inspect(model, request=kasane.InspectionRequest(
+                    focus=kasane.Focus(mesh_ids=(MISSING,)),
+                    view=kasane.ViewSpec(resolution=(32, 32)),
+                    channels=("clean",),
+                ))
+            self.assertEqual(unknown.exception.code, "UNKNOWN_FOCUS")
+            with self.assertRaises(kasane.ObservationFailure) as auto_empty:
+                observer.inspect(model, request=kasane.InspectionRequest(
+                    focus=kasane.Focus(part_ids=(PART,)),
+                    view=kasane.ViewSpec(resolution=(32, 32)),
+                    channels=("clean",),
+                ))
+            self.assertEqual(auto_empty.exception.code, "EMPTY_FOCUS")
+
+    def test_o2_fixed_union_and_follow_use_frozen_sample_geometry(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("moving mesh") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "moving", ASSET, (40, 40), (60, 60))
+        base = model.mesh(MESH).positions
+        with model.edit("bind movement") as edit:
+            edit.create_parameter(PARAMETER, "shift", 0, 1, 0)
+            edit.create_mesh_binding(
+                POSE, MESH, [kasane.Axis(PARAMETER, [0, 1])],
+                [kasane.MeshKeyform([0], base),
+                 kasane.MeshKeyform([1], [(x + 10, y) for x, y in base])],
+            )
+        with kasane.Observer(64, 64, 64) as observer:
+            common = dict(focus=kasane.Focus(mesh_ids=(MESH,)),
+                          presentation=kasane.PresentationSpec(background="dark"),
+                          channels=("clean",))
+            fixed = observer.inspect_samples(model, [{PARAMETER: 0}, {PARAMETER: 1}],
+                request=kasane.InspectionRequest(
+                    view=kasane.ViewSpec(resolution=(120, 80), framing="fixed_union"),
+                    **common,
+                ))
+            self.assertEqual(fixed[0].capture_id, fixed[1].capture_id)
+            self.assertEqual(fixed[0].views[0].requested_roi,
+                             fixed[1].views[0].requested_roi)
+            self.assertEqual(fixed[0].views[0].requested_roi, (40, 40, 70, 60))
+            self.assertEqual(fixed[0].views[0].canvas_to_image_matrix,
+                             fixed[1].views[0].canvas_to_image_matrix)
+            self.assertEqual(fixed[0].objects[0]["mark"],
+                             fixed[1].objects[0]["mark"])
+            self.assertEqual(fixed[1].views[0].sample_index, 1)
+            follow = observer.inspect_samples(model, [{PARAMETER: 0}, {PARAMETER: 1}],
+                request=kasane.InspectionRequest(
+                    view=kasane.ViewSpec(resolution=(120, 80), framing="follow"),
+                    **common,
+                ))
+            self.assertEqual(follow[0].views[0].requested_roi, (40, 40, 60, 60))
+            self.assertEqual(follow[1].views[0].requested_roi, (50, 40, 70, 60))
+            self.assertNotEqual(follow[0].views[0].canvas_to_image_matrix,
+                                follow[1].views[0].canvas_to_image_matrix)
+
+    def test_o2_presentation_focus_labels_alpha_and_profile_reopen(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("presentation fixture") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_part(PART, "面部")
+            edit.create_rectangle(MESH, "同名", ASSET, (40, 40), (60, 60))
+            edit.create_rectangle(BACKGROUND, "同名", ASSET, (70, 70), (80, 80))
+            edit.set_mesh_part(MESH, PART)
+        request = kasane.InspectionRequest(
+            focus=kasane.Focus(part_ids=(PART,)),
+            view=kasane.ViewSpec(resolution=(160, 128), padding_canvas=8),
+            channels=("clean", "labels", "alpha"),
+        )
+        with kasane.Observer(64, 64, 64) as observer:
+            packet = observer.inspect(model, request=request)
+            self.assertEqual([view.kind for view in packet.views],
+                             ["clean", "labels", "alpha"])
+            self.assertEqual(packet.views[0].requested_roi, (40, 40, 60, 60))
+            self.assertTrue(packet.capabilities["presentation"])
+            self.assertFalse(packet.capabilities["raw_view"])
+            self.assertTrue(all(packet.views[0].rgba[i] == 255 for i in
+                                range(3, len(packet.views[0].rgba), 4)))
+            self.assertNotEqual(packet.views[0].png, packet.views[1].png)
+            self.assertEqual(packet.views[2].presentation["alpha_source"],
+                             "transparent_raw_pass")
+            self.assertTrue(any(packet.views[2].rgba[i] < 255 for i in
+                                range(0, len(packet.views[2].rgba), 4)))
+            meshes = {row["id"]: row for row in packet.objects if row["kind"] == "mesh"}
+            self.assertEqual(meshes[MESH]["name"], meshes[BACKGROUND]["name"])
+            self.assertNotEqual(meshes[MESH]["mark"], meshes[BACKGROUND]["mark"])
+            self.assertEqual(meshes[MESH]["part_path"], (PART,))
+            self.assertEqual(meshes[MESH]["coverage_status"], "unknown")
+            point = (47.25, 51.75)
+            mapped = packet.views[0].canvas_to_image(point)
+            restored = packet.views[0].image_to_canvas(mapped)
+            self.assertAlmostEqual(restored[0], point[0], places=4)
+            self.assertAlmostEqual(restored[1], point[1], places=4)
+            self.assertEqual(packet.views[0].runtime_to_canvas((-1.0, 1.0)),
+                             (40.0, 40.0))
+            self.assertEqual(packet.views[0].canvas_to_runtime((40.0, 40.0)),
+                             (-1.0, 1.0))
+            matrix = packet.views[0].canvas_to_image_matrix
+            self.assertAlmostEqual(matrix[0][0] * point[0] + matrix[0][2], mapped[0])
+            with TemporaryDirectory() as temporary:
+                directory = Path(temporary).resolve() / "packet"
+                packet.save(directory, profile="analysis")
+                reopened = observer.open(directory)
+                self.assertEqual([view.kind for view in reopened.views],
+                                 ["clean", "labels", "alpha"])
+                self.assertEqual(reopened.views[1].png, packet.views[1].png)
+                self.assertEqual(reopened.focus_status, "visible")
+                self.assertEqual(reopened.views[0].canvas, packet.views[0].canvas)
+                self.assertEqual(reopened.objects, tuple(json.loads(
+                    json.dumps(packet.objects))))
+                scene_directory = Path(temporary).resolve() / "scene-packet"
+                packet.save(scene_directory, profile="scene")
+                child = subprocess.run(
+                    [sys.executable, "-c", """
+import kasane, sys
+from pathlib import Path
+with kasane.Observer(64, 64, 64) as observer:
+    packet = observer.open(Path(sys.argv[1]))
+    assert packet.capabilities['presentation']
+    again = observer.render(packet, request=kasane.InspectionRequest(
+        view=kasane.ViewSpec(roi=(40, 40, 60, 60), resolution=(80, 64)),
+        channels=('clean',),
+    ))
+    assert again.capture_id == packet.capture_id
+    assert again.views[-1].kind == 'clean'
+print('O2_SCENE_REOPEN_OK')
+""", str(scene_directory)], capture_output=True, text=True,
+                )
+                self.assertEqual(child.returncode, 0, child.stderr)
+                self.assertIn("O2_SCENE_REOPEN_OK", child.stdout)
+
+    def test_o2_checker_and_special_transparent_failure_recovery(self):
+        model = kasane.Session(DOCUMENT, 4, 4, (2, 2), 1)
+        with kasane.Observer(4, 4, 4) as observer:
+            raw = observer.observe(model).rgba
+            request = kasane.InspectionRequest(
+                view=kasane.ViewSpec(resolution=(4, 4)),
+                presentation=kasane.PresentationSpec(
+                    background="checker", light_rgb=(240, 240, 240),
+                    dark_rgb=(16, 16, 16), checker_tile_px=2,
+                ),
+                channels=("clean",),
+            )
+            packet = observer.inspect(model, request=request)
+            pixels = packet.views[0].rgba
+            self.assertEqual(pixels[:4], bytes((240, 240, 240, 255)))
+            self.assertEqual(pixels[8:12], bytes((16, 16, 16, 255)))
+            self.assertEqual(observer.observe(model).rgba, raw)
+            with self.assertRaises(ValueError):
+                kasane.PresentationSpec(background="transparent")
+
+        layered = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with layered.edit("special blend") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "additive", ASSET, (30, 30), (70, 70))
+        properties = layered.mesh_properties(MESH)
+        with layered.edit("set additive") as edit:
+            edit.update_mesh_properties(MESH, kasane.MeshProperties(
+                properties.texture_asset_id, properties.appearance,
+                properties.draw_order, "additive", properties.enabled,
+                properties.double_sided, properties.inverted_mask,
+                properties.masks,
+            ))
+        with kasane.Observer(64, 64, 64) as observer:
+            transparent = kasane.InspectionRequest(
+                view=kasane.ViewSpec(resolution=(64, 64)),
+                presentation=kasane.PresentationSpec(
+                    background="transparent", alpha="straight",
+                ), channels=("clean",),
+            )
+            with self.assertRaises(kasane.ObservationFailure) as failure:
+                observer.inspect(layered, request=transparent)
+            self.assertEqual(failure.exception.code,
+                             "UNREPRESENTABLE_TRANSPARENT_OUTPUT")
+            light = observer.inspect(layered, request=kasane.InspectionRequest(
+                view=kasane.ViewSpec(resolution=(64, 64)), channels=("clean",),
+            ))
+            dark = observer.inspect(layered, request=kasane.InspectionRequest(
+                view=kasane.ViewSpec(resolution=(64, 64)),
+                presentation=kasane.PresentationSpec(background="dark"),
+                channels=("clean",),
+            ))
+            self.assertNotEqual(light.views[0].rgba, dark.views[0].rgba)
+
+    def test_o2_label_limit_records_omissions_without_changing_clean(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("two labels") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "左", ASSET, (20, 20), (30, 30))
+            edit.create_rectangle(BACKGROUND, "右", ASSET, (60, 60), (70, 70))
+        with kasane.Observer(64, 64, 64) as observer:
+            request = kasane.InspectionRequest(
+                view=kasane.ViewSpec(resolution=(256, 256)),
+                overlay=kasane.OverlaySpec(max_labels=1),
+                channels=("clean", "labels"),
+            )
+            packet = observer.inspect(model, request=request)
+            labels = packet.views[1]
+            self.assertEqual(len(labels.presentation["labels"]), 1)
+            self.assertTrue(any(item["reason"] == "label_limit" for item in
+                                labels.omitted_labels))
+            self.assertNotEqual(labels.rgba, packet.views[0].rgba)
+            second = observer.inspect(model, request=request)
+            self.assertEqual([row["mark"] for row in packet.objects if row["kind"] == "mesh"],
+                             [row["mark"] for row in second.objects if row["kind"] == "mesh"])
+            properties = model.mesh_properties(BACKGROUND)
+            with model.edit("hide second mesh") as edit:
+                edit.update_mesh_properties(BACKGROUND, kasane.MeshProperties(
+                    properties.texture_asset_id, properties.appearance,
+                    properties.draw_order, properties.blend_mode, False,
+                    properties.double_sided, properties.inverted_mask,
+                    properties.masks,
+                ))
+            hidden = observer.inspect(model, request=kasane.InspectionRequest(
+                focus=kasane.Focus(mesh_ids=(BACKGROUND,)),
+                view=kasane.ViewSpec(roi=(0, 0, 100, 100), resolution=(256, 256)),
+                channels=("clean", "labels"),
+            ))
+            rows = {row["id"]: row for row in hidden.objects if row["kind"] == "mesh"}
+            self.assertEqual(rows[BACKGROUND]["mark"],
+                             {row["id"]: row["mark"] for row in packet.objects
+                              if row["kind"] == "mesh"}[BACKGROUND])
+            self.assertFalse(rows[BACKGROUND]["enabled"])
+            self.assertIn(hidden.focus_status, ("not_visible", "empty"))
+            self.assertTrue(any(item["object_id"] == BACKGROUND for item in
+                                hidden.views[1].omitted_labels))
+
+    def test_o2_dense_marks_and_subpixel_overscan_mapping(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (13, 71), 7)
+        with model.edit("dense marks") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            for index in range(13):
+                object_id = f"00000000-0000-4000-8000-{index + 100:012x}"
+                x, y = 8 + (index % 4) * 22, 8 + (index // 4) * 22
+                edit.create_rectangle(object_id, "重名", ASSET,
+                                      (x, y), (x + 5, y + 5))
+        with kasane.Observer(64, 64, 64) as observer:
+            request = kasane.InspectionRequest(
+                view=kasane.ViewSpec(
+                    roi=(-4.25, 3.5, 103.75, 98.5),
+                    resolution=(512, 384), padding_canvas=1.25,
+                ), channels=("clean", "labels"),
+            )
+            packet = observer.inspect(model, request=request)
+            clean, labels = packet.views
+            marks = [row["mark"] for row in packet.objects if row["kind"] == "mesh"]
+            self.assertEqual(marks, list(range(1, 14)))
+            self.assertEqual(len(labels.presentation["labels"]), 12)
+            self.assertEqual(len(labels.omitted_labels), 1)
+            self.assertEqual(labels.omitted_labels[0]["reason"], "label_limit")
+            self.assertEqual(clean.requested_roi, (-4.25, 3.5, 103.75, 98.5))
+            self.assertEqual(clean.padded_roi, (-5.5, 2.25, 105.0, 99.75))
+            self.assertEqual(clean.runtime_to_canvas((0, 0)), (13, 71))
+            for point in ((0.125, 0.875), (50.375, 40.625), (100.25, 99.75)):
+                image_point = clean.canvas_to_image(point)
+                canvas_point = clean.image_to_canvas(image_point)
+                self.assertAlmostEqual(canvas_point[0], point[0], places=6)
+                self.assertAlmostEqual(canvas_point[1], point[1], places=6)
+            x0, y0, x1, y1 = clean.content_rect
+            self.assertGreaterEqual(x0, -1e-5)
+            self.assertGreaterEqual(y0, -1e-5)
+            self.assertLessEqual(x1, 512 + 1e-5)
+            self.assertLessEqual(y1, 384 + 1e-5)
+
     def test_batch_resolves_names_from_one_snapshot_and_rejects_ambiguity(self):
         model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
         with model.edit("duplicate names") as edit:

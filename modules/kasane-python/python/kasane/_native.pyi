@@ -89,6 +89,12 @@ class NativeCapturedScene:
         self, observer: NativeObserver, width: int, height: int,
         roi: tuple[float, float, float, float], padding_canvas: float,
     ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]], str]: ...
+    def render_presentation(
+        self, observer: NativeObserver, width: int, height: int,
+        roi: tuple[float, float, float, float], padding_canvas: float,
+        background_kind: str, light: tuple[int, int, int], dark: tuple[int, int, int],
+        tile_px: int, origin_px: tuple[int, int], straight_alpha: bool,
+    ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]], str]: ...
 
 
 class ObjectHandle:

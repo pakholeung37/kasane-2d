@@ -9,7 +9,8 @@ staged research/plan changes were preserved. Fixture manifest SHA-256:
 | --- | --- | --- | --- |
 | O0 contract and baseline | complete | Typed target contract, three generated/verified synthetic projects, raw pixel/timing/RSS baseline, derived light/dark arithmetic reference, edit task definition | Renderer-native background results belong to V01 implementation |
 | O1 frozen capture and ROI | complete | Detached document snapshot; 1–64 samples with one texture union decode; full frozen authoring source records; static/actual animation frame capture with last successful operation identity; explicit ROI; scene and raw packet round trips; report/analysis/scene payload profiles; canonical capture/scene/render IDs; independent-process reopen and legacy pixel regression | O1 acceptance gate passed. Full playback recipe/runner, query-capable analysis profile, presentation, complete report v2 and full `InspectionRequest` belong to O2/O3 |
-| O2–O7 | not started | — | V01–V07 presentation/query/diagnostics, V08 runner and playback recipe, V09 traces, V10 continuity, agent experiments |
+| O2 display and location | complete | Main-target light/dark/checker background, conservative straight alpha and raw-derived alpha view, mesh/Part focus, fixed-union/follow sample views, 3×3/runtime mappings, numeric marks/highlights, object table, omitted-label reasons, packet profile round trips | V01/V02/V03 gates passed with the isolated GPU wheel; comparison/report and geometry/query channels belong to O3–O6 |
+| O3–O7 | not started | — | V04–V07 comparison, geometry, diagnostic composition and query; joint acceptance and playback work |
 
 The Python O1 API includes `capture_scene`, `capture_scenes`,
 `capture_animation_scene`, `render_scene`, `save_scene`, `open_scene`,
@@ -92,3 +93,38 @@ one channel level (at most two). On Apple M4/Metal, the accepted profile had
 112 one-level differences at parameter 0.5, and 111 changed pixels including
 one larger edge difference at parameter 1. All eight `test_observe.py` cases,
 targeted Rust tests and targeted Clippy passed with the accepted default.
+
+## O2 display and location (2026-09-26)
+
+The new `InspectionRequest` supports context `clean`, `labels`, and `alpha`
+views. An opaque light/dark color or checkerboard initializes the actual main
+scene target before destination reads; mask and nested Offscreen targets remain
+transparent. An independent transparent raw pass supplies the alpha view.
+Normal-blend transparent presentation uses round-half-up unpremultiplication
+and zeros RGB at alpha=0. Additive, multiply, extended drawable and special
+Offscreen blends return `UNREPRESENTABLE_TRANSPARENT_OUTPUT` for straight
+alpha rather than silently saving an invalid PNG. The old raw entry and its
+hashes are unchanged.
+
+Mesh/Part focus resolves against frozen authoring and evaluated geometry.
+`inspect_samples` shares one capture and texture union; fixed-union uses one
+ROI across samples, while follow uses each sample's own ROI. Views expose
+source-canvas/image matrices, runtime/canvas mapping, content rectangle,
+requested/padded/visible ROIs, and explicit `focus_status`. The object table
+stores stable UUID-sorted marks, Part paths, deformer parent, render path,
+topology hash, evaluated bounds and unknown coverage status. The label view
+keeps clean pixels separate, draws numeric labels and selected geometry boxes,
+and records omitted labels. Its 3×5 bitmap digits use only the standard
+library, so the CPU wheel gains no presentation dependency.
+
+| O2 evidence | Result |
+| --- | --- |
+| `cargo test --workspace --locked -q` and `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed, including main-target extended destination-read and transparent blend rejection tests |
+| release GPU wheel, isolated CPython 3.14 | 16 `test_observe.py` cases passed: masked/nested background values, straight-alpha rounding, special-blend rejection/recovery, rotated focus, subpixel/overscan mapping, high-resolution rerender, fixed/follow samples, 13-object dense labels, empty/hidden focus, profile and independent-process reopen |
+| release CPU wheel, isolated CPython 3.14 | 52 `test_cpu.py` cases passed; CPU-only wheel reopened O2 report/analysis profiles, and correctly rejected scene-profile GPU rerender |
+| default raw baseline | all five current Framework-filtering raw SHA-256 values in `docs/OBSERVE-VISUAL-BASELINE.md` reproduced on Apple M4/Metal |
+
+O2 does not expose coverage or geometry queries, diagnostic modes, comparison,
+contact sheets, report v2, or a playback recipe. Those capabilities remain
+false in the packet. Presentation is a renderer-native numeric view; it does
+not add an sRGB conversion or claim GPU pixel identity across adapters.

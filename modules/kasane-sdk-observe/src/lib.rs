@@ -20,7 +20,10 @@ use kasane_sdk::{AuthoringSession, AuthoringSnapshot, Version};
 mod bundle;
 mod gpu;
 mod view;
-pub use gpu::{DrawableBounds, ObservedFrame, Observer, ObserverConfig, TextureRevision};
+pub use gpu::{
+    DrawableBounds, ObservedFrame, Observer, ObserverConfig, PresentationBackground,
+    TextureRevision,
+};
 pub use view::{CanvasRoi, RenderRequest, ViewMapping};
 
 #[derive(Clone, Debug)]

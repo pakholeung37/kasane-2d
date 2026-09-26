@@ -13,7 +13,8 @@ from ._animation import ExpressionPreview, MotionPreview, PhysicsPreview
 from ._session import Session, open_project
 from ._observe import CapturedScene, Observer, ObservationFailure, RenderedSceneView
 from ._inspection import (
-    InspectionPacket, InspectionView, PacketSaveReceipt, RawInspectionRequest,
+    DiagnosticSpec, Focus, InspectionLimits, InspectionPacket, InspectionRequest, InspectionView,
+    OverlaySpec, PacketSaveReceipt, PresentationSpec, RawInspectionRequest, ViewSpec,
     open_inspection_packet,
 )
 from .geometry import rectangle_grid_geometry
@@ -180,6 +181,13 @@ for _public_type in (
     InspectionView,
     PacketSaveReceipt,
     RawInspectionRequest,
+    Focus,
+    ViewSpec,
+    PresentationSpec,
+    OverlaySpec,
+    InspectionLimits,
+    InspectionRequest,
+    DiagnosticSpec,
 ):
     _public_type.__module__ = __name__
 if ObservationFailure.__module__ == "kasane._observe":
@@ -249,6 +257,13 @@ __all__ = [
     "InspectionView",
     "PacketSaveReceipt",
     "RawInspectionRequest",
+    "Focus",
+    "ViewSpec",
+    "PresentationSpec",
+    "OverlaySpec",
+    "InspectionLimits",
+    "InspectionRequest",
+    "DiagnosticSpec",
     "RenderedSceneView",
     "ObservationRun",
     "ObservedFrame",
