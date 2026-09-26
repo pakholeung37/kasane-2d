@@ -24,6 +24,7 @@ from ._comparison import (
 from ._inspection_run import (
     GridLayout, InspectionRun, SequenceLayout, open_inspection_run,
 )
+from ._query import ObjectDetails, PixelProbe, QueryHit, QueryResult
 from .geometry import rectangle_grid_geometry
 from ._types import (
     Version,
@@ -196,6 +197,10 @@ for _public_type in (
     InspectionRequest,
     DiagnosticSpec,
     XraySpec,
+    ObjectDetails,
+    PixelProbe,
+    QueryHit,
+    QueryResult,
     CompareOptions,
     ComparisonArtifact,
     ComparisonResult,
@@ -280,6 +285,10 @@ __all__ = [
     "InspectionRequest",
     "DiagnosticSpec",
     "XraySpec",
+    "ObjectDetails",
+    "PixelProbe",
+    "QueryHit",
+    "QueryResult",
     "CompareOptions",
     "ComparisonArtifact",
     "ComparisonResult",

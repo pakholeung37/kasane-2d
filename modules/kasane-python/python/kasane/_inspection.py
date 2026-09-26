@@ -417,8 +417,8 @@ class InspectionPacket:
             "comparison": self.comparison is not None,
             "evaluation_trace": self.evaluation_trace is not None,
             "deformation": self.deformation is not None,
-            "geometry_query": False,
-            "pixel_coverage_query": False,
+            "geometry_query": self.authoring is not None and self.evaluated_frame is not None and not self._closed,
+            "pixel_coverage_query": self._scene is not None and not self._closed,
             "playback_replay": False,
         }
 
@@ -426,6 +426,30 @@ class InspectionPacket:
         """Release this packet's native scene reference; saved data stays readable."""
         object.__setattr__(self, "_scene", None)
         object.__setattr__(self, "_closed", True)
+
+    def object_details(self, object_id: str):
+        """Read this packet's frozen source and evaluated object evidence."""
+        from ._query import object_details
+        return object_details(self, object_id=object_id)
+
+    def query(self, *, view_id: str, point: tuple[float, float] | None = None,
+              region: tuple[int, int, int, int] | None = None,
+              mode: str = "geometry", alpha_threshold: float = 1 / 255,
+              max_hits: int = 256, observer=None):
+        """Query geometry offline, or pass an Observer for GPU coverage."""
+        from ._query import coverage_query, geometry_query
+        if not math.isfinite(alpha_threshold) or not 0 <= alpha_threshold <= 1:
+            raise ValueError("alpha_threshold must be in 0..1")
+        if mode not in ("geometry", "coverage", "frontmost_covered"):
+            raise ValueError("Unknown query mode")
+        if mode == "geometry":
+            return geometry_query(self, view_id=view_id, point=point,
+                                  region=region, max_hits=max_hits)
+        if observer is None:
+            raise _unavailable("GPU coverage requires an Observer")
+        return coverage_query(observer, self, view_id=view_id, point=point,
+                              region=region, mode=mode,
+                              alpha_threshold=alpha_threshold, max_hits=max_hits)
 
     def __enter__(self) -> InspectionPacket:
         return self
@@ -550,14 +574,15 @@ class InspectionPacket:
                 "raw_pixel_data": profile != "report",
                 "evaluated_geometry_data": profile != "report",
                 "rerender_scene": profile == "scene",
-                "presentation": any(view.kind in ("clean", "labels", "alpha", "isolated") for view in self.views), "geometry_query": False,
+                "presentation": any(view.kind in ("clean", "labels", "alpha", "isolated") for view in self.views),
+                "geometry_query": profile != "report",
                 "isolated": any(view.kind == "isolated" for view in self.views),
                 "mask": any(view.kind.startswith("mask_") for view in self.views),
                 "xray": any(view.kind == "xray" for view in self.views),
                 "comparison": self.comparison is not None,
                 "evaluation_trace": self.evaluation_trace is not None and profile != "report",
                 "deformation": self.deformation is not None,
-                "pixel_coverage_query": False, "playback_replay": False,
+                "pixel_coverage_query": profile == "scene", "playback_replay": False,
             },
             "files": hashes,
         }

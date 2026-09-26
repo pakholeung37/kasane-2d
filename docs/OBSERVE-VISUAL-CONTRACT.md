@@ -103,7 +103,9 @@ observer.inspect_animation_run(session, *, playback, times, request, output) -> 
 observer.render(packet, *, request) -> InspectionPacket
 observer.object_details(packet, *, object_id) -> ObjectDetails
 observer.query(packet, *, view_id, point=None, region=None,
-               mode="coverage", alpha_threshold=1/255) -> QueryResult
+               mode="geometry", alpha_threshold=1/255, max_hits=256) -> QueryResult
+packet.query(*, view_id, point=None, region=None, mode="geometry",
+             observer=None) -> QueryResult
 compare_observations(current, reference, *, view_id, reference_view_id,
                      options) -> ComparisonResult
 packet.save(absolute_directory, *, profile="analysis") -> SaveReceipt
@@ -129,7 +131,13 @@ alpha pass and evaluated outlines; explicit mask, opacity, and disabled
 overrides are recorded. Disabled X-ray requires an opt-in hidden-geometry
 capture. Mask source, combined, post-inversion consumer, and isolated
 composite-alpha views preserve source IDs and sampling transforms; composite
-alpha is not a final color-contribution measurement.
+alpha is not a final color-contribution measurement. O6 geometry queries run
+on CPU from analysis packets; point/region coverage uses per-candidate small
+GPU passes and the original texture/mask/offscreen gates. Ordinary, additive,
+and multiplicative mesh color blends support local coverage. Extended raw
+mesh blends and nonzero ancestor offscreen blends return
+`unsupported_composition` with geometry retained. The frontmost covered mesh
+is a pick rule in captured render-plan order, not a color-contribution claim.
 `inspect_samples` freezes a batch once and applies fixed-union or follow framing.
 The packet manifest remains `kasane-inspection-packet` schema 2 with per-view
 presentation policy, object marks, focus status and explicit capability flags.
@@ -140,7 +148,7 @@ both parameter states from one snapshot and attaches a comparison that survives
 packet save/reopen. A registered comparison uses compatible view/pixel
 policies and an explicit target ROI or evaluated mesh union; an unregistered
 external reference is side-by-side only. A failed run retains a readable v2
-report. CPU geometry queries remain later work. A live preview capture keeps
+report. A live preview capture keeps
 the last successful operation identity while reporting history as
 `not_recorded`; it does not claim a playback recipe or resumable runtime.
 

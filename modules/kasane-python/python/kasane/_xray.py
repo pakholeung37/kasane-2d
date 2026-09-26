@@ -30,7 +30,7 @@ def add_xray_view(observer, scene, packet: InspectionPacket,
         observer._native, clean.width, clean.height, clean.requested_roi,
         request.view.padding_canvas, "transparent", (0, 0, 0), (0, 0, 0),
         1, (0, 0), False, list(selected), spec.ignore_masks,
-        spec.ignore_opacity, spec.include_disabled,
+        spec.ignore_opacity, spec.include_disabled, False,
     )
     from ._observe import _frame_from_native
     isolated = _frame_from_native(frame_raw)

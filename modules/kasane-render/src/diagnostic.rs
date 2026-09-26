@@ -3,7 +3,7 @@
 use std::collections::{HashMap, HashSet};
 
 use kasane_core::evaluation::{DrawableFrame, RenderCommand};
-use kasane_core::Status;
+use kasane_core::{BlendMode, Status};
 
 /// A diagnostic selection keeps the original target order and raw mask inputs.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,6 +19,7 @@ pub struct DiagnosticOverrides {
     pub ignore_masks: bool,
     pub ignore_opacity: bool,
     pub include_disabled: bool,
+    pub normalize_blend_for_coverage: bool,
 }
 
 impl DiagnosticPlan {
@@ -142,6 +143,10 @@ impl DiagnosticPlan {
                     mesh.enabled = true;
                     mesh.visible = true;
                 }
+                if overrides.normalize_blend_for_coverage {
+                    mesh.blend_mode = BlendMode::Normal;
+                    mesh.raw_blend_mode = None;
+                }
             }
         }
         for group in &mut derived.offscreens {
@@ -155,6 +160,9 @@ impl DiagnosticPlan {
                 }
                 if overrides.include_disabled {
                     group.enabled = true;
+                }
+                if overrides.normalize_blend_for_coverage {
+                    group.blend_mode = 0;
                 }
             }
         }
@@ -212,5 +220,51 @@ mod tests {
         assert!(!derived.drawables[2].visible);
         assert_eq!(derived.render_plan, frame.render_plan);
         assert!(frame.drawables.iter().all(|mesh| mesh.visible));
+    }
+
+    #[test]
+    fn coverage_normalizes_only_selected_blends_without_mutating_source() {
+        let mut frame = DrawableFrame {
+            drawables: vec![Drawable {
+                id: "target".into(),
+                blend_mode: BlendMode::Additive,
+                raw_blend_mode: Some(3),
+                visible: true,
+                ..Drawable::default()
+            }],
+            offscreens: vec![OffscreenFrame {
+                id: "layer".into(),
+                blend_mode: 1,
+                ..OffscreenFrame::default()
+            }],
+            render_plan: vec![
+                RenderCommand::BeginOffscreen {
+                    offscreen_id: "layer".into(),
+                },
+                RenderCommand::DrawMesh {
+                    mesh_id: "target".into(),
+                },
+                RenderCommand::EndOffscreen {
+                    offscreen_id: "layer".into(),
+                },
+            ],
+            ..DrawableFrame::default()
+        };
+        let plan = DiagnosticPlan::isolated(&frame, &["target".into()]).unwrap();
+        let derived = plan.apply_with_overrides(
+            &frame,
+            DiagnosticOverrides {
+                normalize_blend_for_coverage: true,
+                ..DiagnosticOverrides::default()
+            },
+        );
+        assert_eq!(derived.drawables[0].blend_mode, BlendMode::Normal);
+        assert_eq!(derived.drawables[0].raw_blend_mode, None);
+        assert_eq!(derived.offscreens[0].blend_mode, 0);
+        assert_eq!(frame.drawables[0].blend_mode, BlendMode::Additive);
+        assert_eq!(frame.drawables[0].raw_blend_mode, Some(3));
+        assert_eq!(frame.offscreens[0].blend_mode, 1);
+        frame.drawables[0].visible = false;
+        assert!(derived.drawables[0].visible);
     }
 }

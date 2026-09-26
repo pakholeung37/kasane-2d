@@ -473,6 +473,9 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Capture the actual animation frame with the same request choices and current operation identity. |
 | `observer.inspect_samples(session, samples, *, request=InspectionRequest(...))` | Freeze 1–64 parameter samples once; use a fixed union ROI or follow each sample's evaluated geometry. |
 | `observer.inspect_scenes(scenes, *, request=InspectionRequest(...))` | Present already frozen samples sharing one capture ID. |
+| `observer.query(packet, *, view_id, point=None, region=None, mode="geometry", alpha_threshold=1/255, max_hits=256)` | Query image-coordinate geometry, local GPU coverage, or the frontmost covered candidate. `point` and `region` are mutually exclusive. GPU modes require an open scene packet. |
+| `packet.query(..., observer=None)` | Run geometry queries on an analysis packet in a CPU-only wheel; pass an `Observer` for GPU coverage. |
+| `observer.object_details(packet, *, object_id)` / `packet.object_details(object_id)` | Read frozen authored/evaluated object records and edit-mapping status. |
 | `observer.inspect_run(session, samples, *, request, output, baseline_index=None, layout=None)` | Publish a v2 report from one frozen batch into a unique child of absolute `output`. A baseline adds registered comparisons. `SequenceLayout` preserves input order; `GridLayout` declares two parameter axes and records missing cells. |
 | `observer.render(packet, *, request)` | Append raw or O2 presentation views to a new packet value with the same capture ID, without reading a session or source asset. |
 | `packet.save(absolute_directory, profile="analysis")` | Save a new packet with checked artifact hashes; `report` stores PNG/metadata, `analysis` also stores evaluated geometry and raw RGBA, `scene` also stores frozen textures for rerendering. |
@@ -541,8 +544,8 @@ unsupported requests fail explicitly.
 An inline baseline comparison is included in all packet save profiles and can
 be read from a report-profile packet without a GPU; new comparisons of saved
 PNG-only packets require the `inspection` extra to decode their images.
-The `analysis` profile preserves query inputs but does not yet implement
-geometry or pixel-probe queries. A saved scene contains an evaluated frame,
+The `analysis` profile preserves CPU geometry and presentation pixel-probe
+queries. A saved scene contains an evaluated frame,
 not a resumable animation preview. `CapturedScene.source` reports
 `source_kind`, and for animation, current snapshot, host Model opacity policy
 and `history_status="not_recorded"`. Snapshot events cover only the most recent
@@ -588,6 +591,35 @@ consumer composite alpha. Metadata includes consumer/source IDs, target
 resolution, canvas sampling transform, and the isolated plan. Composite alpha
 is a coverage aid, not a final color-contribution percentage. Diagnostic
 passes use frozen scene copies; a later clean render uses the original input.
+
+`geometry` query checks actual evaluated triangles after an AABB prefilter,
+returns every point triangle with barycentric weights and UV, or triangles
+with positive area intersection against a half-open integer image region.
+Point coordinates are continuous image pixels; outside points/regions return
+`status="outside"` without edge clamping. Shared edges may return multiple
+triangles. `max_hits` is 1–256 and reports `total`/`truncated`. Analysis
+packets reopen on a CPU-only wheel and support `packet.query(...)` without
+an observer. A `PixelProbe` uses original raw/presentation buffers only when
+captured at the same mapping; missing buffers report `not_captured`.
+
+`coverage` samples the centre of the requested point's pixel cell, or at
+most 262,144 pixels in an integer region. It uses a small renderer pass for
+each candidate mesh with its original texture, UV/filtering, culling, mask,
+inversion and ancestor offscreen gates; additive and multiplicative color
+blends are normalized to ordinary alpha propagation for this diagnostic.
+Normal, additive and multiplicative meshes are supported. An extended raw
+mesh blend or a nonzero ancestor offscreen blend returns
+`coverage_status="unsupported_composition"` while preserving geometry hits.
+The value is local mesh coverage before occlusion, not color contribution.
+For regions, each triangle reports covered pixel count, half-open bounds and
+maximum sampled alpha. `frontmost_covered` returns every candidate plus the
+last covered mesh in captured render-plan order as a pick rule; it does not
+claim that mesh alone produced the final color. Truncated or unsupported
+candidate sets have no frontmost selection. Query readbacks are capped at
+8 million pixels across candidates and recorded in `QueryResult.resources`.
+`ObjectDetails.binding_provenance` identifies source bindings/BlendShape/glue
+records while marking interpolation selection `not_computed`; an editable
+point is only provided for a root mesh without those dependencies.
 
 For a baseline, `packet.deformation` reports per-triangle `F=C*inverse(B)` in
 source canvas pixels, its determinant, two singular values, and flags.

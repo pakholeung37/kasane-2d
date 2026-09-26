@@ -141,7 +141,7 @@ def add_mask_views(observer, scene, packet: InspectionPacket,
     frame_raw, (requested, padded, visible), plan_json = scene._native.render_isolated(
         observer._native, *resolution, roi, padding, "transparent",
         (0, 0, 0), (0, 0, 0), 1, (0, 0), False, [mesh["id"]],
-        False, False, False,
+        False, False, False, False,
     )
     from ._observe import _frame_from_native
     frame = _frame_from_native(frame_raw)

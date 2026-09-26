@@ -13,7 +13,8 @@ staged research/plan changes were preserved. Fixture manifest SHA-256:
 | O3 comparison and report | complete | Same-snapshot inline baseline, compatible packet/external-reference comparison, target and non-target metrics, side-by-side/onion/outline/heatmap, explicit two-axis grid, paged sheets, complete/failed v2 reports and CPU reader | V04 normal/error paths passed with isolated wheels; animation playback runs remain O7 |
 | O4 geometry diagnostics | complete | Same-pass evaluation trace, geometry overlays and canvas-space deformation diagnostics | V05 passed; query remains O6 |
 | O5 isolation and mask diagnostics | complete | DiagnosticPlan, isolated/X-ray render, actual mask attachment views, hidden-geometry capture and report resources | V06 composition and recovery gates passed; per-object query remains O6 |
-| O6–O7 | not started | — | V07 queries, joint acceptance and playback work |
+| O6 geometry and coverage queries | complete | Triangle point/region query, CPU analysis reopen, per-candidate GPU alpha, support matrix and frontmost pick rule | V07 gates passed; interpolation selection remains explicitly unavailable |
+| O7 joint acceptance | not started | — | Combined regression, packaging and playback work |
 
 The Python O1 API includes `capture_scene`, `capture_scenes`,
 `capture_animation_scene`, `render_scene`, `save_scene`, `open_scene`,
@@ -251,3 +252,40 @@ reopen retains diagnostic views and hidden-geometry capture identity.
 
 Built wheels are in `/tmp/kasane-observe-o5-wheel/` and
 `/tmp/kasane-observe-o5-cpu-wheel/`. These local paths are test evidence.
+
+## O6 image-coordinate geometry and coverage queries (2026-09-26)
+
+`InspectionPacket.query` resolves a view ID and checks evaluated triangles in
+image coordinates. Point hits return all triangles at the continuous point,
+including shared-edge ambiguity, with vertex IDs, barycentric weights, UV,
+canvas/runtime coordinates, composition path and source revision. Region hits
+use positive-area triangle/half-open-rectangle clipping. AABB intersection
+alone is never a hit. Analysis packet queries and `object_details` work in a
+CPU-only wheel. The pixel probe reads only captured raw/clean buffers with
+the same mapping, explicitly reporting missing buffers. `max_hits` reports
+total and truncation instead of silently dropping ambiguity.
+
+Coverage uses a per-mesh isolated GPU pass on the point's one-pixel cell or
+a bounded region. The diagnostic normalizes additive/multiplicative color
+blending to source alpha while keeping texture sampling, UV, culling, mesh
+masks/inversion, opacity and ancestor offscreen gates. The renderer frame is
+derived from the frozen capture; normal clean results remain unchanged.
+Extended raw mesh blending or a nonzero ancestor offscreen blend reports
+`unsupported_composition` and keeps geometry candidates. Region results give
+per-triangle covered pixel count, half-open bounds and maximum alpha. The
+frontmost rule uses captured render-plan order and does not claim unique color
+contribution; it gives no answer for unsupported or truncated candidates.
+Coverage regions are capped at 262,144 pixels and candidate readbacks at
+8 million pixels before diagnostic GPU work. `ObjectDetails` identifies
+source bindings and reports interpolation selection as `not_computed`;
+geometry with glue/deformers is not presented as an editable point.
+
+| O6 evidence | Result |
+| --- | --- |
+| `cargo test --workspace --locked -q`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed |
+| release observe wheel, CPython 3.14 | 44 Observe tests passed, including 9 O6 cases for shared triangles, bbox false positives, offline analysis, transparent texels, normal/additive/multiplicative alpha, mesh mask inversion, offscreen gate and unsupported composition, frontmost rule, region counts and limits |
+| release CPU-only wheel, CPython 3.14 | 52 CPU tests passed; reopened an O6 analysis packet and queried geometry/object details without GPU |
+| default raw path | all five raw and legacy input SHA-256 values match `/tmp/kasane-o5-baseline.json` |
+
+Built wheels are in `/tmp/kasane-observe-o6-wheel/` and
+`/tmp/kasane-observe-o6-cpu-wheel/`. These local paths are test evidence.

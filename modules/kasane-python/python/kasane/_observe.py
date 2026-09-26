@@ -159,6 +159,7 @@ class Observer:
             self._native, resolution[0], resolution[1], roi, padding_canvas,
             kind, light, dark, tile, origin, presentation.alpha == "straight",
             list(focus_mesh_ids), ignore_masks, ignore_opacity, include_disabled,
+            False,
         )
         plan = json.loads(plan_json)
         digest = _sha(_json({"mode": "isolated", "scene": scene.scene_digest,
@@ -362,6 +363,22 @@ class Observer:
     def open(self, absolute_directory: Path) -> InspectionPacket:
         """Open and validate a saved report, analysis, or scene packet."""
         return open_inspection_packet(absolute_directory)
+
+    def object_details(self, packet: InspectionPacket, *, object_id: str):
+        """Read authored and evaluated evidence for one frozen object."""
+        return packet.object_details(object_id)
+
+    def query(
+        self, packet: InspectionPacket, *, view_id: str,
+        point: tuple[float, float] | None = None,
+        region: tuple[int, int, int, int] | None = None,
+        mode: str = "geometry", alpha_threshold: float = 1 / 255,
+        max_hits: int = 256,
+    ):
+        """Query the frozen view in image pixels; return all triangle hits."""
+        return packet.query(view_id=view_id, point=point, region=region,
+                            mode=mode, alpha_threshold=alpha_threshold,
+                            max_hits=max_hits, observer=self)
 
 
     def observe_run(

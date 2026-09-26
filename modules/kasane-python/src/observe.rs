@@ -324,6 +324,7 @@ impl NativeCapturedScene {
         ignore_masks: bool,
         ignore_opacity: bool,
         include_disabled: bool,
+        normalize_blend_for_coverage: bool,
     ) -> PyResult<(NativeFrameTuple, RenderMappingTuple, String)> {
         let request = RenderRequest {
             width,
@@ -373,6 +374,7 @@ impl NativeCapturedScene {
                         ignore_masks,
                         ignore_opacity,
                         include_disabled,
+                        normalize_blend_for_coverage,
                     },
                 )
                 .map_err(Some)
@@ -385,7 +387,7 @@ impl NativeCapturedScene {
         let mapping = frame
             .explicit_view
             .expect("isolated render has ROI mapping");
-        let identity = serde_json::json!({
+        let mut identity = serde_json::json!({
             "color_mesh_ids": plan.color_mesh_ids,
             "mask_only_mesh_ids": plan.mask_only_mesh_ids,
             "ancestor_target_ids": plan.ancestor_target_ids,
@@ -395,6 +397,9 @@ impl NativeCapturedScene {
                           "ignore_opacity": ignore_opacity,
                           "include_disabled": include_disabled},
         });
+        if normalize_blend_for_coverage {
+            identity["coverage_policy"] = serde_json::json!("normal_alpha_with_original_gates");
+        }
         let roi_tuple = |roi: CanvasRoi| (roi.x0, roi.y0, roi.x1, roi.y1);
         Ok((
             frame_tuple(py, frame)?,

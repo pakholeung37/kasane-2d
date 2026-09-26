@@ -282,6 +282,15 @@ geometry when using `inspect`, `inspect_samples`, `inspect_run`, or
 `inspect_animation`. For an already frozen scene, pass
 `include_hidden_geometry=True` to its capture call.
 
+For point or region picking, pass a packet's `view_id` to
+`observer.query(packet, view_id=..., point=(x, y), mode="coverage")`.
+`mode="geometry"` returns triangle and barycentric evidence without a GPU
+pass; `frontmost_covered` adds a documented pick choice while retaining all
+covered candidates. Analysis packets can run geometry queries with
+`packet.query(view_id=..., point=(x, y))` on a CPU-only wheel. Coverage needs
+the open scene and a GPU `Observer`. Results distinguish geometry from local
+alpha coverage and mark unsupported special composition explicitly.
+
 ## Errors and scripting
 
 SDK validation and IO errors raise `kasane.SdkFailure`. Inspect `code`,

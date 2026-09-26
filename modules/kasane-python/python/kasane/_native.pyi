@@ -105,7 +105,7 @@ class NativeCapturedScene:
         background_kind: str, light: tuple[int, int, int], dark: tuple[int, int, int],
         tile_px: int, origin_px: tuple[int, int], straight_alpha: bool,
         focus: list[str], ignore_masks: bool, ignore_opacity: bool,
-        include_disabled: bool,
+        include_disabled: bool, normalize_blend_for_coverage: bool,
     ) -> tuple[object, tuple[tuple[float, float, float, float], tuple[float, float, float, float], tuple[float, float, float, float]], str]: ...
     def render_mask(
         self, observer: NativeObserver, width: int, height: int,
