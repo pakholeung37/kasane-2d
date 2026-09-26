@@ -340,3 +340,24 @@ reference probes were not supplied. The new inspection gate does not claim
 their results. Known capability limits remain those in
 `docs/OBSERVE-VISUAL-CONTRACT.md`, including unsupported special-composition
 coverage and unavailable edit interpolation for warp/glue geometry.
+
+### Agent experiment preflight after O7 commit
+
+The existing S4-A (`visual-locate`), S4-B v2 (`visual-parent`) and
+Shirousagi `shirousagi-repair` tasks were frozen with the final O7 wheel in
+`/tmp/kasane-observe-o7-ablation-preflight-v2/`. Each preparation passed its
+positive control and rejected its no-edit, wrong-target or wrong-amount
+controls; the Shirousagi task also rejected a wrong keyform. This is a
+**harness preflight**, not an agent trial. Its model field is
+`PREP_ONLY_NO_AGENT` and no `run`, `assess`, or `review` result exists.
+
+The first Shirousagi preflight found that its task references use Cubism
+runtime parameter IDs such as `ParamAngleX`, while the current SDK accepts
+UUIDs or unique display names for parameter samples; this local model's
+display names are Japanese. The experiment worker now resolves runtime IDs to
+the imported parameter UUID before rendering or evaluating, while retaining
+the original reference labels for participants. The corrected frozen
+preflight passed. The requested white-rabbit compression/occlusion variant and
+a separate untuned fourth asset still need task-specific oracles and
+positive/negative controls before an ablation can be run. The three existing
+tasks alone are not presented as a four-condition effectiveness result.

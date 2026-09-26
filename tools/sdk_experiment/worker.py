@@ -722,6 +722,19 @@ def shirousagi_model():
     return session
 
 
+def shirousagi_values(session, pose):
+    """Translate Cubism runtime IDs in task references to SDK parameter IDs."""
+    parameters = {session.parameter(pid).runtime_id: pid
+                  for pid in session.parameter_ids()}
+    if any(runtime_id not in parameters for runtime_id in pose):
+        raise ValueError("Shirousagi task references an unknown runtime parameter")
+    return {parameters[runtime_id]: value for runtime_id, value in pose.items()}
+
+
+def shirousagi_parameter_id(session, runtime_id):
+    return next(iter(shirousagi_values(session, {runtime_id: 0})))
+
+
 def shirousagi_binding(session, variant):
     mesh = session.require_unique_mesh(variant["mesh"])
     record = session.mesh_record(mesh.id)
@@ -783,8 +796,9 @@ def shirousagi_fixture(packet, oracle_path, variant_name):
     hashes = []
     with kasane.Observer(**observer) as renderer:
         for index, pose in enumerate(all_poses):
-            frame = renderer.observe(original, pose)
-            if frame.rgba != renderer.observe(original, pose).rgba:
+            values = shirousagi_values(original, pose)
+            frame = renderer.observe(original, values)
+            if frame.rgba != renderer.observe(original, values).rgba:
                 raise RuntimeError("Shirousagi reference render is not repeatable")
             hashes.append(hashlib.sha256(frame.rgba).hexdigest())
             if index < len(public):
@@ -792,12 +806,13 @@ def shirousagi_fixture(packet, oracle_path, variant_name):
     (input_dir / "references.json").write_text(json.dumps({"observer": observer,
         "samples": [{"values": pose, "image": f"reference-{index}.png"}
                     for index, pose in enumerate(public)]}, indent=2) + "\n")
-    clean_state = state(original, "ParamAngleX", (-30, 0, 30))
+    clean_state = state(original, shirousagi_parameter_id(original, "ParamAngleX"),
+                        (-30, 0, 30))
     binding, _ = shirousagi_binding(original, variant)
     shirousagi_change(original, variant, amount=1)
     original.save(input_dir / "project")
     with kasane.Observer(**observer) as renderer:
-        broken = renderer.observe(original, public[0])
+        broken = renderer.observe(original, shirousagi_values(original, public[0]))
         if hashlib.sha256(broken.rgba).hexdigest() == hashes[0]:
             raise RuntimeError("Shirousagi injected fault is not visible")
     return {"variant": variant, "target_binding_id": binding.id,
@@ -822,14 +837,15 @@ def shirousagi_render_checks(session, oracle, prefix):
     checks = {}
     with kasane.Observer(**oracle["observer"]) as renderer:
         for index, pose in enumerate(oracle["all_poses"]):
-            frame = renderer.observe(session, pose)
+            frame = renderer.observe(session, shirousagi_values(session, pose))
             checks[f"{prefix}_pose_{index}"] = hashlib.sha256(frame.rgba).hexdigest() == oracle["rgba_sha256"][index]
     return checks
 
 
 def shirousagi_checks(manifest, package, oracle):
     session = kasane.open_project(manifest)
-    actual = state(session, "ParamAngleX", (-30, 0, 30))
+    actual = state(session, shirousagi_parameter_id(session, "ParamAngleX"),
+                   (-30, 0, 30))
     checks = {"structure": not session.validate_structure(),
               "resources": not session.diagnose_resources(),
               "non_target_state": close(shirousagi_state_without_target_positions(actual, oracle),
