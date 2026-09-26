@@ -468,13 +468,16 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
-| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...))` | Return a raw O1 view or O2 clean/labels/alpha presentation views from one frozen scene. |
+| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...), baseline_values=None)` | Return a raw O1 view or O2 clean/labels/alpha views. O3 `baseline_values` freezes both states from one snapshot and attaches a saved comparison to the current packet. |
 | `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Capture the actual animation frame with the same request choices and current operation identity. |
 | `observer.inspect_samples(session, samples, *, request=InspectionRequest(...))` | Freeze 1–64 parameter samples once; use a fixed union ROI or follow each sample's evaluated geometry. |
 | `observer.inspect_scenes(scenes, *, request=InspectionRequest(...))` | Present already frozen samples sharing one capture ID. |
+| `observer.inspect_run(session, samples, *, request, output, baseline_index=None, layout=None)` | Publish a v2 report from one frozen batch into a unique child of absolute `output`. A baseline adds registered comparisons. `SequenceLayout` preserves input order; `GridLayout` declares two parameter axes and records missing cells. |
 | `observer.render(packet, *, request)` | Append raw or O2 presentation views to a new packet value with the same capture ID, without reading a session or source asset. |
 | `packet.save(absolute_directory, profile="analysis")` | Save a new packet with checked artifact hashes; `report` stores PNG/metadata, `analysis` also stores evaluated geometry and raw RGBA, `scene` also stores frozen textures for rerendering. |
 | `kasane.open_inspection_packet(absolute_directory)` / `observer.open(...)` | Validate and open a saved packet. Report/analysis profiles can be read from a CPU-only wheel; scene profile requires the observe wheel. |
+| `kasane.compare_observations(current, reference, *, view_id=None, reference_view_id=None, options=CompareOptions(...))` | Compare compatible packets or an `ExternalReference`; return side-by-side, onion, color-edge/alpha-outline and fixed-range heatmap artifacts with metrics and registration status. |
+| `kasane.open_inspection_run(absolute_directory)` / `run.packet(index)` | Validate a v2 report and its artifact hashes on a CPU-only wheel; reopen a saved report-profile sample packet. |
 
 These capture, raw packet and ROI methods complete O1's frozen-scene gate.
 `CapturedScene.capture_id` is unique to an acquisition and survives a v2 scene
@@ -505,9 +508,34 @@ clean view, object table, focus status, and omitted-label reasons. Each view
 exposes canvas/image 3×3 matrices and runtime/canvas conversion. `fixed_union`
 shares an evaluated-geometry ROI across samples; `follow` uses each sample's
 ROI and should not be used for absolute displacement comparison.
-Query/comparison APIs, diagnostic modes/channels, contact-sheet layout and
-complete report v2 remain later-stage work; unsupported requests fail
-explicitly. `packet.capabilities` marks query/playback channels unavailable.
+O3 adds an independent `inspection` extra (`Pillow==12.3.0`) for external
+image decoding and contact-sheet text. Base import, existing Observe calls,
+numeric O2 labels, and reading a v2 report need no Pillow. V2 runs render
+samples sequentially after one capture, preserve parameter input order, write
+actual/clamped values, paginate at 16 million pixels per sheet, and keep a
+readable `failed` report with `run_directory` on error. A two-axis grid must
+declare both parameter IDs and values; missing cells are explicit and duplicate
+actual-value cells fail. Per-cell `sheet_to_view` maps only the image area;
+ASCII fallback in the sheet label is recorded while original display names
+stay in JSON. Every v2 run requires fixed-union framing; `inspect_samples`
+remains available for follow views.
+
+`CompareOptions` requires matching view/presentation policies for packet
+comparisons. Cross-document pixels need an explicit canvas affine registration;
+target meshes across documents also need an object map. An external reference
+declares alpha/color policy and image registration. Without registration, it
+produces a side-by-side image and `unregistered` metrics. Registered comparisons
+report opaque RGB MAE/max/over-threshold fraction, compatible raw RGBA and
+transparent alpha when available. An explicit canvas ROI or evaluated mesh
+union defines the target; its complement is the non-target region. Without a
+target, only the whole-view metric is available. The heatmap retains a fixed
+0–255 scale and records display gain. No automatic alignment or color
+normalization is applied. Geometry/pixel queries and diagnostic modes/channels
+remain later-stage work; unsupported requests fail explicitly.
+`packet.capabilities` marks query/playback channels unavailable.
+An inline baseline comparison is included in all packet save profiles and can
+be read from a report-profile packet without a GPU; new comparisons of saved
+PNG-only packets require the `inspection` extra to decode their images.
 The `analysis` profile preserves query inputs but does not yet implement
 geometry or pixel-probe queries. A saved scene contains an evaluated frame,
 not a resumable animation preview. `CapturedScene.source` reports
@@ -559,6 +587,24 @@ with kasane.Observer(256, 256, 256) as observer:
     canvas_point = clean.image_to_canvas((512.5, 384.5))
     object_id = next(row["id"] for row in packet.objects if row.get("mark") == 1)
     packet.save(Path("/absolute/path/to/presentation"), profile="analysis")
+```
+
+```python
+request = kasane.InspectionRequest(
+    view=kasane.ViewSpec(resolution=(512, 512), framing="fixed_union"),
+    channels=("clean", "alpha"),
+)
+with kasane.Observer(512, 512, 512) as observer:
+    run = observer.inspect_run(
+        session, [{parameter_id: 0.0}, {parameter_id: 1.0}],
+        request=request, output=Path("/absolute/path/to/output"),
+        baseline_index=0, layout=kasane.SequenceLayout(columns=2),
+    )
+    assert run.status == "complete"
+    comparison = kasane.compare_observations(run.packet(1), run.packet(0))
+    print(comparison.metrics["opaque_rgb"]["whole_view"])
+reopened = kasane.open_inspection_run(run.run_directory)
+assert reopened.status == "complete"
 ```
 
 `ObservationRun.directory` (also `output`) is the actual run directory;

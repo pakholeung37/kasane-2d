@@ -241,6 +241,29 @@ Add parameter samples to the `observe_run()` list as needed. The call creates
 a unique directory containing rendered frames, a contact sheet, and a JSON
 report.
 
+For frozen multi-sample inspection, install the wheel's `inspection` extra
+(`Pillow==12.3.0`) and use the v2 run API. It records requested and actual
+parameter values, fixes the view across comparisons, and paginates contact
+sheets without shrinking scene images:
+
+```python
+request = kasane.InspectionRequest(
+    view=kasane.ViewSpec(resolution=(512, 512), framing="fixed_union"),
+    channels=("clean", "alpha"),
+)
+with kasane.Observer(512, 512, 512) as observer:
+    inspection = observer.inspect_run(
+        session, [{}, {parameter_id: 1.0}], request=request,
+        output=Path("/absolute/output/inspections"), baseline_index=0,
+    )
+    print(inspection.report_path, inspection.pages)
+```
+
+`kasane.open_inspection_run()` reads and verifies a completed or failed v2
+report on a CPU-only wheel. Packet-to-packet comparison and explicitly
+registered external reference images use `kasane.compare_observations()`;
+the full request and policy rules are in [API.md](API.md).
+
 ## Errors and scripting
 
 SDK validation and IO errors raise `kasane.SdkFailure`. Inspect `code`,

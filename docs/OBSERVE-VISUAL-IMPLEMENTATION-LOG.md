@@ -10,7 +10,8 @@ staged research/plan changes were preserved. Fixture manifest SHA-256:
 | O0 contract and baseline | complete | Typed target contract, three generated/verified synthetic projects, raw pixel/timing/RSS baseline, derived light/dark arithmetic reference, edit task definition | Renderer-native background results belong to V01 implementation |
 | O1 frozen capture and ROI | complete | Detached document snapshot; 1–64 samples with one texture union decode; full frozen authoring source records; static/actual animation frame capture with last successful operation identity; explicit ROI; scene and raw packet round trips; report/analysis/scene payload profiles; canonical capture/scene/render IDs; independent-process reopen and legacy pixel regression | O1 acceptance gate passed. Full playback recipe/runner, query-capable analysis profile, presentation, complete report v2 and full `InspectionRequest` belong to O2/O3 |
 | O2 display and location | complete | Main-target light/dark/checker background, conservative straight alpha and raw-derived alpha view, mesh/Part focus, fixed-union/follow sample views, 3×3/runtime mappings, numeric marks/highlights, object table, omitted-label reasons, packet profile round trips | V01/V02/V03 gates passed with the isolated GPU wheel; comparison/report and geometry/query channels belong to O3–O6 |
-| O3–O7 | not started | — | V04–V07 comparison, geometry, diagnostic composition and query; joint acceptance and playback work |
+| O3 comparison and report | complete | Same-snapshot inline baseline, compatible packet/external-reference comparison, target and non-target metrics, side-by-side/onion/outline/heatmap, explicit two-axis grid, paged sheets, complete/failed v2 reports and CPU reader | V04 normal/error paths passed with isolated wheels; animation playback runs remain O7 |
+| O4–O7 | not started | — | V05–V07 geometry, diagnostic composition and query; joint acceptance and playback work |
 
 The Python O1 API includes `capture_scene`, `capture_scenes`,
 `capture_animation_scene`, `render_scene`, `save_scene`, `open_scene`,
@@ -128,3 +129,50 @@ O2 does not expose coverage or geometry queries, diagnostic modes, comparison,
 contact sheets, report v2, or a playback recipe. Those capabilities remain
 false in the packet. Presentation is a renderer-native numeric view; it does
 not add an sRGB conversion or claim GPU pixel identity across adapters.
+
+## O3 comparison and report (2026-09-26)
+
+The optional `inspection` extra pins Pillow 12.3.0 for external image reads
+and contact-sheet headers. The base wheel still imports without Pillow; O2
+numeric labels use their own bitmap glyphs. Font origin and license are in
+`modules/kasane-python/FONT-PROVENANCE.md`. Static `inspect_run` freezes one
+sample batch, resolves a fixed union ROI for baseline comparisons, renders
+sequentially, saves per-sample report-profile packets, and publishes
+`report.json` atomically after each sample. Input order, requested/actual
+values and clamp/repeat differences are explicit. Two-axis grids use declared
+parameter IDs/values, reject duplicate actual-value cells, and keep missing
+cells. Sheets split at the 16-million-pixel page budget; each cell records a
+sheet-to-view transform and keeps label space out of scene coordinates.
+
+`compare_observations` checks view/presentation policy and requires canvas
+registration across documents. Target meshes across documents require an
+object map. External references are read once and record a source hash plus
+declared alpha/color interpretation; unregistered references produce only a
+side-by-side artifact and unavailable numeric metrics. Registered comparisons
+produce side-by-side, onion skin, threshold outline and fixed 0–255 abs-diff
+heatmap artifacts, change bounds, RGB/raw/alpha metrics when compatible, and
+separate target/non-target domains. A mesh target ROI unions current and
+reference evaluated bounds, so displacement is not hidden by a recentered
+view. Without a declared target, only whole-view metrics are returned.
+
+The v2 reader validates report version, artifact paths, hashes and dimensions
+on a CPU-only wheel. A failed run retains a readable report and attaches its
+directory to the exception. `Observer.inspect(..., baseline_values=...)`
+captures both states from one document snapshot and stores its comparison in
+all packet profiles. The report records render/readback counts, pixel/byte
+totals, elapsed time and a CPU image memory estimate; it does not claim a
+measured process peak. Animation playback runs, partial/cancelled reports and
+diagnostic/query channels remain later-stage work.
+
+| O3 evidence | Result |
+| --- | --- |
+| Source and fixtures | Started from `8420055`; fixture manifest remains `a971cfc4a93a55c3a335ae35df8f425968f4e5490dbe3ce1c333a0eacf530331` |
+| `cargo fmt --check`, `cargo test --workspace --locked -q`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed |
+| release observe wheel plus `Pillow==12.3.0` in isolated CPython 3.14 | 16 `test_observe.py` and 6 `test_observe_o3.py` cases passed; incompatible policy, unregistered reference, target geometry union, grid duplicates, failed report, hash tampering and pagination covered |
+| release CPU-only wheel without Pillow in isolated CPython 3.14 | 52 `test_cpu.py` cases passed; opened the GPU-produced v2 run and saved inline comparison with four artifacts |
+| legacy raw baseline | all five current Framework-filtering raw SHA-256 values reproduced on Apple M4 / Metal |
+| visual QA | inspected the two-cell contact sheet and fixed-range heatmap under `/tmp/kasane-o3-qa/inspection-4f172031c8f741c68406e8e41371b3ea/` |
+
+The built wheels are in `/tmp/kasane-observe-o3-wheel/` and
+`/tmp/kasane-observe-o3-cpu-wheel/`. These paths are local evidence, not
+portable golden artifacts.

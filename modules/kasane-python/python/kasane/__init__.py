@@ -17,6 +17,13 @@ from ._inspection import (
     OverlaySpec, PacketSaveReceipt, PresentationSpec, RawInspectionRequest, ViewSpec,
     open_inspection_packet,
 )
+from ._comparison import (
+    CompareOptions, ComparisonArtifact, ComparisonResult, ExternalReference,
+    compare_observations,
+)
+from ._inspection_run import (
+    GridLayout, InspectionRun, SequenceLayout, open_inspection_run,
+)
 from .geometry import rectangle_grid_geometry
 from ._types import (
     Version,
@@ -188,6 +195,13 @@ for _public_type in (
     InspectionLimits,
     InspectionRequest,
     DiagnosticSpec,
+    CompareOptions,
+    ComparisonArtifact,
+    ComparisonResult,
+    ExternalReference,
+    GridLayout,
+    InspectionRun,
+    SequenceLayout,
 ):
     _public_type.__module__ = __name__
 if ObservationFailure.__module__ == "kasane._observe":
@@ -264,6 +278,13 @@ __all__ = [
     "InspectionLimits",
     "InspectionRequest",
     "DiagnosticSpec",
+    "CompareOptions",
+    "ComparisonArtifact",
+    "ComparisonResult",
+    "ExternalReference",
+    "GridLayout",
+    "InspectionRun",
+    "SequenceLayout",
     "RenderedSceneView",
     "ObservationRun",
     "ObservedFrame",
@@ -291,4 +312,6 @@ __all__ = [
     "capabilities",
     "open_project",
     "open_inspection_packet",
+    "open_inspection_run",
+    "compare_observations",
 ]

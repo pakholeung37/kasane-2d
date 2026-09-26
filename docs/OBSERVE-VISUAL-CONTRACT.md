@@ -4,8 +4,10 @@ Date: 2026-09-25. Contract version: `inspection-v2-draft-1`. This fixes the O0
 interface and semantics for implementation. The basic Rust/Python frozen
 capture, ROI rerender, scene bundle, canonical digest, raw packet, and bounded
 save-profile slice is available. O2 adds presentation, evaluated-geometry
-focus, fixed/follow sample views, numeric labels, and an object table. Query,
-comparison, diagnostic channels and report v2 below remain delivery targets. The existing
+focus, fixed/follow sample views, numeric labels, and an object table. O3 adds
+registered image comparison, explicit two-axis layouts, paged contact sheets,
+and a recoverable report v2. Query and diagnostic channels remain delivery
+targets. The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -103,6 +105,7 @@ compare_observations(current, reference, *, view_id, reference_view_id,
                      options) -> ComparisonResult
 packet.save(absolute_directory, *, profile="analysis") -> SaveReceipt
 observer.open(absolute_directory) -> InspectionPacket
+open_inspection_run(absolute_directory) -> InspectionRun
 packet.close() -> None
 ```
 
@@ -119,8 +122,14 @@ labels, and alpha channels; unsupported diagnostic modes/channels fail early.
 `inspect_samples` freezes a batch once and applies fixed-union or follow framing.
 The packet manifest remains `kasane-inspection-packet` schema 2 with per-view
 presentation policy, object marks, focus status and explicit capability flags.
-CPU queries after analysis reopen, comparison layout and complete run report
-v2 remain later work. A live preview capture keeps
+O3 adds `compare_observations`, `ExternalReference`, `CompareOptions`,
+`SequenceLayout`/`GridLayout`, `Observer.inspect_run`, and
+`open_inspection_run`. `Observer.inspect(..., baseline_values=...)` freezes
+both parameter states from one snapshot and attaches a comparison that survives
+packet save/reopen. A registered comparison uses compatible view/pixel
+policies and an explicit target ROI or evaluated mesh union; an unregistered
+external reference is side-by-side only. A failed run retains a readable v2
+report. CPU geometry queries remain later work. A live preview capture keeps
 the last successful operation identity while reporting history as
 `not_recorded`; it does not claim a playback recipe or resumable runtime.
 
@@ -223,12 +232,12 @@ Pixel probes and comparison metrics retain the policy and background used.
 ## Report v2 and failure rules
 
 `report.json` contains `schema_version: 2`, status (`running`, `complete`,
-`partial`, `failed`, `cancelled`), run/build/platform/adapter, capture identity,
+`failed` in O3; `partial` and `cancelled` remain reserved), run/build/platform/adapter, capture identity,
 samples, animation source when applicable, object/mark table, views,
 comparisons, diagnostics, provenance, capabilities, and resource accounting.
 Each view has ID, sample, kind, mode, image path/hash, dimensions, view
 matrices/ROI, color/alpha/background policy, dependencies and overrides.
-Static samples use `source_kind="parameters"`; animation samples use
+Static samples use `source_kind="parameters"`; later animation runs use
 `source_kind="animation"` with actual f32 time, operation identity, recipe or
 step source, host opacity policy, and stage availability. Missing history is
 `not_recorded`; a replay is explicitly `replayed` and must match the target
@@ -237,19 +246,21 @@ snapshot. A zero-time reset and an advance(0) have distinct operation IDs.
 Artifacts are written to unique run directories using internal IDs and
 temporary-file rename. The report is updated as work progresses. A failed
 run keeps completed evidence and attaches `run_directory` to the exception.
-Unknown major schema versions are rejected; arrays have explicit dtype, shape
-and byte order. Reader verifies hashes, lengths, paths and budgets before
-exposing capabilities. `complete` requires every requested channel; only an
-explicit `allow_partial` may downgrade an unavailable requested channel to
-`partial`. GPU/IO failure is `failed`.
+Unknown major schema versions are rejected. O3 run views and comparisons are
+PNG artifacts; report-profile packets contain no raw arrays. The reader
+verifies hashes, dimensions, paths and read budgets before exposing a run.
+`complete` requires every requested channel. O2 still rejects `allow_partial`;
+partial/cancelled runs and animation playback recipes remain later work. GPU/IO
+failure is `failed`, with completed evidence retained in the report.
 
 ## Implementation decisions relative to the plan
 
-- O1's first slice uses `ResolvedObservation` and `RenderRequest` with a
-  rectangular ROI. It exposes `capture_scene`, `capture_animation_scene`,
-  `render_scene`, `save_scene` and `open_scene` in Python. This is a data-only
-  scene bundle; the full inspection packet and report v2 remain to be built.
-- The initial Rust ROI limit is 4096 per side and the device limit, matching
-  the default contract. Remaining aggregate budgets enter with packet/run.
-- Background support waits for main-target renderer work; compositing raw
-  pixels in Python would violate the destination-read requirement.
+- O1 uses `ResolvedObservation` and `RenderRequest` for frozen scene bundles,
+  explicit ROI rerender, and bounded packet profiles.
+- O2 initializes the main target before destination reads and adds presentation,
+  focus, object metadata, and fixed/follow views. The Rust ROI limit remains
+  4096 per side and the device limit.
+- O3 uses a separately installed `inspection` extra for Pillow based external
+  image reads and contact sheets. It leaves baseline views in fixed canvas
+  coordinates, checks aggregate artifact pixels before GPU rendering, and
+  reports CPU image memory as an estimate rather than a process peak.

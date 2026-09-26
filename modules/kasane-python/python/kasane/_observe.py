@@ -166,9 +166,29 @@ class Observer:
     def inspect(
         self, session: Session, values: Mapping[str, float] | None = None, *,
         request: RawInspectionRequest | InspectionRequest,
+        baseline_values: Mapping[str, float] | None = None,
     ) -> InspectionPacket:
-        """Freeze one parameter frame and return its raw inspection packet."""
-        return self.inspect_scene(self.capture_scene(session, values), request=request)
+        """Freeze one frame, optionally comparing a baseline from the same snapshot."""
+        if baseline_values is None:
+            return self.inspect_scene(self.capture_scene(session, values), request=request)
+        from ._comparison import CompareOptions, compare_observations
+        if isinstance(request, InspectionRequest) and request.view.framing != "fixed_union":
+            raise ValueError("Baseline comparison requires fixed_union framing")
+        scenes = self.capture_scenes(session, [baseline_values, values or {}])
+        if isinstance(request, InspectionRequest):
+            baseline, current = self.inspect_scenes(scenes, request=request)
+            located_request = replace(
+                request, view=replace(request.view, roi=current.views[0].requested_roi),
+            )
+            _, selected, _ = _focus_and_objects(scenes[1], located_request)
+            options = CompareOptions(target_mesh_ids=selected)
+        else:
+            baseline = self.inspect_scene(scenes[0], request=request)
+            current = self.inspect_scene(scenes[1], request=request)
+            options = CompareOptions()
+        return replace(current, comparison=compare_observations(
+            current, baseline, options=options,
+        ))
 
     def inspect_animation(
         self, session: Session, preview: MotionPreview, *,
@@ -223,6 +243,16 @@ class Observer:
         if not 1 <= len(samples) <= request.limits.max_samples:
             raise ValueError("inspect_samples exceeds the sample limit")
         return self.inspect_scenes(self.capture_scenes(session, samples), request=request)
+
+    def inspect_run(
+        self, session: Session, samples: Sequence[Mapping[str, float]], *,
+        request: InspectionRequest, output: Path,
+        baseline_index: int | None = None, layout=None,
+    ):
+        """Publish a paged v2 report from one frozen batch."""
+        from ._inspection_run import inspect_run
+        return inspect_run(self, session, samples, request=request, output=output,
+                           baseline_index=baseline_index, layout=layout)
 
     def render(
         self, packet: InspectionPacket, *, request: RawInspectionRequest | InspectionRequest,

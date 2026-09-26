@@ -36,6 +36,15 @@ uv run --locked python tools/compare_wgpu_blends.py
 
 `--full` 要求 10 项检查均实际通过：CPU、两条创作/导入流程、GPU、第二脚本修正、两套 Core 对新建与导入模型的数值对照、固定外部 GPU 图像参考。输入或参考图哈希不一致、焦点裁剪误差超限、任一必需项缺席均失败。参考图来源与生成时的输入、视图和纹理配置见 `tests/fixtures/render_reference/`；更新参考图须重新记录来源并运行负控制。
 
+Observe v2 对比与报告另有独立 wheel 回归。在隔离的 CPython 3.14 环境中安装带 `observe` feature 的 wheel 及其 `inspection` extra，然后运行：
+
+```sh
+python -m unittest discover -s modules/kasane-python/tests -p test_observe.py -q
+python -m unittest discover -s modules/kasane-python/tests -p test_observe_o3.py -q
+```
+
+O3 用例覆盖配准与不兼容 policy、外部参考图未配准状态、目标/非目标指标、二维缺格与重复格、分页、失败报告及哈希损坏拒绝。CPU-only wheel 无需 `inspection` extra 即可打开已保存的 v2 报告；新建离线 PNG 对比则需要该 extra。
+
 CI 运行 Rust 回归、验证器负控制和 CPU wheel 集成测试；macOS runner 另外运行 WGPU 混合矩阵。真实 GPU 观察与双 Core 的完整门禁按有相应资源的环境运行，报告不把 `not_run` 计作通过。
 
 历史 Godot 里程碑与门槛记录仍可从 Git 历史及 `docs/archive/` 查阅。

@@ -9,6 +9,9 @@ requires-python = ">=3.14,<3.15"
 description = "Scriptable 2D model authoring SDK"
 readme = "README.md"
 
+[project.optional-dependencies]
+inspection = ["Pillow==12.3.0"]
+
 [project.urls]
 Repository = "https://github.com/pakholeung37/kasane-2d"
 Documentation = "https://github.com/pakholeung37/kasane-2d/blob/main/modules/kasane-python/API.md"

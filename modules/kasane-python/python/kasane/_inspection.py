@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING
 from uuid import uuid4
 
 if TYPE_CHECKING:
+    from ._comparison import ComparisonResult
     from ._observe import CapturedScene, RenderedSceneView
     from ._types import ObservedFrame
 
@@ -358,6 +359,7 @@ class InspectionPacket:
     _scene: CapturedScene | None = None
     _closed: bool = False
     focus_status: str = "not_requested"
+    comparison: ComparisonResult | None = None
 
     @property
     def source_kind(self) -> str:
@@ -387,6 +389,7 @@ class InspectionPacket:
             "evaluated_geometry_data": self.evaluated_frame is not None,
             "rerender_scene": self._scene is not None and not self._closed,
             "presentation": any(view.kind in ("clean", "labels", "alpha") for view in self.views),
+            "comparison": self.comparison is not None,
             "geometry_query": False,
             "pixel_coverage_query": False,
             "playback_replay": False,
@@ -408,7 +411,11 @@ class InspectionPacket:
         """Save report, analysis, or scene data to a new absolute directory."""
         if profile not in ("report", "analysis", "scene"):
             raise ValueError("profile must be report, analysis, or scene")
-        if len(self.views) > MAX_VIEWS or sum(view.width * view.height for view in self.views) > MAX_ARTIFACT_PIXELS:
+        comparison_pixels = sum(item.width * item.height for item in
+                                self.comparison.artifacts) if self.comparison else 0
+        if (len(self.views) > MAX_VIEWS or
+                sum(view.width * view.height for view in self.views) +
+                comparison_pixels > MAX_ARTIFACT_PIXELS):
             raise ValueError("Packet view count or pixel budget exceeded")
         if not absolute_directory.is_absolute():
             raise ValueError("Packet directory must be absolute")
@@ -470,18 +477,50 @@ class InspectionPacket:
         if profile == "scene":
             assert self._scene is not None
             self._scene.save_scene(absolute_directory / "scene")
+        comparison_record = None
+        if self.comparison is not None:
+            result = self.comparison
+            comparison_record = {
+                "current_view_id": result.current_view_id,
+                "reference_view_id": result.reference_view_id,
+                "reference_sha256": result.reference_sha256,
+                "registration_status": result.registration_status,
+                "registration": result.registration,
+                "view_compatibility": result.view_compatibility,
+                "metrics": result.metrics,
+                "change_bounds": result.change_bounds,
+                "contour_source": result.contour_source,
+                "target_basis": result.target_basis,
+                "thresholds": result.thresholds,
+                "artifacts": [],
+            }
+            for index, artifact in enumerate(result.artifacts):
+                if (artifact.width <= 0 or artifact.height <= 0 or
+                        artifact.width * artifact.height > MAX_PAGE_PIXELS or
+                        _sha(artifact.png) != artifact.artifact_sha256):
+                    raise ValueError("Invalid comparison artifact")
+                relative = f"comparison/{index:03d}-{artifact.kind}.png"
+                _write(absolute_directory / relative, artifact.png)
+                hashes[relative] = artifact.artifact_sha256
+                comparison_record["artifacts"].append({
+                    "kind": artifact.kind, "path": relative,
+                    "width": artifact.width, "height": artifact.height,
+                    "sha256": artifact.artifact_sha256,
+                })
         manifest = {
             "schema_version": 2, "kind": "kasane-inspection-packet",
             "status": "complete", "profile": profile,
             "capture": self.metadata, "source": self.source,
             "focus_status": self.focus_status,
             "objects": self.objects, "views": view_entries,
+            "comparison": comparison_record,
             "capabilities": {
                 "raw_view": any(view.kind == "raw_context" for view in self.views),
                 "raw_pixel_data": profile != "report",
                 "evaluated_geometry_data": profile != "report",
                 "rerender_scene": profile == "scene",
                 "presentation": any(view.kind in ("clean", "labels", "alpha") for view in self.views), "geometry_query": False,
+                "comparison": self.comparison is not None,
                 "pixel_coverage_query": False, "playback_replay": False,
             },
             "files": hashes,
@@ -933,9 +972,56 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
     if scene is not None and (scene.capture_id != capture["capture_id"] or
                               scene.scene_digest != capture["scene_digest"]):
         raise ValueError("Packet capture identity differs from scene bundle")
+    comparison = None
+    comparison_entry = manifest.get("comparison")
+    if comparison_entry is not None:
+        from ._comparison import ComparisonArtifact, ComparisonResult
+        if (not isinstance(comparison_entry, dict) or
+                comparison_entry.get("current_view_id") not in
+                {view.view_id for view in views} or
+                not isinstance(comparison_entry.get("artifacts"), list) or
+                len(comparison_entry["artifacts"]) > 4):
+            raise ValueError("Invalid packet comparison descriptor")
+        artifacts = []
+        for index, entry in enumerate(comparison_entry["artifacts"]):
+            if not isinstance(entry, dict):
+                raise ValueError("Invalid packet comparison artifact descriptor")
+            kind = entry.get("kind")
+            relative = entry.get("path")
+            width, height = entry.get("width"), entry.get("height")
+            if (kind not in ("side_by_side", "onion_skin", "outline",
+                             "abs_diff_heatmap") or
+                    relative != f"comparison/{index:03d}-{kind}.png" or
+                    relative not in members or
+                    type(width) is not int or type(height) is not int or
+                    width <= 0 or height <= 0 or width * height > MAX_PAGE_PIXELS):
+                raise ValueError("Invalid packet comparison artifact descriptor")
+            png = members[relative]
+            if (hashes.get(relative) != entry["sha256"] or
+                    _sha(png) != entry["sha256"] or
+                    png[:16] != b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" or
+                    int.from_bytes(png[16:20], "big") != entry["width"] or
+                    int.from_bytes(png[20:24], "big") != entry["height"]):
+                raise ValueError("Invalid packet comparison artifact")
+            artifacts.append(ComparisonArtifact(entry["kind"], entry["width"],
+                                                entry["height"], png, entry["sha256"]))
+        comparison = ComparisonResult(
+            comparison_entry["current_view_id"],
+            comparison_entry["reference_view_id"],
+            comparison_entry["reference_sha256"],
+            comparison_entry["registration_status"],
+            comparison_entry["view_compatibility"],
+            comparison_entry["metrics"],
+            tuple(comparison_entry["change_bounds"]) if
+            comparison_entry["change_bounds"] is not None else None,
+            comparison_entry["contour_source"], tuple(artifacts),
+            comparison_entry["target_basis"], comparison_entry["thresholds"],
+            comparison_entry.get("registration"),
+        )
     return InspectionPacket(
         capture["capture_id"], capture["scene_digest"], capture,
         manifest["source"], tuple(manifest["objects"]), tuple(views), profile,
         authoring, evaluated, scene, False,
         manifest.get("focus_status", "not_requested"),
+        comparison,
     )
