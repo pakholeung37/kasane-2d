@@ -85,6 +85,10 @@ pub(super) fn evaluate(
     prepared: &PreparedEvaluation,
     state: &mut EvalContext<'_>,
 ) -> crate::types::Status {
+    if let Some(axes) = state.trace_axes.as_deref_mut() {
+        axes.clear();
+        axes.resize_with(prepared.transforms.len(), Vec::new);
+    }
     state
         .transforms
         .resize_with(prepared.transforms.len(), TransformState::default);
@@ -287,6 +291,36 @@ pub(super) fn evaluate(
             } else {
                 1.0
             };
+
+            if t.kind() == TransformKind::Rotation {
+                if let Some(axes) = state.trace_axes.as_deref_mut() {
+                    let axis = &mut axes[transform_slot];
+                    let theta = (transform_state.source.base_angle + transform_state.pose.angle)
+                        .to_radians();
+                    let (sin, cos) = theta.sin_cos();
+                    let reflect = if transform_state.pose.reflect_x {
+                        -1.0
+                    } else {
+                        1.0
+                    };
+                    let origin = transform_state.pose.origin;
+                    // Unit-length axis, sampled across its full extent. A warp parent can
+                    // bend this curve; transforming only the two endpoints would lie.
+                    for sample in -8..=8 {
+                        let distance = sample as f32 / 8.0 * transform_state.pose.scale;
+                        let point = PsmVec2::new(
+                            origin.x + distance * cos * reflect,
+                            origin.y + distance * sin * reflect,
+                        );
+                        let point = if t.parent_id.is_none() {
+                            point
+                        } else {
+                            state.transforms[prepared.transform_slots[t.parent()]].point(point)
+                        };
+                        axis.push(Vec2::new(point.x, point.y));
+                    }
+                }
+            }
 
             if !t.parent_id.is_none() {
                 let parent = &state.transforms[prepared.transform_slots[t.parent()]];

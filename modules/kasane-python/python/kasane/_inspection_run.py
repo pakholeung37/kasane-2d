@@ -273,6 +273,12 @@ def inspect_run(observer: Observer, session: Session, samples, *,
     if baseline_index is not None and (type(baseline_index) is not int or
                                        not 0 <= baseline_index < len(samples)):
         raise ValueError("baseline_index is outside samples")
+    geometry_channels = ("wireframe", "vertices", "deformers", "displacement", "distortion")
+    if baseline_index is None and any(channel in request.channels for channel in
+                                      ("displacement", "distortion")):
+        raise ValueError("Displacement and distortion channels require baseline_index")
+    render_request = replace(request, channels=tuple(channel for channel in request.channels
+        if channel not in ("displacement", "distortion")))
     if request.view.framing != "fixed_union":
         raise ValueError("Inspection report requires fixed_union framing")
     layout = layout or SequenceLayout()
@@ -297,6 +303,8 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                          "columns": len(layout.x_values) if isinstance(layout, GridLayout)
                          else layout.columns},
               "capabilities": {"comparison": baseline_index is not None,
+                               "evaluation_trace": False,
+                               "deformation": any(channel in request.channels for channel in ("displacement", "distortion")),
                                "geometry_query": False, "pixel_coverage_query": False,
                                "playback_replay": False},
               "resources": {"render_count": 0, "output_pixels": 0,
@@ -325,7 +333,8 @@ def inspect_run(observer: Observer, session: Session, samples, *,
     publish()
     try:
         _image_library()
-        scenes = observer.capture_scenes(session, samples)
+        scenes = observer.capture_scenes(session, samples, with_trace=any(
+            channel in request.channels for channel in geometry_channels))
         report["capture"] = scenes[0].metadata
         report["samples"] = [_sample_record(scene, index)
                              for index, scene in enumerate(scenes)]
@@ -348,7 +357,9 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                                  "roi": request.view.roi,
                                  "resolution": request.view.resolution,
                                  "presentation": request.presentation.record(),
-                                 "channels": request.channels}
+                                 "channels": request.channels,
+                                 "trace_used_during_capture": any(channel in request.channels
+                                     for channel in geometry_channels)}
         texture_bytes = sum(item["width"] * item["height"] * 4
                             for item in scenes[0].metadata["textures"])
         report["resources"]["decoded_texture_estimate_bytes"] = texture_bytes
@@ -359,7 +370,7 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                 request.limits.max_cpu_retained_bytes):
             raise _failure("OBSERVATION_BUDGET_EXCEEDED",
                            "Estimated decoded textures and images exceed CPU retained byte budget")
-        reference_packet = (observer.inspect_scene(scenes[baseline_index], request=request)
+        reference_packet = (observer.inspect_scene(scenes[baseline_index], request=render_request)
                             if baseline_index is not None else None)
         target_ids = (_focus_and_objects(scenes[baseline_index], request)[1]
                       if baseline_index is not None else ())
@@ -367,8 +378,15 @@ def inspect_run(observer: Observer, session: Session, samples, *,
             report["resources"]["render_count"] += 1 + ("alpha" in request.channels)
         for index, scene in enumerate(scenes):
             packet = (reference_packet if index == baseline_index else
-                      observer.inspect_scene(scene, request=request))
+                      observer.inspect_scene(scene, request=render_request))
             assert packet is not None
+            if (reference_packet is not None and index != baseline_index and
+                    any(channel in request.channels for channel in ("displacement", "distortion"))):
+                from ._deformation import add_baseline_diagnostics
+                packet = add_baseline_diagnostics(packet, reference_packet, request)
+                report["diagnostics"].append({"sample_index": index,
+                                              "baseline_index": baseline_index,
+                                              "deformation": packet.deformation})
             if index != baseline_index:
                 report["resources"]["render_count"] += 1 + ("alpha" in request.channels)
             report["resources"]["readback_count"] = report["resources"]["render_count"]

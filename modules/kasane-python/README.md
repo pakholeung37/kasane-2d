@@ -264,6 +264,14 @@ report on a CPU-only wheel. Packet-to-packet comparison and explicitly
 registered external reference images use `kasane.compare_observations()`;
 the full request and policy rules are in [API.md](API.md).
 
+For geometry diagnosis, add `wireframe`, `vertices`, or `deformers` to the
+inspection channels. Add `displacement` and `distortion` with
+`baseline_values` in `observer.inspect(...)` or `baseline_index` in
+`observer.inspect_run(...)`. The returned packet's `deformation` field holds
+canvas-space triangle stretch, orientation, and degeneration results. To
+request these views from a previously captured scene, capture it with
+`observer.capture_scene(..., with_trace=True)`.
+
 ## Errors and scripting
 
 SDK validation and IO errors raise `kasane.SdkFailure`. Inspect `code`,

@@ -143,6 +143,17 @@ impl NativeCapturedScene {
             .map_err(|error| PyException::new_err(error.to_string()))
     }
 
+    fn evaluation_trace_json(&self) -> PyResult<Option<String>> {
+        self.inner
+            .input()
+            .trace()
+            .map(|trace| {
+                serde_json::to_string(trace)
+                    .map_err(|error| PyException::new_err(error.to_string()))
+            })
+            .transpose()
+    }
+
     #[staticmethod]
     fn open_scene(py: Python<'_>, absolute_directory: &str) -> PyResult<Self> {
         let scene = py
@@ -333,6 +344,7 @@ impl NativeObserver {
         py: Python<'_>,
         session: &NativeSession,
         values: HashMap<String, f32>,
+        with_trace: bool,
     ) -> PyResult<NativeCapturedScene> {
         let session = session.inner.clone();
         let result = py.detach(|| {
@@ -342,8 +354,10 @@ impl NativeObserver {
             };
             let requested =
                 ObservationInput::resolve_requested(&snapshot, &values).map_err(Some)?;
-            let input =
-                ObservationInput::capture_from_snapshot(&snapshot, &requested).map_err(Some)?;
+            let input = ObservationInput::capture_from_snapshot_with_trace(
+                &snapshot, &requested, with_trace,
+            )
+            .map_err(Some)?;
             ResolvedObservation::capture(input).map_err(Some)
         });
         match result {
@@ -358,6 +372,7 @@ impl NativeObserver {
         py: Python<'_>,
         session: &NativeSession,
         samples: Vec<HashMap<String, f32>>,
+        with_trace: bool,
     ) -> PyResult<Vec<Py<NativeCapturedScene>>> {
         let session = session.inner.clone();
         let result = py.detach(|| {
@@ -370,7 +385,9 @@ impl NativeObserver {
                 .map(|values| ObservationInput::resolve_requested(&snapshot, values))
                 .collect::<Result<Vec<_>, _>>()
                 .map_err(Some)?;
-            let inputs = ObservationInput::capture_samples(&snapshot, &requested).map_err(Some)?;
+            let inputs =
+                ObservationInput::capture_samples_with_trace(&snapshot, &requested, with_trace)
+                    .map_err(Some)?;
             ResolvedObservation::capture_many(inputs).map_err(Some)
         });
         let scenes = match result {
@@ -390,6 +407,7 @@ impl NativeObserver {
         session: &NativeSession,
         preview: &NativeMotionPreview,
         apply_model_opacity: bool,
+        with_trace: bool,
     ) -> PyResult<NativeCapturedScene> {
         let session = session.inner.clone();
         let result = py.detach(|| {
@@ -397,10 +415,11 @@ impl NativeObserver {
                 let session = session.lock().map_err(|_| None)?;
                 session.read_snapshot()
             };
-            let input = ObservationInput::capture_motion_from_snapshot(
+            let input = ObservationInput::capture_motion_from_snapshot_with_trace(
                 &snapshot,
                 preview.inner(),
                 apply_model_opacity,
+                with_trace,
             )
             .map_err(Some)?;
             ResolvedObservation::capture(input).map_err(Some)

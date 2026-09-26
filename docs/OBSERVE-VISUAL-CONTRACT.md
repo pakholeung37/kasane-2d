@@ -6,8 +6,9 @@ capture, ROI rerender, scene bundle, canonical digest, raw packet, and bounded
 save-profile slice is available. O2 adds presentation, evaluated-geometry
 focus, fixed/follow sample views, numeric labels, and an object table. O3 adds
 registered image comparison, explicit two-axis layouts, paged contact sheets,
-and a recoverable report v2. Query and diagnostic channels remain delivery
-targets. The existing
+and a recoverable report v2. O4 adds optional Rust evaluation traces,
+geometry overlays, and canvas-space deformation diagnostics. Queries and
+isolation remain delivery targets. The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -118,7 +119,9 @@ Uncaptured capability returns `CAPTURE_NOT_AVAILABLE`, never a fresh snapshot.
 
 The O1 raw subset uses `RawInspectionRequest(roi, resolution,
 padding_canvas)`. O2 `InspectionRequest` supports `context` mode with clean,
-labels, and alpha channels; unsupported diagnostic modes/channels fail early.
+labels, and alpha channels. O4 adds wireframe, vertices, deformers,
+displacement, and distortion channels; the last two require an explicit
+baseline. Isolated/X-ray modes remain unsupported.
 `inspect_samples` freezes a batch once and applies fixed-union or follow framing.
 The packet manifest remains `kasane-inspection-packet` schema 2 with per-view
 presentation policy, object marks, focus status and explicit capability flags.

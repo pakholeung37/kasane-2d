@@ -176,3 +176,44 @@ diagnostic/query channels remain later-stage work.
 The built wheels are in `/tmp/kasane-observe-o3-wheel/` and
 `/tmp/kasane-observe-o3-cpu-wheel/`. These paths are local evidence, not
 portable golden artifacts.
+
+## O4 evaluated geometry and deformer diagnostics (2026-09-26)
+
+`FrameEvaluator::evaluate_with_trace` adds a same-pass, opt-in Rust
+`EvaluationTrace`; ordinary evaluation leaves the trace buffer unallocated.
+The trace pairs final drawable positions with source vertex IDs, validates
+triangle/index correspondence after the renderer's winding reversal, and
+records ordered triangle IDs plus a topology SHA-256. Final positions include
+BlendShape, transform, and glue evaluation. Each deformer records enabled
+state, parent chain, evaluated warp controls and local control indices.
+Rotation axes are sampled at 17 points through the actual parent, so a
+multi-column warp can bend the displayed axis. Animation capture can request
+the trace using its actual preview parameter state and Part opacity frame.
+Scene bundles and analysis packets retain the optional trace with their
+existing content/hash checks; report packets retain overlays and numeric
+diagnostics without carrying the full trace.
+
+New context channels are `wireframe`, sparse `vertices`, and `deformers`.
+`displacement` and `distortion` require a baseline sample; they add arrows and
+abnormal triangle outlines without changing the clean render. Each overlay
+records segment and label omissions under a 20,000-segment density limit.
+`Observer.inspect(..., baseline_values=...)` and `inspect_run` with
+`baseline_index` report canvas-space triangle `F=C*inverse(B)`, determinant,
+two singular values, degeneration, orientation reversal, and threshold flags.
+The defaults are min stretch below 0.5 and max stretch above 2.0. Twice-area
+epsilon is `max(1e-12 px², 1e-8 * baseline maximum edge length² in px²)`;
+an uninvertible baseline has no finite score. Topology or vertex identity
+changes report `TOPOLOGY_MISMATCH`. A known rotation reflection toggle is
+separate from a numeric orientation reversal. Displacement represents the
+whole evaluated result, including glue and BlendShape, not a keyform delta.
+
+| O4 evidence | Result |
+| --- | --- |
+| `cargo test --workspace --locked -q`, `cargo fmt --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed |
+| release observe wheel, CPython 3.14 | 27 Observe tests passed, including 5 O4 cases for parent-warp axis sampling, animation trace, BlendShape/glue final positions, rigid/reflect/stretch/degenerate numbers, camera independence, topology mismatch, scene round trip, and run reopening |
+| release CPU-only wheel, CPython 3.14 | 52 CPU tests passed; reopened O4 analysis packet and v2 report with deformation data and overlay views |
+| visual QA | inspected wireframe, vertex, displacement and deformer views under `/tmp/kasane-o4-qa/` |
+| default raw path | all five SHA-256 values match the O3 Framework-filtering baseline in `/tmp/kasane-observe-o3-baseline.json` |
+
+Built wheels are in `/tmp/kasane-observe-o4-wheel/` and
+`/tmp/kasane-observe-o4-cpu-wheel/`. These local paths are test evidence.

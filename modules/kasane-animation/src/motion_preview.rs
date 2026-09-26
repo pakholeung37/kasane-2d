@@ -1,7 +1,7 @@
 //! Detached MotionBehavior V2 preview for typed project clips.
 use std::{collections::BTreeMap, sync::Arc};
 
-use kasane_core::{evaluate_frame, Document, DrawableFrame, PreviewValues};
+use kasane_core::{Document, DrawableFrame, EvaluationTrace, FrameEvaluator, PreviewValues};
 
 use crate::expression::ExpressionRuntime;
 use crate::motion_runtime::MotionRuntime;
@@ -526,6 +526,20 @@ impl MotionPreview {
     /// Model opacity remains separate in [`MotionSnapshot::model_opacity`].
     /// Does not advance playback. Returns [`AnimationError::Evaluation`] on failure.
     pub fn evaluate_drawables(&self) -> Result<DrawableFrame, AnimationError> {
+        self.evaluate_drawables_inner(false).map(|(frame, _)| frame)
+    }
+
+    pub fn evaluate_drawables_with_trace(
+        &self,
+    ) -> Result<(DrawableFrame, EvaluationTrace), AnimationError> {
+        self.evaluate_drawables_inner(true)
+            .map(|(frame, trace)| (frame, trace.expect("trace requested")))
+    }
+
+    fn evaluate_drawables_inner(
+        &self,
+        with_trace: bool,
+    ) -> Result<(DrawableFrame, Option<EvaluationTrace>), AnimationError> {
         let values: PreviewValues = self
             .snapshot
             .parameters
@@ -533,7 +547,13 @@ impl MotionPreview {
             .map(|(id, value)| (id.clone(), *value))
             .collect();
         let mut frame = DrawableFrame::default();
-        let status = evaluate_frame(&self.document, &values, &mut frame);
+        let mut trace = EvaluationTrace::default();
+        let mut evaluator = FrameEvaluator::default();
+        let status = if with_trace {
+            evaluator.evaluate_with_trace(&self.document, &values, &mut frame, &mut trace)
+        } else {
+            evaluator.evaluate(&self.document, &values, &mut frame)
+        };
         if status.is_ok() {
             // Core evaluation does not carry runtime Part opacity. Apply it to
             // each drawable once; Offscreen opacity is an independent factor.
@@ -554,7 +574,7 @@ impl MotionPreview {
                 }
                 drawable.opacity *= opacity;
             }
-            Ok(frame)
+            Ok((frame, with_trace.then_some(trace)))
         } else {
             Err(AnimationError::Evaluation(format!(
                 "{}: {}",

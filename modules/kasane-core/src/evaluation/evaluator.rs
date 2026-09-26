@@ -4,6 +4,7 @@ use crate::document::Document;
 use crate::types::Status;
 
 use super::selection::Selection;
+use super::trace::{build_trace, EvaluationTrace};
 use super::transforms::TransformState;
 use super::types::{DrawableFrame, PreviewValues};
 
@@ -14,6 +15,7 @@ pub(super) struct EvalContext<'a> {
     pub(super) part_orders: &'a mut HashMap<String, i32>,
     pub(super) selection: &'a mut Selection,
     pub(super) transforms: &'a mut Vec<TransformState>,
+    pub(super) trace_axes: Option<&'a mut Vec<Vec<crate::types::Vec2>>>,
     pub(super) points: &'a mut Vec<crate::types::Vec2>,
     pub(super) orders: &'a mut Vec<i32>,
     pub(super) offscreen_orders: &'a mut Vec<i32>,
@@ -31,6 +33,7 @@ pub struct FrameEvaluator {
     part_orders: HashMap<String, i32>,
     selection: Selection,
     transforms: Vec<TransformState>,
+    trace_axes: Vec<Vec<crate::types::Vec2>>,
     points: Vec<crate::types::Vec2>,
     orders: Vec<i32>,
     offscreen_orders: Vec<i32>,
@@ -49,6 +52,28 @@ impl FrameEvaluator {
         self.evaluate_with_hidden_geometry(doc, preview, out, false)
     }
 
+    /// Evaluate once and retain geometry evidence only for this explicit call.
+    pub fn evaluate_with_trace(
+        &mut self,
+        doc: &Document,
+        preview: &PreviewValues,
+        out: &mut DrawableFrame,
+        trace: &mut EvaluationTrace,
+    ) -> Status {
+        let status = evaluate_into(doc, preview, self, false, true);
+        if !status.is_ok() {
+            return status;
+        }
+        match build_trace(doc, &self.scratch, &self.transforms, &self.trace_axes) {
+            Ok(next_trace) => {
+                std::mem::swap(out, &mut self.scratch);
+                *trace = next_trace;
+                Status::ok()
+            }
+            Err(status) => status,
+        }
+    }
+
     fn evaluate_with_hidden_geometry(
         &mut self,
         doc: &Document,
@@ -56,7 +81,7 @@ impl FrameEvaluator {
         out: &mut DrawableFrame,
         include_hidden_geometry: bool,
     ) -> Status {
-        let status = evaluate_into(doc, preview, self, include_hidden_geometry);
+        let status = evaluate_into(doc, preview, self, include_hidden_geometry, false);
         if status.is_ok() {
             std::mem::swap(out, &mut self.scratch);
         }
@@ -91,6 +116,7 @@ fn evaluate_into(
     preview: &PreviewValues,
     workspace: &mut FrameEvaluator,
     include_hidden_geometry: bool,
+    capture_trace: bool,
 ) -> Status {
     let FrameEvaluator {
         scratch: frame,
@@ -99,6 +125,7 @@ fn evaluate_into(
         part_orders,
         selection,
         transforms,
+        trace_axes,
         points,
         orders,
         offscreen_orders,
@@ -130,6 +157,7 @@ fn evaluate_into(
         part_orders,
         selection,
         transforms,
+        trace_axes: capture_trace.then_some(trace_axes),
         points,
         orders,
         offscreen_orders,

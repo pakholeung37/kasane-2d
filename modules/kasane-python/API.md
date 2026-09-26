@@ -462,13 +462,13 @@ short `evaluate()` when only runtime positions are needed.
 | `frame.save_png(absolute_path)` | Write the PNG bytes to disk. |
 | `observer.set_fit_long_side(value)` | Change the view's fitted long side. |
 | `observer.observe_run(session, samples, output, focus=())` | Render one or more parameter maps into a unique child of absolute `output`; optionally crop visible drawable IDs. Return `ObservationRun`. |
-| `observer.capture_scene(session, values=None)` | Freeze one evaluated frame and all decoded texture bytes in `CapturedScene`; later edits and asset changes do not change it. |
-| `observer.capture_scenes(session, samples)` | Freeze 1–64 parameter samples against one detached document snapshot; resolve names there and decode the union of textures once. All returned scenes share a capture ID. |
-| `observer.capture_animation_scene(session, preview, apply_model_opacity=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; reject a stale preview. |
+| `observer.capture_scene(session, values=None, *, with_trace=False)` | Freeze one evaluated frame and decoded textures; optional O4 trace records final mesh/deformer geometry from that evaluation. |
+| `observer.capture_scenes(session, samples, *, with_trace=False)` | Freeze 1–64 parameter samples against one detached document snapshot; optional trace is captured per sample. All scenes share a capture ID and decoded texture union. |
+| `observer.capture_animation_scene(session, preview, *, apply_model_opacity=False, with_trace=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; optional trace uses the preview's parameter values. |
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
-| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...), baseline_values=None)` | Return a raw O1 view or O2 clean/labels/alpha views. O3 `baseline_values` freezes both states from one snapshot and attaches a saved comparison to the current packet. |
+| `observer.inspect(session, values=None, *, request=RawInspectionRequest(...) or InspectionRequest(...), baseline_values=None)` | Return raw, presentation, or O4 geometry views. `baseline_values` freezes both states from one snapshot and attaches registered image comparison plus requested deformation diagnostics. |
 | `observer.inspect_animation(session, preview, *, request, apply_model_opacity=False)` | Capture the actual animation frame with the same request choices and current operation identity. |
 | `observer.inspect_samples(session, samples, *, request=InspectionRequest(...))` | Freeze 1–64 parameter samples once; use a fixed union ROI or follow each sample's evaluated geometry. |
 | `observer.inspect_scenes(scenes, *, request=InspectionRequest(...))` | Present already frozen samples sharing one capture ID. |
@@ -495,7 +495,9 @@ previous single-sample hash and pixels. Opening a v1
 bundle computes the scene digest and assigns a new capture ID.
 `RawInspectionRequest` retains the legacy transparent raw policy. O2's
 `InspectionRequest` supports `context` mode and `clean`, `labels`, `alpha`
-channels. Light, dark and checker backgrounds are drawn into the renderer's
+channels. O4 adds `wireframe`, sparse `vertices`, and `deformers` overlays.
+`displacement` and `distortion` require `baseline_values` or a run
+`baseline_index`. Light, dark and checker backgrounds are drawn into the renderer's
 main scene target before destination-reading blends. `PresentationSpec`
 records actual RGB8 colors, checker tile/origin, and `renderer_native_v1`
 color policy; transparent straight-alpha PNG is available for normal blends
@@ -530,7 +532,7 @@ transparent alpha when available. An explicit canvas ROI or evaluated mesh
 union defines the target; its complement is the non-target region. Without a
 target, only the whole-view metric is available. The heatmap retains a fixed
 0–255 scale and records display gain. No automatic alignment or color
-normalization is applied. Geometry/pixel queries and diagnostic modes/channels
+normalization is applied. Geometry/pixel queries and isolated/X-ray modes
 remain later-stage work; unsupported requests fail explicitly.
 `packet.capabilities` marks query/playback channels unavailable.
 An inline baseline comparison is included in all packet save profiles and can
@@ -548,6 +550,31 @@ mesh/Part/transform/binding and offscreen/glue/blend source records from the
 same document revision as the frame; it does not yet report selected keyform
 interpolation weights. `CapturedScene.metadata.snapshot_clone_ns` records the
 cost of copying the authoring document for the read-only capture.
+
+O4 `CapturedScene.evaluation_trace` is `None` unless `with_trace=True` or an
+inspection requests a geometry channel. The Rust evaluator records each
+drawable's final positions paired with authoring vertex IDs and ordered
+triangle triples, plus a topology SHA-256. Positions include deformation,
+BlendShape and glue. Transform records include evaluated warp controls,
+deformer-local control indices, parent chain, reflection parity, and a
+17-point rotation axis sampled through its actual parent. They use runtime
+canvas units with Y up; view mapping converts them to source canvas pixels.
+The normal evaluate path does not retain trace storage. Scene/analysis packet
+profiles save the trace; report profiles save derived overlays and numeric
+diagnostics without the full trace.
+
+For a baseline, `packet.deformation` reports per-triangle `F=C*inverse(B)` in
+source canvas pixels, its determinant, two singular values, and flags.
+Thresholds default to minimum stretch below `0.5` and maximum above `2.0`
+and come from `DiagnosticSpec`. Baseline and current degeneration are separate;
+an uninvertible baseline reports no finite deformation score. Twice-area
+epsilon is `max(1e-12 px², 1e-8 * baseline maximum edge length² in px²)`.
+Topology hash or vertex identity changes return `TOPOLOGY_MISMATCH`.
+`orientation_reversal` is reported without an error judgment;
+`confirmed_reflection_source` is added only when the evaluated rotation
+reflection parity changes. Vertex displacement includes all deformation and
+glue, so it does not identify an individual keyform edit. Overlay records
+include drawn/omitted segment counts under a 20,000-segment budget.
 
 ```python
 with kasane.Observer(256, 256, 256) as observer:

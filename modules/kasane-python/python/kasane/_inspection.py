@@ -195,8 +195,8 @@ class OverlaySpec:
     def __post_init__(self) -> None:
         if type(self.max_labels) is not int or not 0 <= self.max_labels <= 64:
             raise ValueError("max_labels must be 0..64")
-        if self.vertex_ids:
-            raise ValueError("Vertex labels require the later geometry-trace stage")
+        if len(self.vertex_ids) > 64 or any(type(value) is not int or value < 0 for value in self.vertex_ids):
+            raise ValueError("Vertex labels require at most 64 nonnegative vertex IDs")
 
 
 @dataclass(frozen=True)
@@ -212,8 +212,8 @@ class DiagnosticSpec:
                 not 0 <= self.alpha_threshold <= 1 or self.min_stretch <= 0 or
                 self.max_stretch < 1):
             raise ValueError("Invalid diagnostic thresholds")
-        if self.trace_fields:
-            raise ValueError("Evaluation traces require the later geometry stage")
+        if any(field not in ("meshes", "transforms") for field in self.trace_fields):
+            raise ValueError("Unsupported trace field")
 
 
 @dataclass(frozen=True)
@@ -255,7 +255,8 @@ class InspectionRequest:
         if self.mode != "context":
             raise ValueError("O2 inspection supports context mode")
         if not self.channels or len(set(self.channels)) != len(self.channels) or any(
-            channel not in ("clean", "labels", "alpha") for channel in self.channels
+            channel not in ("clean", "labels", "alpha", "wireframe", "vertices",
+                            "deformers", "displacement", "distortion") for channel in self.channels
         ):
             raise ValueError("O2 channels are clean, labels and alpha")
         if "clean" not in self.channels:
@@ -360,6 +361,8 @@ class InspectionPacket:
     _closed: bool = False
     focus_status: str = "not_requested"
     comparison: ComparisonResult | None = None
+    evaluation_trace: dict | None = None
+    deformation: dict | None = None
 
     @property
     def source_kind(self) -> str:
@@ -390,6 +393,8 @@ class InspectionPacket:
             "rerender_scene": self._scene is not None and not self._closed,
             "presentation": any(view.kind in ("clean", "labels", "alpha") for view in self.views),
             "comparison": self.comparison is not None,
+            "evaluation_trace": self.evaluation_trace is not None,
+            "deformation": self.deformation is not None,
             "geometry_query": False,
             "pixel_coverage_query": False,
             "playback_replay": False,
@@ -469,8 +474,11 @@ class InspectionPacket:
                              raw_byte_order="not_applicable")
             view_entries.append(entry)
         if profile != "report":
-            for relative, data in (("authoring.json", self.authoring),
-                                   ("evaluated-frame.json", self.evaluated_frame)):
+            data_files = [("authoring.json", self.authoring),
+                          ("evaluated-frame.json", self.evaluated_frame)]
+            if self.evaluation_trace is not None:
+                data_files.append(("evaluation-trace.json", self.evaluation_trace))
+            for relative, data in data_files:
                 content = _json(data)
                 _write(absolute_directory / relative, content)
                 hashes[relative] = _sha(content)
@@ -514,6 +522,7 @@ class InspectionPacket:
             "focus_status": self.focus_status,
             "objects": self.objects, "views": view_entries,
             "comparison": comparison_record,
+            "deformation": self.deformation,
             "capabilities": {
                 "raw_view": any(view.kind == "raw_context" for view in self.views),
                 "raw_pixel_data": profile != "report",
@@ -521,6 +530,8 @@ class InspectionPacket:
                 "rerender_scene": profile == "scene",
                 "presentation": any(view.kind in ("clean", "labels", "alpha") for view in self.views), "geometry_query": False,
                 "comparison": self.comparison is not None,
+                "evaluation_trace": self.evaluation_trace is not None and profile != "report",
+                "deformation": self.deformation is not None,
                 "pixel_coverage_query": False, "playback_replay": False,
             },
             "files": hashes,
@@ -833,7 +844,11 @@ def presentation_packet(scene: CapturedScene, clean_render: RenderedSceneView,
                 focus_status = "outside_view"
             else:
                 focus_status = "visible"
-    return replace(packet, objects=objects, views=tuple(views), focus_status=focus_status)
+    packet = replace(packet, objects=objects, views=tuple(views), focus_status=focus_status)
+    if any(channel in request.channels for channel in ("wireframe", "vertices", "deformers")):
+        from ._deformation import add_geometry_views
+        packet = add_geometry_views(packet, request)
+    return packet
 
 
 def view_from_render(rendered: RenderedSceneView, sample_index: int = 0) -> InspectionView:
@@ -852,7 +867,7 @@ def packet_from_scene(scene: CapturedScene, rendered: RenderedSceneView) -> Insp
     return InspectionPacket(
         scene.capture_id, scene.scene_digest, scene.metadata, scene.source,
         _objects(authoring), (view_from_render(rendered),), "scene", authoring,
-        scene.evaluated_frame, scene,
+        scene.evaluated_frame, scene, evaluation_trace=scene.evaluation_trace,
     )
 
 
@@ -904,7 +919,9 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
         members[path] = content
     views = []
     for entry in entries:
-        if entry.get("kind") not in ("raw_context", "clean", "labels", "alpha"):
+        if entry.get("kind") not in ("raw_context", "clean", "labels", "alpha",
+                                     "wireframe", "vertices", "deformers", "displacement",
+                                     "distortion"):
             raise ValueError("Unsupported packet view kind")
         if entry.get("mode", "context") != "context" or entry.get("status", "complete") != "complete":
             raise ValueError("Unsupported packet view mode or status")
@@ -960,6 +977,7 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
         raise ValueError("Packet artifact pixel budget exceeded")
     authoring = _parse_json(members["authoring.json"]) if profile != "report" else None
     evaluated = _parse_json(members["evaluated-frame.json"]) if profile != "report" else None
+    trace = _parse_json(members["evaluation-trace.json"]) if "evaluation-trace.json" in members else None
     if profile == "scene" and (directory / "scene").is_symlink():
         raise ValueError("Scene bundle directory must not be a symlink")
     scene = None
@@ -1024,4 +1042,6 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
         authoring, evaluated, scene, False,
         manifest.get("focus_status", "not_requested"),
         comparison,
+        trace,
+        manifest.get("deformation"),
     )

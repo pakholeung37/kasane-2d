@@ -11,8 +11,9 @@ use std::sync::Arc;
 use kasane_animation::{MotionOperation, MotionPreview, MotionSnapshot};
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::{
-    BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, DrawableFrame, Glue, ImageAsset,
-    Mesh, MeshBinding, Offscreen, Parameter, Part, PreviewValues, SceneBinding, Transform,
+    BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, DrawableFrame, EvaluationTrace,
+    Glue, ImageAsset, Mesh, MeshBinding, Offscreen, Parameter, Part, PreviewValues, SceneBinding,
+    Transform,
 };
 use kasane_project::{read_project_asset, AssetData};
 use kasane_sdk::{AuthoringSession, AuthoringSnapshot, Version};
@@ -34,6 +35,7 @@ pub struct ObservationInput {
     document_id: String,
     requested: PreviewValues,
     frame: DrawableFrame,
+    trace: Option<EvaluationTrace>,
     assets: Vec<ImageAsset>,
     root: PathBuf,
     source: ObservationSource,
@@ -300,6 +302,9 @@ impl ObservationInput {
     pub fn frame(&self) -> &DrawableFrame {
         &self.frame
     }
+    pub fn trace(&self) -> Option<&EvaluationTrace> {
+        self.trace.as_ref()
+    }
     pub fn assets(&self) -> &[ImageAsset] {
         &self.assets
     }
@@ -325,17 +330,31 @@ impl ObservationInput {
         snapshot: &AuthoringSnapshot,
         requested: &PreviewValues,
     ) -> Result<Self, ObservationError> {
-        let frame = snapshot
-            .evaluate(requested)
-            .map_err(|error| ObservationError {
-                code: error.code.into(),
-                message: error.message.into(),
-                asset_id: error.object_ids.first().cloned(),
-            })?;
+        Self::capture_from_snapshot_with_trace(snapshot, requested, false)
+    }
+
+    pub fn capture_from_snapshot_with_trace(
+        snapshot: &AuthoringSnapshot,
+        requested: &PreviewValues,
+        with_trace: bool,
+    ) -> Result<Self, ObservationError> {
+        let (frame, trace) = (if with_trace {
+            snapshot
+                .evaluate_with_trace(requested)
+                .map(|(frame, trace)| (frame, Some(trace)))
+        } else {
+            snapshot.evaluate(requested).map(|frame| (frame, None))
+        })
+        .map_err(|error| ObservationError {
+            code: error.code.into(),
+            message: error.message.into(),
+            asset_id: error.object_ids.first().cloned(),
+        })?;
         Self::capture_frame(
             snapshot,
             requested.clone(),
             frame,
+            trace,
             ObservationSource::Parameters,
         )
     }
@@ -344,6 +363,14 @@ impl ObservationInput {
     pub fn capture_samples(
         snapshot: &AuthoringSnapshot,
         samples: &[PreviewValues],
+    ) -> Result<Vec<Self>, ObservationError> {
+        Self::capture_samples_with_trace(snapshot, samples, false)
+    }
+
+    pub fn capture_samples_with_trace(
+        snapshot: &AuthoringSnapshot,
+        samples: &[PreviewValues],
+        with_trace: bool,
     ) -> Result<Vec<Self>, ObservationError> {
         if samples.is_empty() || samples.len() > 64 {
             return Err(ObservationError {
@@ -354,7 +381,7 @@ impl ObservationInput {
         }
         samples
             .iter()
-            .map(|values| Self::capture_from_snapshot(snapshot, values))
+            .map(|values| Self::capture_from_snapshot_with_trace(snapshot, values, with_trace))
             .collect()
     }
 
@@ -385,6 +412,15 @@ impl ObservationInput {
         preview: &MotionPreview,
         apply_model_opacity: bool,
     ) -> Result<Self, ObservationError> {
+        Self::capture_motion_from_snapshot_with_trace(snapshot, preview, apply_model_opacity, false)
+    }
+
+    pub fn capture_motion_from_snapshot_with_trace(
+        snapshot: &AuthoringSnapshot,
+        preview: &MotionPreview,
+        apply_model_opacity: bool,
+        with_trace: bool,
+    ) -> Result<Self, ObservationError> {
         let version = snapshot.version();
         if preview.source_identity() != Some((version.session_id, version.generation))
             || preview.document_revision() != version.revision
@@ -402,13 +438,18 @@ impl ObservationInput {
             .iter()
             .map(|(id, value)| (id.clone(), *value))
             .collect();
-        let mut frame = preview
-            .evaluate_drawables()
-            .map_err(|error| ObservationError {
-                code: "ANIMATION_EVALUATION".into(),
-                message: error.to_string(),
-                asset_id: None,
-            })?;
+        let (mut frame, trace) = (if with_trace {
+            preview
+                .evaluate_drawables_with_trace()
+                .map(|(frame, trace)| (frame, Some(trace)))
+        } else {
+            preview.evaluate_drawables().map(|frame| (frame, None))
+        })
+        .map_err(|error| ObservationError {
+            code: "ANIMATION_EVALUATION".into(),
+            message: error.to_string(),
+            asset_id: None,
+        })?;
         if apply_model_opacity {
             let opacity = preview.snapshot().model_opacity;
             if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
@@ -426,6 +467,7 @@ impl ObservationInput {
             snapshot,
             requested,
             frame,
+            trace,
             ObservationSource::Animation {
                 snapshot: Box::new(preview.snapshot().clone()),
                 apply_model_opacity,
@@ -439,6 +481,7 @@ impl ObservationInput {
         snapshot: &AuthoringSnapshot,
         requested: PreviewValues,
         frame: DrawableFrame,
+        trace: Option<EvaluationTrace>,
         source: ObservationSource,
     ) -> Result<Self, ObservationError> {
         let version = snapshot.version();
@@ -585,6 +628,7 @@ impl ObservationInput {
             document_id: document.id().to_owned(),
             requested,
             frame,
+            trace,
             assets,
             root,
             source,

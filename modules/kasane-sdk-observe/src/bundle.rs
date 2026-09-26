@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::Path;
 
-use kasane_core::{DrawableFrame, ImageAsset};
+use kasane_core::{DrawableFrame, EvaluationTrace, ImageAsset};
 use kasane_project::{decode_png, AssetData};
 use kasane_sdk::Version;
 use serde::{Deserialize, Serialize};
@@ -37,6 +37,8 @@ struct SceneBundle {
     source: ObservationSource,
     authoring: CapturedAuthoring,
     frame: DrawableFrame,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trace: Option<EvaluationTrace>,
     textures: Vec<BundleTexture>,
 }
 
@@ -176,6 +178,7 @@ impl ResolvedObservation {
             source: input.source.clone(),
             authoring: input.authoring.clone(),
             frame: input.frame.clone(),
+            trace: input.trace.clone(),
             textures: self
                 .textures
                 .iter()
@@ -408,6 +411,7 @@ impl ResolvedObservation {
                 source: bundle.source,
                 authoring: bundle.authoring,
                 frame: bundle.frame,
+                trace: bundle.trace,
                 assets,
                 root: directory.to_path_buf(),
             },
@@ -458,6 +462,7 @@ mod tests {
                 blend_bindings: vec![],
             },
             frame: DrawableFrame::default(),
+            trace: None,
             textures: vec![],
         }
     }

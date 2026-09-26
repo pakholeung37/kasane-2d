@@ -15,8 +15,8 @@ use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::preview::PreviewState;
 use kasane_core::{
     evaluate_frame, BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, Canvas,
-    ChangeKind, Document, DrawableFrame, Glue, ImageAsset, Mesh, MeshBinding, Offscreen, Parameter,
-    Part, PreviewValues, SceneBinding, Transform,
+    ChangeKind, Document, DrawableFrame, EvaluationTrace, FrameEvaluator, Glue, ImageAsset, Mesh,
+    MeshBinding, Offscreen, Parameter, Part, PreviewValues, SceneBinding, Transform,
 };
 use kasane_project::{
     export_cdi3, export_expression3, export_motion3, export_physics3, export_pose3,
@@ -74,6 +74,29 @@ impl AuthoringSnapshot {
             Ok(frame)
         } else {
             Err(SdkError::from_status(status, "evaluate", Vec::new()))
+        }
+    }
+
+    pub fn evaluate_with_trace(
+        &self,
+        values: &PreviewValues,
+    ) -> Result<(DrawableFrame, EvaluationTrace), SdkError> {
+        let mut frame = DrawableFrame::default();
+        let mut trace = EvaluationTrace::default();
+        let status = FrameEvaluator::default().evaluate_with_trace(
+            &self.document,
+            values,
+            &mut frame,
+            &mut trace,
+        );
+        if status.is_ok() {
+            Ok((frame, trace))
+        } else {
+            Err(SdkError::from_status(
+                status,
+                "evaluate_with_trace",
+                Vec::new(),
+            ))
         }
     }
 }

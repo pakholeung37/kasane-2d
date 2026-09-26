@@ -71,16 +71,18 @@ class Observer:
         return _frame_from_native(raw)
 
     def capture_scene(
-        self, session: Session, values: Mapping[str, float] | None = None,
+        self, session: Session, values: Mapping[str, float] | None = None, *,
+        with_trace: bool = False,
     ) -> CapturedScene:
         """Freeze one evaluated scene and its decoded textures for later views."""
         native = self._native.capture_scene(
-            session._native, dict(values or {})
+            session._native, dict(values or {}), with_trace
         )
         return CapturedScene(native)
 
     def capture_scenes(
-        self, session: Session, samples: Sequence[Mapping[str, float]],
+        self, session: Session, samples: Sequence[Mapping[str, float]], *,
+        with_trace: bool = False,
     ) -> tuple[CapturedScene, ...]:
         """Freeze 1–64 parameter samples from one document snapshot.
 
@@ -90,11 +92,11 @@ class Observer:
         if not 1 <= len(samples) <= 64:
             raise ValueError("capture_scenes requires 1–64 samples")
         return tuple(CapturedScene(native) for native in
-                     self._native.capture_scenes(session._native, [dict(item) for item in samples]))
+                     self._native.capture_scenes(session._native, [dict(item) for item in samples], with_trace))
 
     def capture_animation_scene(
         self, session: Session, preview: MotionPreview, *,
-        apply_model_opacity: bool = False,
+        apply_model_opacity: bool = False, with_trace: bool = False,
     ) -> CapturedScene:
         """Freeze the preview's actual Motion/Expression/Physics/Pose frame.
 
@@ -102,7 +104,7 @@ class Observer:
         current snapshot and Model opacity policy, but no past update journal.
         """
         native = self._native.capture_animation_scene(
-            session._native, preview._native, apply_model_opacity
+            session._native, preview._native, apply_model_opacity, with_trace
         )
         return CapturedScene(native)
 
@@ -145,6 +147,8 @@ class Observer:
     ) -> InspectionPacket:
         """Create a raw or presented packet from a frozen scene."""
         if isinstance(request, InspectionRequest):
+            if any(channel in request.channels for channel in ("displacement", "distortion")):
+                raise ValueError("Displacement and distortion require a baseline packet")
             roi, selected, objects = _focus_and_objects(scene, request)
             rendered = self.render_presentation_scene(
                 scene, roi=roi, resolution=request.view.resolution,
@@ -170,13 +174,25 @@ class Observer:
     ) -> InspectionPacket:
         """Freeze one frame, optionally comparing a baseline from the same snapshot."""
         if baseline_values is None:
-            return self.inspect_scene(self.capture_scene(session, values), request=request)
+            if isinstance(request, InspectionRequest) and any(
+                channel in request.channels for channel in ("displacement", "distortion")
+            ):
+                raise ValueError("Displacement and distortion require baseline_values")
+            with_trace = isinstance(request, InspectionRequest) and any(
+                channel in request.channels for channel in ("wireframe", "vertices", "deformers")
+            )
+            return self.inspect_scene(self.capture_scene(session, values, with_trace=with_trace), request=request)
         from ._comparison import CompareOptions, compare_observations
         if isinstance(request, InspectionRequest) and request.view.framing != "fixed_union":
             raise ValueError("Baseline comparison requires fixed_union framing")
-        scenes = self.capture_scenes(session, [baseline_values, values or {}])
+        scenes = self.capture_scenes(session, [baseline_values, values or {}],
+                                     with_trace=isinstance(request, InspectionRequest) and any(
+                                         channel in request.channels for channel in
+                                         ("wireframe", "vertices", "deformers", "displacement", "distortion")))
         if isinstance(request, InspectionRequest):
-            baseline, current = self.inspect_scenes(scenes, request=request)
+            render_request = replace(request, channels=tuple(channel for channel in
+                request.channels if channel not in ("displacement", "distortion")))
+            baseline, current = self.inspect_scenes(scenes, request=render_request)
             located_request = replace(
                 request, view=replace(request.view, roi=current.views[0].requested_roi),
             )
@@ -186,9 +202,15 @@ class Observer:
             baseline = self.inspect_scene(scenes[0], request=request)
             current = self.inspect_scene(scenes[1], request=request)
             options = CompareOptions()
-        return replace(current, comparison=compare_observations(
+        current = replace(current, comparison=compare_observations(
             current, baseline, options=options,
         ))
+        if isinstance(request, InspectionRequest) and any(
+            channel in request.channels for channel in ("displacement", "distortion")
+        ):
+            from ._deformation import add_baseline_diagnostics
+            current = add_baseline_diagnostics(current, baseline, request)
+        return current
 
     def inspect_animation(
         self, session: Session, preview: MotionPreview, *,
@@ -197,6 +219,9 @@ class Observer:
         """Freeze the preview's actual current frame without advancing it."""
         scene = self.capture_animation_scene(
             session, preview, apply_model_opacity=apply_model_opacity,
+            with_trace=isinstance(request, InspectionRequest) and any(
+                channel in request.channels for channel in ("wireframe", "vertices", "deformers")
+            ),
         )
         return self.inspect_scene(scene, request=request)
 
@@ -242,7 +267,9 @@ class Observer:
         """Freeze parameter samples once, then present them in one view policy."""
         if not 1 <= len(samples) <= request.limits.max_samples:
             raise ValueError("inspect_samples exceeds the sample limit")
-        return self.inspect_scenes(self.capture_scenes(session, samples), request=request)
+        return self.inspect_scenes(self.capture_scenes(session, samples, with_trace=any(
+            channel in request.channels for channel in ("wireframe", "vertices", "deformers")
+        )), request=request)
 
     def inspect_run(
         self, session: Session, samples: Sequence[Mapping[str, float]], *,
@@ -456,6 +483,12 @@ class CapturedScene:
     def evaluated_frame(self) -> dict:
         """The evaluated geometry and draw plan used by the renderer."""
         return json.loads(self._native.evaluated_frame_json())
+
+    @property
+    def evaluation_trace(self) -> dict | None:
+        """Optional same-pass vertex and deformer geometry evidence."""
+        raw = self._native.evaluation_trace_json()
+        return json.loads(raw) if raw is not None else None
 
     def save_scene(self, absolute_directory: Path) -> Path:
         """Write a new data-only scene bundle and return its directory."""
