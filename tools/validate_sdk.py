@@ -23,6 +23,10 @@ from uuid import uuid4
 ROOT = Path(__file__).resolve().parents[1]
 CPU_TEST = ROOT / "modules/kasane-python/tests/test_cpu.py"
 GPU_TEST = ROOT / "modules/kasane-python/tests/test_observe.py"
+INSPECTION_TESTS = tuple(
+    ROOT / f"modules/kasane-python/tests/test_observe_o{stage}.py"
+    for stage in range(3, 8)
+)
 RECIPE = ROOT / "examples/sdk/python_observe_recipe.py"
 TWO_ASSET_RECIPE = ROOT / "examples/sdk/python_two_asset_recipe.py"
 IMPORT_EDIT_RECIPE = ROOT / "examples/sdk/python_import_edit_recipe.py"
@@ -388,6 +392,10 @@ def main() -> int:
     parser.add_argument("--purism-probe", type=Path)
     parser.add_argument("--require-purism-core", action="store_true")
     parser.add_argument("--require-image-reference", action="store_true")
+    parser.add_argument("--inspection", action="store_true",
+                        help="Install the inspection extra and run the Observe O3–O7 wheel suite")
+    parser.add_argument("--require-inspection", action="store_true",
+                        help="Require a GPU wheel and the Observe O3–O7 inspection suite")
     parser.add_argument("--full", action="store_true",
                         help="Require GPU, both Core probes, and image reference")
     args = parser.parse_args()
@@ -396,6 +404,9 @@ def main() -> int:
         args.require_official_core = True
         args.require_purism_core = True
         args.require_image_reference = True
+    if args.require_inspection:
+        args.inspection = True
+        args.require_gpu = True
     wheel = args.wheel.resolve(strict=True)
     python = args.python.resolve(strict=True)
     official_probe = args.official_probe.resolve(strict=True) if args.official_probe else None
@@ -407,9 +418,18 @@ def main() -> int:
     logs = run / "logs"
     logs.mkdir()
     report_path = run / "report.json"
+    inspection_only = args.inspection and not args.full
+    input_paths = ((CPU_TEST, GPU_TEST, *INSPECTION_TESTS,
+                    ROOT / "tests/fixtures/observe_inspection/manifest.json")
+                   if inspection_only else
+                   (CPU_TEST, GPU_TEST, *INSPECTION_TESTS, RECIPE, TWO_ASSET_RECIPE,
+                    IMPORT_EDIT_RECIPE, AGENT_DRAFT, AGENT_REPAIR,
+                    REFERENCE_CAPTURE, IMAGE_REFERENCE, IMAGE_REFERENCE_METADATA,
+                    IMAGE_COMPARATOR, TEXTURE, SECOND_TEXTURE,
+                    EXTERNAL_MODEL3, EXTERNAL_MOC3))
     report = {
         "schema_version": 1,
-        "profile": "full" if args.full else "custom",
+        "profile": "full" if args.full else "inspection" if inspection_only else "custom",
         "status": "running",
         "source_revision": git("rev-parse", "HEAD"),
         "workspace_dirty": bool(git("status", "--porcelain")),
@@ -417,15 +437,78 @@ def main() -> int:
         "wheel": {"path": str(wheel), "sha256": sha256(wheel)},
         "inputs": {
             str(path.relative_to(ROOT)): sha256(path)
-            for path in (CPU_TEST, GPU_TEST, RECIPE, TWO_ASSET_RECIPE,
-                         IMPORT_EDIT_RECIPE, AGENT_DRAFT, AGENT_REPAIR,
-                         REFERENCE_CAPTURE, IMAGE_REFERENCE, IMAGE_REFERENCE_METADATA,
-                         IMAGE_COMPARATOR,
-                         TEXTURE, SECOND_TEXTURE,
-                         EXTERNAL_MODEL3, EXTERNAL_MOC3)
+            for path in input_paths
         },
         "checks": {},
     }
+    if inspection_only:
+        try:
+            with TemporaryDirectory(prefix="kasane-inspection-validate-") as temporary:
+                outside = Path(temporary)
+                environment = os.environ.copy()
+                for name in ("PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV", "UV_PROJECT_ENVIRONMENT"):
+                    environment.pop(name, None)
+                report["uv_version"] = command(
+                    "uv-version", [args.uv, "--version"], cwd=outside,
+                    env=environment, logs=logs,
+                )
+                command("venv", [args.uv, "venv", "--python", str(python),
+                                 str(outside / "venv")],
+                        cwd=outside, env=environment, logs=logs)
+                installed = outside / "venv" / (
+                    "Scripts/python.exe" if os.name == "nt" else "bin/python")
+                command("install-inspection", [args.uv, "pip", "install", "--python",
+                                               str(installed), f"{wheel}[inspection]"],
+                        cwd=outside, env=environment, logs=logs)
+                capabilities = json.loads(command(
+                    "capabilities", [str(installed), "-c",
+                                     "import json, kasane; print(json.dumps(kasane.capabilities()))"],
+                    cwd=outside, env=environment, logs=logs,
+                ))
+                report["capabilities"] = capabilities
+                if not capabilities.get("gpu_observation"):
+                    report["checks"]["gpu"] = {
+                        "status": "not_run", "reason": "GPU observation unavailable",
+                    }
+                    report["checks"]["inspection"] = {
+                        "status": "not_run", "reason": "GPU observation unavailable",
+                    }
+                    if args.require_inspection:
+                        raise RuntimeError("Inspection release requires a GPU Observe wheel")
+                else:
+                    for name, command_args in (
+                        ("gpu-tests", [str(installed), str(GPU_TEST), "-q"]),
+                        ("inspection-tests", [str(installed), "-m", "unittest", "discover",
+                                              "-s", str(GPU_TEST.parent), "-p",
+                                              "test_observe_o*.py", "-q"]),
+                    ):
+                        command(name, command_args, cwd=outside, env=environment,
+                                logs=logs, timeout=300)
+                    report["checks"]["gpu"] = {
+                        "status": "passed",
+                        "tests": test_count((logs / "gpu-tests.log").read_text(), "gpu-tests"),
+                    }
+                    report["checks"]["inspection"] = {
+                        "status": "passed",
+                        "tests": test_count((logs / "inspection-tests.log").read_text(),
+                                            "inspection-tests"),
+                        "extra": "Pillow==12.3.0",
+                    }
+                command("cpu-tests", [str(installed), str(CPU_TEST), "-q"],
+                        cwd=outside, env=environment, logs=logs)
+                report["checks"]["cpu"] = {
+                    "status": "passed",
+                    "tests": test_count((logs / "cpu-tests.log").read_text(), "cpu-tests"),
+                }
+            report["status"] = ("passed" if report["checks"]["inspection"]["status"] ==
+                                "passed" else "partial")
+        except Exception as failure:
+            report["status"] = "failed"
+            report["failure"] = {"type": type(failure).__name__, "message": str(failure)}
+        report_path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n",
+                               encoding="utf-8")
+        print(report_path)
+        return 1 if report["status"] == "failed" else 0
     try:
         with TemporaryDirectory(prefix="kasane-sdk-validate-") as temporary:
             outside = Path(temporary)
@@ -442,6 +525,10 @@ def main() -> int:
             command("install", [args.uv, "pip", "install", "--python", str(installed), "--no-index",
                                 "--no-deps", str(wheel)],
                     cwd=outside, env=environment, logs=logs)
+            if args.inspection:
+                command("install-inspection-extra", [args.uv, "pip", "install", "--python",
+                                                    str(installed), "Pillow==12.3.0"],
+                        cwd=outside, env=environment, logs=logs)
             command("cpu-tests", [str(installed), str(CPU_TEST), "-q"],
                     cwd=outside, env=environment, logs=logs)
             report["checks"]["cpu"] = {
@@ -507,6 +594,23 @@ def main() -> int:
                 report["checks"]["gpu"]["tests"] = test_count(
                     (logs / "gpu-tests.log").read_text(), "gpu-tests",
                 )
+                if args.inspection:
+                    command(
+                        "inspection-tests",
+                        [str(installed), "-m", "unittest", "discover", "-s",
+                         str(GPU_TEST.parent), "-p", "test_observe_o*.py", "-q"],
+                        cwd=outside, env=environment, logs=logs, timeout=300,
+                    )
+                    report["checks"]["inspection"] = {
+                        "status": "passed",
+                        "tests": test_count((logs / "inspection-tests.log").read_text(),
+                                            "inspection-tests"),
+                        "extra": "Pillow==12.3.0",
+                    }
+                else:
+                    report["checks"]["inspection"] = {
+                        "status": "not_run", "reason": "Inspection suite not requested",
+                    }
                 handoff_output = command(
                     "agent-draft", [str(installed), str(AGENT_DRAFT), str(run / "agent")],
                     cwd=outside, env=environment, logs=logs,
@@ -531,6 +635,9 @@ def main() -> int:
                     }
             else:
                 report["checks"]["gpu"] = {"status": "not_run", "reason": "GPU observation unavailable"}
+                report["checks"]["inspection"] = {
+                    "status": "not_run", "reason": "GPU observation unavailable",
+                }
                 report["checks"]["agent_repair"] = {
                     "status": "not_run", "reason": "GPU observation unavailable",
                 }

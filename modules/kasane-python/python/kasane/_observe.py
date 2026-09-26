@@ -13,7 +13,7 @@ from typing import Mapping, Sequence
 from uuid import UUID, uuid4
 import zlib
 from . import _native as _native_module
-from ._animation import MotionPreview
+from ._animation import MotionPreview, PlaybackRecipe
 from ._session import Session
 from ._inspection import (
     InspectionPacket, InspectionRequest, PresentationSpec, RawInspectionRequest,
@@ -110,6 +110,25 @@ class Observer:
             include_hidden_geometry,
         )
         return CapturedScene(native)
+
+    def capture_animation_scenes(
+        self, session: Session, *, playback: PlaybackRecipe,
+        times: Sequence[float], apply_model_opacity: bool = False,
+        with_trace: bool = False, include_hidden_geometry: bool = False,
+    ) -> tuple[CapturedScene, ...]:
+        """Replay an explicit recipe at 1–64 times from one document snapshot."""
+        if not isinstance(playback, PlaybackRecipe):
+            raise TypeError("playback must be a PlaybackRecipe")
+        if not 1 <= len(times) <= 64 or any(
+                type(value) not in (int, float) or not math.isfinite(value) or
+                value < 0 or value * 60 > 1_000_000 for value in times):
+            raise ValueError("Animation sample times must be finite, nonnegative and within seek limits")
+        recipe_json = json.dumps(playback.record(), allow_nan=False, sort_keys=True)
+        scenes = self._native.capture_animation_scenes(
+            session._native, recipe_json, list(times), apply_model_opacity,
+            with_trace, include_hidden_geometry,
+        )
+        return tuple(CapturedScene(scene) for scene in scenes)
 
     def open_scene(self, absolute_directory: Path) -> CapturedScene:
         """Open a saved scene without consulting a live authoring session."""
@@ -336,6 +355,41 @@ class Observer:
         from ._inspection_run import inspect_run
         return inspect_run(self, session, samples, request=request, output=output,
                            baseline_index=baseline_index, layout=layout)
+
+    def inspect_animation_run(
+        self, session: Session, *, playback: PlaybackRecipe,
+        times: Sequence[float], request: InspectionRequest, output: Path,
+        apply_model_opacity: bool = False, baseline_index: int | None = None,
+        layout=None,
+    ):
+        """Publish a v2 report from explicit, reproducible animation replay."""
+        from ._inspection_run import inspect_run
+        if not 1 <= len(times) <= request.limits.max_samples:
+            raise ValueError("Animation run exceeds the sample limit")
+        frozen_times = tuple(times)
+        if not isinstance(playback, PlaybackRecipe):
+            raise TypeError("playback must be a PlaybackRecipe")
+        if any(type(value) not in (int, float) or not math.isfinite(value) or
+               value < 0 or value * 60 > 1_000_000 for value in frozen_times):
+            raise ValueError("Animation sample times must be finite and within seek limits")
+        def capture():
+            return self.capture_animation_scenes(
+                session, playback=playback, times=frozen_times,
+                apply_model_opacity=apply_model_opacity,
+                with_trace=request.mode == "xray" or any(channel in request.channels
+                    for channel in ("wireframe", "vertices", "deformers",
+                                    "displacement", "distortion")),
+                include_hidden_geometry=request.mode == "xray" and
+                request.xray.include_disabled,
+            )
+        return inspect_run(
+            self, session, [{} for _ in frozen_times], request=request,
+            output=output, baseline_index=baseline_index, layout=layout,
+            capture_scenes=capture,
+            playback={"recipe": playback.record(), "times": list(frozen_times),
+                      "apply_model_opacity": apply_model_opacity,
+                      "replay_policy": "absolute_60hz_seek"},
+        )
 
     def render(
         self, packet: InspectionPacket, *, request: RawInspectionRequest | InspectionRequest,

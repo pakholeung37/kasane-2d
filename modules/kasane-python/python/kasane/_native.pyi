@@ -73,6 +73,11 @@ class NativeObserver:
         apply_model_opacity: bool, with_trace: bool,
         include_hidden_geometry: bool,
     ) -> NativeCapturedScene: ...
+    def capture_animation_scenes(
+        self, session: NativeSession, recipe_json: str, times: list[float],
+        apply_model_opacity: bool, with_trace: bool,
+        include_hidden_geometry: bool,
+    ) -> list[NativeCapturedScene]: ...
     def observe(
         self, session: NativeSession, values: dict[str, float]
     ) -> tuple[tuple[Version, str, int, str, int, list[tuple[str, float, float, bool]], tuple[float, float, float, float, float], float, Point, list[tuple[str, bool, tuple[int, int, int, int] | None]]], int, int, bytes, bytes, list[tuple[str, str, int]], str, str]: ...

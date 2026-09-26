@@ -14,7 +14,7 @@ staged research/plan changes were preserved. Fixture manifest SHA-256:
 | O4 geometry diagnostics | complete | Same-pass evaluation trace, geometry overlays and canvas-space deformation diagnostics | V05 passed; query remains O6 |
 | O5 isolation and mask diagnostics | complete | DiagnosticPlan, isolated/X-ray render, actual mask attachment views, hidden-geometry capture and report resources | V06 composition and recovery gates passed; per-object query remains O6 |
 | O6 geometry and coverage queries | complete | Triangle point/region query, CPU analysis reopen, per-candidate GPU alpha, support matrix and frontmost pick rule | V07 gates passed; interpolation selection remains explicitly unavailable |
-| O7 joint acceptance | not started | — | Combined regression, packaging and playback work |
+| O7 joint acceptance | implementation verified; agent ablation not run | Explicit animation replay, independent inspection wheel gate, combined regression, resource/performance evidence, API/validation docs | Independent agent comparison and legacy `--full` gate still need their external inputs |
 
 The Python O1 API includes `capture_scene`, `capture_scenes`,
 `capture_animation_scene`, `render_scene`, `save_scene`, `open_scene`,
@@ -289,3 +289,54 @@ geometry with glue/deformers is not presented as an editable point.
 
 Built wheels are in `/tmp/kasane-observe-o6-wheel/` and
 `/tmp/kasane-observe-o6-cpu-wheel/`. These local paths are test evidence.
+
+## O7 combined inspection acceptance (2026-09-26)
+
+`PlaybackRecipe` records ordered base-parameter, motion, registered motion,
+expression and timed-parameter actions. A detached Motion preview is built
+from one session snapshot, applies the recipe, and seeks each requested
+absolute time before the shared texture-union capture. Source metadata stores
+the complete recipe with `history_status=recipe_recorded`; direct capture of
+an existing preview continues to state `not_recorded` because its earlier
+history is unknown. `inspect_animation_run` writes the same recoverable v2
+report as a parameter run, including a `playback` record. Tests compare recipe
+samples against an independently operated Motion preview, check nonmonotonic
+seeks, baseline comparison, CPU-only reopening, a failed recipe report and
+observer recovery after close.
+
+The `--require-inspection` wheel validator installs the wheel and pinned
+`inspection` extra in a fresh environment outside the repository. It requires
+GPU Observe and runs the base GPU, O3–O7 and CPU suites. A CPU-only wheel was
+also used as a negative control: the release gate failed with
+`Inspection release requires a GPU Observe wheel`. `--full` remains a
+separate legacy acceptance profile, and can be combined with `--inspection`
+when its historical recipe scripts and Core probes are available.
+
+| O7 evidence | Result |
+| --- | --- |
+| Source base / fixture | Started at `c325543`; fixture manifest SHA-256 `a971cfc4a93a55c3a335ae35df8f425968f4e5490dbe3ce1c333a0eacf530331` |
+| `cargo fmt --check`, `cargo test --workspace --locked -q`, `cargo clippy --workspace --all-targets --locked -- -D warnings` | passed |
+| release Observe wheel plus `inspection` extra, CPython 3.14, Apple M4/Metal | `--require-inspection` passed: 16 base GPU, 32 O3–O7, 52 CPU tests; wheel SHA-256 `63e4be33bf9ea889ef453271cd7d1cf2847616a31d3aa741a08963c627ea3dce`; report `/tmp/kasane-o7-sdk-validation/41e285c6991c41e68f51c1f844eb7f61/report.json` |
+| CPU-only wheel | Reopened a three-sample animation v2 report with two views and two comparisons, without Pillow or a GPU; persisted report under `/tmp/kasane-o7-persist/` |
+| raw compatibility | All five raw RGBA and legacy input SHA-256 values match `/tmp/kasane-o6-baseline.json`; current record `/tmp/kasane-o7-baseline.json` |
+| resource/performance | Five 128×128 repetitions: legacy raw median 2.054 ms, capture including decode 0.389 ms, raw rerender/readback 1.701 ms, clean inspect 2.163 ms, clean plus labels 2.733 ms, report-profile save 1.104 ms. Twenty further packet closes raised process RSS high-water mark by 81,920 bytes; see `/tmp/kasane-o7-benchmark.json`. This high-water mark does not prove absence of Rust/GPU leaks. Decode and upload have no separate timer and are recorded as unavailable. |
+
+| Trace | Implementation and combined evidence |
+| --- | --- |
+| V01 alpha/color | O2 light/dark/checker/transparent tests plus unchanged raw baseline |
+| V02 ROI/focus | O2 subpixel, overscan and fixed/follow tests; O7 animation fixed-union report |
+| V03 marks | O2 stable dense labels and object table; packet/report reopening |
+| V04 comparison | O3 reference/registration/grid/pagination tests; O7 animation baseline comparisons |
+| V05 evaluated geometry | O4 deformation/trace tests; O7 wireframe animation report |
+| V06 isolation/mask | O5 nested/inverted/disabled tests and post-diagnostic clean recovery |
+| V07 geometry/coverage query | O6 CPU geometry and GPU coverage tests, including unsupported composition and limits |
+
+The independent agent ablation in the plan is **not_run**. It needs frozen
+tasks, an untuned asset and separate participant sessions for the four tool
+conditions; no outcome or effectiveness claim is inferred from visual QA or
+unit tests. The legacy `--full` validator is also **not_run** in this checkout:
+its `examples/sdk/` recipe scripts are absent, and official Core/image
+reference probes were not supplied. The new inspection gate does not claim
+their results. Known capability limits remain those in
+`docs/OBSERVE-VISUAL-CONTRACT.md`, including unsupported special-composition
+coverage and unavailable edit interpolation for warp/glue geometry.

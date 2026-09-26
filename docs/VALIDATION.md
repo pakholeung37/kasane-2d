@@ -36,14 +36,23 @@ uv run --locked python tools/compare_wgpu_blends.py
 
 `--full` 要求 10 项检查均实际通过：CPU、两条创作/导入流程、GPU、第二脚本修正、两套 Core 对新建与导入模型的数值对照、固定外部 GPU 图像参考。输入或参考图哈希不一致、焦点裁剪误差超限、任一必需项缺席均失败。参考图来源与生成时的输入、视图和纹理配置见 `tests/fixtures/render_reference/`；更新参考图须重新记录来源并运行负控制。
 
-Observe v2 对比与报告另有独立 wheel 回归。在隔离的 CPython 3.14 环境中安装带 `observe` feature 的 wheel 及其 `inspection` extra，然后运行：
+Observe 的独立 wheel 发布门禁可直接运行：
 
 ```sh
-python -m unittest discover -s modules/kasane-python/tests -p test_observe.py -q
-python -m unittest discover -s modules/kasane-python/tests -p test_observe_o3.py -q
+uvx maturin build -m modules/kasane-python/Cargo.toml --features observe --release --locked -o /absolute/path/to/wheels
+python tools/validate_sdk.py --wheel /absolute/path/to/kasane.whl \
+  --python /absolute/path/to/python3.14 --require-inspection \
+  --output /absolute/path/to/evidence
 ```
 
-O3 用例覆盖配准与不兼容 policy、外部参考图未配准状态、目标/非目标指标、二维缺格与重复格、分页、失败报告及哈希损坏拒绝。CPU-only wheel 无需 `inspection` extra 即可打开已保存的 v2 报告；新建离线 PNG 对比则需要该 extra。
+此 profile 在仓库外临时环境安装 wheel 的 `inspection` extra，强制运行基础 GPU、O3–O7 inspection 和 CPU 测试，并保留输入哈希及日志；缺 GPU 功能、任一测试失败均失败。`--inspection` 使用相同套件，但允许 CPU wheel 以 `partial` 结束。与旧 `--full` 的两套 Core 和外部图像门禁互不替代；`--full --inspection` 可在具备旧脚本及探针的环境同时运行两组检查。
+
+O3–O7 覆盖配准、二维布局、形变、mask/隔离、几何与 GPU coverage 查询、动画 recipe 回放及失败报告。CPU-only wheel 无需 `inspection` extra 即可打开已保存的 v2 报告；新建离线 PNG 对比则需要该 extra。性能复测使用已安装的 GPU wheel：
+
+```sh
+python tools/run_observe_visual_o7_benchmark.py --output /absolute/path/to/benchmark.json
+python tools/run_observe_visual_baseline.py --output /absolute/path/to/raw-baseline.json
+```
 
 CI 运行 Rust 回归、验证器负控制和 CPU wheel 集成测试；macOS runner 另外运行 WGPU 混合矩阵。真实 GPU 观察与双 Core 的完整门禁按有相应资源的环境运行，报告不把 `not_run` 计作通过。
 

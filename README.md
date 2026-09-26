@@ -37,6 +37,10 @@ the source tree and tests project creation, import, editing, save, and export.
 An observe-enabled wheel can also run GPU and pinned image-reference checks;
 `--full` additionally requires official and Purism Core probes. See the
 [tool guide](tools/README.md) for the complete commands.
+For visual inspection, build with `--features observe` and run
+`tools/validate_sdk.py --require-inspection --wheel /absolute/path/to/kasane.whl`.
+That profile installs the inspection extra and checks display, comparison,
+geometry, masks, queries, and recorded animation replay in an isolated wheel.
 
 ## Acknowledgements
 

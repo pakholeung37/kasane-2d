@@ -278,7 +278,8 @@ def _native_binary_sha256() -> str:
 def inspect_run(observer: Observer, session: Session, samples, *,
                 request: InspectionRequest, output: Path,
                 baseline_index: int | None = None,
-                layout: SequenceLayout | GridLayout | None = None) -> InspectionRun:
+                layout: SequenceLayout | GridLayout | None = None,
+                capture_scenes=None, playback: dict | None = None) -> InspectionRun:
     """Freeze samples once, render sequentially, and publish an atomic v2 report."""
     if not output.is_absolute():
         raise ValueError("Inspection run output must be absolute")
@@ -311,6 +312,7 @@ def inspect_run(observer: Observer, session: Session, samples, *,
                       "python": platform.python_version(), "platform": platform.platform(),
                       "native_binary_sha256": _native_binary_sha256()},
               "capture": None, "samples": [], "objects": [], "views": [],
+              "playback": playback,
               "pages": [], "comparisons": [], "diagnostics": [], "files": {},
               "view_size": request.view.resolution,
               "layout": {"kind": "grid" if isinstance(layout, GridLayout) else "sequence",
@@ -349,9 +351,11 @@ def inspect_run(observer: Observer, session: Session, samples, *,
         _image_library()
         trace_required = request.mode == "xray" or any(
             channel in request.channels for channel in geometry_channels)
-        scenes = observer.capture_scenes(
-            session, samples, with_trace=trace_required,
-            include_hidden_geometry=request.mode == "xray" and request.xray.include_disabled)
+        scenes = (capture_scenes() if capture_scenes is not None else
+                  observer.capture_scenes(
+                      session, samples, with_trace=trace_required,
+                      include_hidden_geometry=request.mode == "xray" and
+                      request.xray.include_disabled))
         report["capture"] = scenes[0].metadata
         report["samples"] = [_sample_record(scene, index)
                              for index, scene in enumerate(scenes)]

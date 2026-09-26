@@ -2,9 +2,77 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from dataclasses import dataclass
 import json
+import math
 
 from ._types import DrawableSample, Evaluation, ExpressionSnapshot, MotionSnapshot, ParameterSample, SeekCacheStats
+
+
+@dataclass(frozen=True)
+class PlaybackAction:
+    """One ordered input to a detached animation replay recipe."""
+
+    kind: str
+    parameter_id: str | None = None
+    motion_id: str | None = None
+    expression_id: str | None = None
+    group: str | None = None
+    index: int | None = None
+    time: float | None = None
+    value: float | None = None
+
+    def __post_init__(self) -> None:
+        fields = {
+            "set_base_parameter": ("parameter_id", "value"),
+            "schedule_motion": ("motion_id", "time"),
+            "schedule_motion_entry": ("group", "index", "time"),
+            "schedule_expression": ("expression_id", "time"),
+            "schedule_parameter_input": ("parameter_id", "time", "value"),
+        }
+        if self.kind not in fields:
+            raise ValueError("Unknown playback action")
+        required = fields[self.kind]
+        for name in ("parameter_id", "motion_id", "expression_id", "group"):
+            value = getattr(self, name)
+            if (name in required and (not isinstance(value, str) or not value)) or (
+                    name not in required and value is not None):
+                raise ValueError(f"Invalid playback {name}")
+        if ("index" in required and (type(self.index) is not int or self.index < 0)) or (
+                "index" not in required and self.index is not None):
+            raise ValueError("Invalid playback index")
+        for name in ("time", "value"):
+            value = getattr(self, name)
+            if name in required:
+                if (type(value) not in (int, float) or not math.isfinite(value) or
+                        (name == "time" and value < 0)):
+                    raise ValueError(f"Invalid playback {name}")
+            elif value is not None:
+                raise ValueError(f"Unexpected playback {name}")
+
+    def record(self) -> dict:
+        return {"kind": self.kind, **{name: value for name, value in self.__dict__.items()
+                                       if name != "kind" and value is not None}}
+
+
+@dataclass(frozen=True)
+class PlaybackRecipe:
+    """Complete ordered setup for a reproducible Motion preview run."""
+
+    actions: tuple[PlaybackAction, ...] = ()
+
+    def __post_init__(self) -> None:
+        try:
+            actions = tuple(self.actions)
+        except TypeError as error:
+            raise ValueError("Playback recipe actions must be a sequence") from error
+        if len(actions) > 256 or any(not isinstance(item, PlaybackAction)
+                                     for item in actions):
+            raise ValueError("Playback recipe allows at most 256 typed actions")
+        object.__setattr__(self, "actions", actions)
+
+    def record(self) -> dict:
+        return {"actions": [action.record() for action in self.actions]}
 
 
 class ExpressionPreview:

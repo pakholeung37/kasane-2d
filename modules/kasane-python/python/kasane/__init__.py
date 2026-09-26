@@ -9,7 +9,7 @@ from typing import Sequence
 
 from ._native import ObjectHandle, SdkFailure, capabilities
 from ._edit import Edit
-from ._animation import ExpressionPreview, MotionPreview, PhysicsPreview
+from ._animation import ExpressionPreview, MotionPreview, PhysicsPreview, PlaybackAction, PlaybackRecipe
 from ._session import Session, open_project
 from ._observe import CapturedScene, Observer, ObservationFailure, RenderedSceneView
 from ._inspection import (
@@ -179,6 +179,8 @@ for _public_type in (
     ExpressionSnapshot,
     ExpressionPreview,
     MotionPreview,
+    PlaybackAction,
+    PlaybackRecipe,
     PhysicsPreview,
     Edit,
     Session,
@@ -300,6 +302,8 @@ __all__ = [
     "ObservationRun",
     "ObservedFrame",
     "Observer",
+    "PlaybackAction",
+    "PlaybackRecipe",
     "OffscreenKeyform",
     "OffscreenSpec",
     "OffscreenSnapshot",

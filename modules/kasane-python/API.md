@@ -465,6 +465,7 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.capture_scene(session, values=None, *, with_trace=False, include_hidden_geometry=False)` | Freeze one evaluated frame and decoded textures; optional trace records final mesh/deformer geometry. Hidden geometry is captured only when requested for disabled X-ray. |
 | `observer.capture_scenes(session, samples, *, with_trace=False, include_hidden_geometry=False)` | Freeze 1–64 parameter samples against one detached document snapshot; optional trace is captured per sample. All scenes share a capture ID and decoded texture union. |
 | `observer.capture_animation_scene(session, preview, *, apply_model_opacity=False, with_trace=False, include_hidden_geometry=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; optional trace and hidden geometry use the preview's parameter values. |
+| `observer.capture_animation_scenes(session, *, playback, times, apply_model_opacity=False, with_trace=False, include_hidden_geometry=False)` | Replay a typed `PlaybackRecipe` from one detached document snapshot at 1–64 absolute times; return scenes sharing one capture ID and texture union. |
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
 | `observer.render_isolated_scene(scene, *, roi, resolution, padding_canvas, presentation, focus_mesh_ids)` | Render selected color draws with original mask inputs and ancestor offscreen targets. Return the isolated plan and `destination_context="isolated"` in view presentation. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
@@ -477,6 +478,7 @@ short `evaluate()` when only runtime positions are needed.
 | `packet.query(..., observer=None)` | Run geometry queries on an analysis packet in a CPU-only wheel; pass an `Observer` for GPU coverage. |
 | `observer.object_details(packet, *, object_id)` / `packet.object_details(object_id)` | Read frozen authored/evaluated object records and edit-mapping status. |
 | `observer.inspect_run(session, samples, *, request, output, baseline_index=None, layout=None)` | Publish a v2 report from one frozen batch into a unique child of absolute `output`. A baseline adds registered comparisons. `SequenceLayout` preserves input order; `GridLayout` declares two parameter axes and records missing cells. |
+| `observer.inspect_animation_run(session, *, playback, times, request, output, apply_model_opacity=False, baseline_index=None, layout=None)` | Publish a v2 report from a recorded replay recipe and absolute sample times. It uses the same fixed-union view, comparison, artifact and failure rules as a parameter run. |
 | `observer.render(packet, *, request)` | Append raw or O2 presentation views to a new packet value with the same capture ID, without reading a session or source asset. |
 | `packet.save(absolute_directory, profile="analysis")` | Save a new packet with checked artifact hashes; `report` stores PNG/metadata, `analysis` also stores evaluated geometry and raw RGBA, `scene` also stores frozen textures for rerendering. |
 | `kasane.open_inspection_packet(absolute_directory)` / `observer.open(...)` | Validate and open a saved packet. Report/analysis profiles can be read from a CPU-only wheel; scene profile requires the observe wheel. |
@@ -527,6 +529,20 @@ actual-value cells fail. Per-cell `sheet_to_view` maps only the image area;
 ASCII fallback in the sheet label is recorded while original display names
 stay in JSON. Every v2 run requires fixed-union framing; `inspect_samples`
 remains available for follow views.
+
+`PlaybackRecipe(actions=(...))` records ordered `PlaybackAction` values:
+`set_base_parameter(parameter_id, value)`, `schedule_motion(motion_id, time)`,
+`schedule_motion_entry(group, index, time)`,
+`schedule_expression(expression_id, time)`, and
+`schedule_parameter_input(parameter_id, time, value)`. Construct each action
+as `kasane.PlaybackAction("schedule_motion", motion_id=motion_id, time=0.0)`.
+The run seeks every requested absolute time on the Motion preview's 60 Hz
+grid; input order may be nonmonotonic. A recorded scene has
+`source.history_status="recipe_recorded"` and `source.playback_recipe`.
+Capturing an existing live preview still records only its last operation and
+uses `history_status="not_recorded"`; its earlier activation history cannot
+be reconstructed from that scene. The recipe run does not change the session
+or a caller's live preview.
 
 `CompareOptions` requires matching view/presentation policies for packet
 comparisons. Cross-document pixels need an explicit canvas affine registration;
@@ -690,6 +706,19 @@ with kasane.Observer(512, 512, 512) as observer:
     print(comparison.metrics["opaque_rgb"]["whole_view"])
 reopened = kasane.open_inspection_run(run.run_directory)
 assert reopened.status == "complete"
+```
+
+```python
+recipe = kasane.PlaybackRecipe((
+    kasane.PlaybackAction("schedule_motion", motion_id=motion_id, time=0.0),
+))
+with kasane.Observer(512, 512, 512) as observer:
+    run = observer.inspect_animation_run(
+        session, playback=recipe, times=(0.0, 0.5, 1.0),
+        request=request, output=Path("/absolute/path/to/animation-runs"),
+        baseline_index=0,
+    )
+    assert run.report["playback"]["times"] == [0.0, 0.5, 1.0]
 ```
 
 `ObservationRun.directory` (also `output`) is the actual run directory;

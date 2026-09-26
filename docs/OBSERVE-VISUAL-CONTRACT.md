@@ -8,8 +8,9 @@ focus, fixed/follow sample views, numeric labels, and an object table. O3 adds
 registered image comparison, explicit two-axis layouts, paged contact sheets,
 and a recoverable report v2. O4 adds optional Rust evaluation traces,
 geometry overlays, and canvas-space deformation diagnostics. O5 adds
-diagnostic isolation, X-ray and renderer mask attachment views. Queries remain
-a delivery target. The existing
+diagnostic isolation, X-ray and renderer mask attachment views. O6 implements
+geometry and local coverage queries. O7 adds explicit animation replay runs.
+The existing
 `Observer.observe`, `observe_run`, raw bytes, and report v1 remain unchanged.
 
 ## Public types and calls
@@ -113,6 +114,15 @@ observer.open(absolute_directory) -> InspectionPacket
 open_inspection_run(absolute_directory) -> InspectionRun
 packet.close() -> None
 ```
+
+`playback` is a `PlaybackRecipe` containing at most 256 ordered
+`PlaybackAction` records. Supported actions set a base parameter or schedule a
+motion, registered motion entry, expression, or parameter input. A run takes
+one document snapshot, applies its recipe to a detached Motion preview, then
+seeks 1–64 absolute times on the 60 Hz grid. Times need not be sorted. Its
+source stores `history_status="recipe_recorded"` and the recipe. An existing
+live preview capture still has `history_status="not_recorded"` and its last
+operation only. The recorded recipe does not mutate that preview or session.
 
 `point` and `region` are mutually exclusive. `render` returns a new packet
 value with an appended view and the same capture ID; it never rereads a session
@@ -256,10 +266,10 @@ samples, animation source when applicable, object/mark table, views,
 comparisons, diagnostics, provenance, capabilities, and resource accounting.
 Each view has ID, sample, kind, mode, image path/hash, dimensions, view
 matrices/ROI, color/alpha/background policy, dependencies and overrides.
-Static samples use `source_kind="parameters"`; later animation runs use
+Static samples use `source_kind="parameters"`; animation runs use
 `source_kind="animation"` with actual f32 time, operation identity, recipe or
 step source, host opacity policy, and stage availability. Missing history is
-`not_recorded`; a replay is explicitly `replayed` and must match the target
+`not_recorded`; a recipe replay is explicitly `recipe_recorded` and must match the target
 snapshot. A zero-time reset and an advance(0) have distinct operation IDs.
 
 Artifacts are written to unique run directories using internal IDs and
@@ -269,7 +279,7 @@ Unknown major schema versions are rejected. O3 run views and comparisons are
 PNG artifacts; report-profile packets contain no raw arrays. The reader
 verifies hashes, dimensions, paths and read budgets before exposing a run.
 `complete` requires every requested channel. O2 still rejects `allow_partial`;
-partial/cancelled runs and animation playback recipes remain later work. GPU/IO
+partial/cancelled runs remain later work. GPU/IO
 failure is `failed`, with completed evidence retained in the report.
 
 ## Implementation decisions relative to the plan

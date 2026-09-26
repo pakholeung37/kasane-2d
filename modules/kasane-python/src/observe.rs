@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use kasane_render::DiagnosticOverrides;
 use kasane_sdk_observe::{
     CanvasRoi, ObservationError, ObservationInput, ObservedFrame, Observer, ObserverConfig,
-    PresentationBackground, RenderRequest, ResolvedObservation,
+    PlaybackRecipe, PresentationBackground, RenderRequest, ResolvedObservation,
 };
 use pyo3::create_exception;
 use pyo3::exceptions::PyException;
@@ -603,6 +603,54 @@ impl NativeObserver {
             Err(Some(error)) => Err(observation_failure(py, error)),
             Err(None) => Err(poisoned()),
         }
+    }
+
+    fn capture_animation_scenes(
+        &self,
+        py: Python<'_>,
+        session: &NativeSession,
+        recipe_json: &str,
+        times: Vec<f32>,
+        apply_model_opacity: bool,
+        with_trace: bool,
+        include_hidden_geometry: bool,
+    ) -> PyResult<Vec<Py<NativeCapturedScene>>> {
+        let recipe: PlaybackRecipe = serde_json::from_str(recipe_json).map_err(|error| {
+            observation_failure(
+                py,
+                ObservationError {
+                    code: "INVALID_PLAYBACK_RECIPE".into(),
+                    message: error.to_string(),
+                    asset_id: None,
+                },
+            )
+        })?;
+        let session = session.inner.clone();
+        let result = py.detach(|| {
+            let snapshot = {
+                let session = session.lock().map_err(|_| None)?;
+                session.read_snapshot()
+            };
+            let inputs = ObservationInput::capture_motion_samples_from_snapshot(
+                &snapshot,
+                &recipe,
+                &times,
+                apply_model_opacity,
+                with_trace,
+                include_hidden_geometry,
+            )
+            .map_err(Some)?;
+            ResolvedObservation::capture_many(inputs).map_err(Some)
+        });
+        let scenes = match result {
+            Ok(scenes) => scenes,
+            Err(Some(error)) => return Err(observation_failure(py, error)),
+            Err(None) => return Err(poisoned()),
+        };
+        scenes
+            .into_iter()
+            .map(|inner| Py::new(py, NativeCapturedScene { inner }))
+            .collect()
     }
 
     fn observe(

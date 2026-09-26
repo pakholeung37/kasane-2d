@@ -8,7 +8,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kasane_animation::{MotionOperation, MotionPreview, MotionSnapshot};
+use kasane_animation::{AnimationError, MotionOperation, MotionPreview, MotionSnapshot};
 use kasane_core::draw_order::DrawOrderGroup;
 use kasane_core::{
     BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, DrawableFrame, EvaluationTrace,
@@ -83,6 +83,8 @@ pub enum ObservationSource {
         /// Last successful operation; not a complete replay recipe.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         operation: Option<MotionOperation>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        playback_recipe: Option<PlaybackRecipe>,
     },
 }
 
@@ -90,6 +92,62 @@ pub enum ObservationSource {
 #[serde(rename_all = "snake_case")]
 pub enum HistoryStatus {
     NotRecorded,
+    RecipeRecorded,
+}
+
+/// An explicit sequence of operations to reconstruct a detached preview.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PlaybackRecipe {
+    pub actions: Vec<PlaybackAction>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlaybackAction {
+    SetBaseParameter {
+        parameter_id: String,
+        value: f32,
+    },
+    ScheduleMotion {
+        motion_id: String,
+        time: f32,
+    },
+    ScheduleMotionEntry {
+        group: String,
+        index: usize,
+        time: f32,
+    },
+    ScheduleExpression {
+        expression_id: String,
+        time: f32,
+    },
+    ScheduleParameterInput {
+        parameter_id: String,
+        time: f32,
+        value: f32,
+    },
+}
+
+fn animation_failure(error: AnimationError) -> ObservationError {
+    let code = match error {
+        AnimationError::MissingExpression(_) => "MISSING_EXPRESSION",
+        AnimationError::MissingMotion(_) => "MISSING_MOTION",
+        AnimationError::MissingMotionEntry { .. } => "MISSING_MOTION_ENTRY",
+        AnimationError::UnresolvedMotionTarget { .. } => "UNRESOLVED_MOTION_TARGET",
+        AnimationError::UnresolvedParameter { .. } => "UNRESOLVED_PARAMETER",
+        AnimationError::InvalidTime => "INVALID_TIME",
+        AnimationError::PastActivation => "PAST_ACTIVATION",
+        AnimationError::SeekLimit => "SEEK_LIMIT",
+        AnimationError::EventLimit => "EVENT_LIMIT",
+        AnimationError::SeekCancelled => "SEEK_CANCELLED",
+        AnimationError::Evaluation(_) => "ANIMATION_EVALUATION",
+    };
+    ObservationError {
+        code: code.into(),
+        message: error.to_string(),
+        asset_id: None,
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -531,8 +589,84 @@ impl ObservationInput {
                 apply_model_opacity,
                 history_status: HistoryStatus::NotRecorded,
                 operation: Some(preview.operation().clone()),
+                playback_recipe: None,
             },
         )
+    }
+
+    /// Replay an explicit recipe against one detached document snapshot and
+    /// capture all requested times before resolving the texture union.
+    pub fn capture_motion_samples_from_snapshot(
+        snapshot: &AuthoringSnapshot,
+        recipe: &PlaybackRecipe,
+        times: &[f32],
+        apply_model_opacity: bool,
+        with_trace: bool,
+        include_hidden_geometry: bool,
+    ) -> Result<Vec<Self>, ObservationError> {
+        if times.is_empty() || times.len() > 64 || recipe.actions.len() > 256 {
+            return Err(ObservationError {
+                code: "OBSERVATION_BUDGET_EXCEEDED".into(),
+                message: "Animation run needs 1..64 times and at most 256 actions".into(),
+                asset_id: None,
+            });
+        }
+        if include_hidden_geometry && !with_trace {
+            return Err(ObservationError {
+                code: "INVALID_TRACE_REQUEST".into(),
+                message: "Hidden geometry requires an evaluation trace".into(),
+                asset_id: None,
+            });
+        }
+        let version = snapshot.version();
+        let mut preview = MotionPreview::new(snapshot.document());
+        preview.bind_session_identity(version.session_id, version.generation);
+        for action in &recipe.actions {
+            let result = match action {
+                PlaybackAction::SetBaseParameter {
+                    parameter_id,
+                    value,
+                } => preview.set_base_parameter(parameter_id, *value),
+                PlaybackAction::ScheduleMotion { motion_id, time } => {
+                    preview.schedule_motion(motion_id, *time)
+                }
+                PlaybackAction::ScheduleMotionEntry { group, index, time } => {
+                    preview.schedule_motion_entry(group, *index, *time)
+                }
+                PlaybackAction::ScheduleExpression {
+                    expression_id,
+                    time,
+                } => preview.schedule_expression(expression_id, *time),
+                PlaybackAction::ScheduleParameterInput {
+                    parameter_id,
+                    time,
+                    value,
+                } => preview.schedule_parameter_input(parameter_id, *time, *value),
+            };
+            result.map_err(animation_failure)?;
+        }
+        let mut inputs = Vec::with_capacity(times.len());
+        for &time in times {
+            preview.seek(time).map_err(animation_failure)?;
+            let mut input = Self::capture_motion_from_snapshot_with_options(
+                snapshot,
+                &preview,
+                apply_model_opacity,
+                with_trace,
+                include_hidden_geometry,
+            )?;
+            if let ObservationSource::Animation {
+                history_status,
+                playback_recipe,
+                ..
+            } = &mut input.source
+            {
+                *history_status = HistoryStatus::RecipeRecorded;
+                *playback_recipe = Some(recipe.clone());
+            }
+            inputs.push(input);
+        }
+        Ok(inputs)
     }
 
     fn capture_frame(

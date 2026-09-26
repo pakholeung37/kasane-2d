@@ -226,6 +226,7 @@ fn captures_animation_frame_and_rejects_stale_preview() {
             history_status,
             snapshot,
             operation: Some(operation),
+            playback_recipe: None,
         } if *history_status == HistoryStatus::NotRecorded
             && snapshot.as_ref() == preview.snapshot()
             && operation == preview.operation()
