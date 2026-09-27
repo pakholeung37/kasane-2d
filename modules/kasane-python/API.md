@@ -461,11 +461,16 @@ short `evaluate()` when only runtime positions are needed.
 | `observer.observe(session, values=None)` | `ObservedFrame` with `rgba`, `png`, size, version, input hash, sampled parameters, canvas/view, drawable bounds, texture revisions, and adapter information. |
 | `frame.save_png(absolute_path)` | Write the PNG bytes to disk. |
 | `observer.set_fit_long_side(value)` | Change the view's fitted long side. |
-| `observer.observe_run(session, samples, output, focus=())` | Render one or more parameter maps into a unique child of absolute `output`; optionally crop visible drawable IDs. Return `ObservationRun`. |
+| `observer.observe_run(session, samples, output, crop_targets=(), crop_mode="each")` | Render samples into a unique child of absolute `output`; crop each mesh or Part target from the full frame, or use `crop_mode="union"` for one combined crop. Return `ObservationRun`. |
 | `observer.capture_scene(session, values=None)` | Freeze one evaluated frame and all decoded texture bytes in `CapturedScene`; later edits and asset changes do not change it. |
 | `observer.capture_scenes(session, samples)` | Freeze 1–64 parameter samples against one detached document snapshot; resolve names there and decode the union of textures once. All returned scenes share a capture ID. |
 | `observer.capture_animation_scene(session, preview, apply_model_opacity=False)` | Freeze the preview's actual evaluated animation frame and current snapshot without advancing it; reject a stale preview. |
 | `observer.render_scene(scene, *, roi, resolution, padding_canvas=0)` | Rerender the frozen scene at a source-canvas ROI. Return `RenderedSceneView` with an `ObservedFrame`, requested/padded/visible ROI, and `render_digest`. |
+| `scene.bounds(targets, include_hidden=True)` | Return evaluated source-canvas geometry bounds and resolved mesh IDs for one or more `ObjectRef("mesh"/"part", id)` values. Includes hidden geometry by default; an existing target without geometry returns `status="empty"` and `empty_reason`. |
+| `observer.focus(scene, targets, *, resolution=(1024, 1024), padding_canvas=12, include_hidden=True)` | Derive an ROI from the selected objects and rerender the complete scene. Returns `FocusedSceneView(view, bounds)`. |
+| `observer.focus_scenes(scenes, targets, *, ..., follow=False)` | Focus several captured scenes using a shared union ROI by default. `follow=True` computes an ROI per scene. |
+| `scene.hit_test(view, point, *, include_hidden=True, details=False, max_candidates=256)` | Find every mesh whose evaluated triangle contains an image point. Returns mesh-grouped geometry candidates, total count and truncation status. `details=True` includes triangle indices, barycentric weights and UV. The view must belong to the scene. |
+| `packet.bounds(targets)` / `packet.hit_test(view_id, point, ...)` | Make the same geometry queries on an open packet with evaluated geometry, including reopened `analysis` packets. |
 | `scene.save_scene(absolute_directory)` | Save a new data-only scene bundle with PNG texture bytes and `scene.json`; refuses an existing directory. |
 | `observer.open_scene(absolute_directory)` | Validate hashes/format and open the bundle without a live session or original asset files. |
 | `observer.inspect(session, values=None, *, request=RawInspectionRequest(...))` | Return an O1 raw `InspectionPacket` with a frozen scene and one transparent context view. |
@@ -489,11 +494,14 @@ digests. A `--no-default-features --features observe` wheel preserves the
 previous single-sample hash and pixels. Opening a v1
 bundle computes the scene digest and assigns a new capture ID.
 They currently render the legacy raw transparent pixel policy. The O1 packet
-uses `RawInspectionRequest`; the full `InspectionRequest`, labels, display
-backgrounds, query/comparison APIs, batch layout and complete report v2 remain
-later-stage work. `packet.capabilities` explicitly marks those channels
-unavailable. The `analysis` profile preserves query inputs but does not yet
-implement the O2 geometry/probe query. A saved scene contains an evaluated frame,
+uses `RawInspectionRequest`; labels, display backgrounds, pixel coverage,
+comparison APIs, batch layout and complete report v2 remain later-stage work.
+`packet.capabilities.geometry_query` reports whether the packet retains authoring
+and evaluated geometry. Geometry hits do not imply texture alpha, mask coverage,
+or final pixel visibility. `include_hidden=False` filters by evaluated drawable
+enabled/visible/opacity state only. Object resolution, bounds, and triangle
+tests run in the CPU Rust SDK, including for reopened analysis packets; Python
+handles view coordinates and result records. A saved scene contains an evaluated frame,
 not a resumable animation preview. `CapturedScene.source` reports
 `source_kind`, and for animation, current snapshot, host Model opacity policy
 and `history_status="not_recorded"`. Snapshot events cover only the most recent
@@ -504,6 +512,28 @@ mesh/Part/transform/binding and offscreen/glue/blend source records from the
 same document revision as the frame; it does not yet report selected keyform
 interpolation weights. `CapturedScene.metadata.snapshot_clone_ns` records the
 cost of copying the authoring document for the read-only capture.
+
+For object-guided observation, use a frozen scene and refer to objects by kind
+and ID. Part targets include descendant Parts. Bounds are in source-canvas
+pixels, including outside the canvas; image points belong to a particular view.
+Candidates are sorted by descending evaluated draw order with stable ties;
+this is not a visibility ranking across offscreen composition groups. Invalid
+points are rejected before coordinate conversion. Repeated object targets are
+deduplicated, including in per-target crop output. Crop uses the original
+frame's drawable bounds (basic drawing conditions, image clipping and 2px
+padding); unlike `bounds`, it does not include hidden geometry by default.
+When `focus_scenes` has an empty target in one sample but valid bounds in other
+samples, that sample uses the union ROI, including in follow mode, and retains
+its empty `bounds` status in the result.
+
+```python
+target = kasane.ObjectRef("part", eye_part_id)
+scene = observer.capture_scene(session, {"EyeOpen": 0.5})
+focused = observer.focus(scene, target, resolution=(1024, 1024))
+print(focused.bounds.canvas_bounds, focused.bounds.mesh_ids)
+hits = scene.hit_test(focused.view, (512.5, 512.5))
+print([(hit.mesh_id, hit.name, hit.part_names) for hit in hits.hits])
+```
 
 ```python
 with kasane.Observer(256, 256, 256) as observer:

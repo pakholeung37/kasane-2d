@@ -104,7 +104,7 @@ pub(super) fn evaluate(
 
     // Apply canvas Y reversal and validate positions
     for d in &mut state.frame.drawables {
-        if d.enabled {
+        if d.enabled || state.include_hidden_geometry {
             if doc.canvas().flag & 1 == 0 {
                 for p in &mut d.positions {
                     p.y = -p.y;

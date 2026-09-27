@@ -15,6 +15,7 @@ use crate::animation::NativeMotionPreview;
 use crate::conversion::{version_tuple, VersionTuple};
 use crate::error::poisoned;
 use crate::session::NativeSession;
+use crate::spatial;
 
 create_exception!(
     _native,
@@ -141,6 +142,40 @@ impl NativeCapturedScene {
     fn evaluated_frame_json(&self) -> PyResult<String> {
         serde_json::to_string(self.inner.input().frame())
             .map_err(|error| PyException::new_err(error.to_string()))
+    }
+
+    fn bounds_json(
+        &self,
+        targets: Vec<(String, String)>,
+        include_hidden: bool,
+    ) -> PyResult<String> {
+        let input = self.inner.input();
+        spatial::bounds_json(
+            &input.authoring().meshes,
+            &input.authoring().parts,
+            input.frame(),
+            targets,
+            include_hidden,
+        )
+    }
+
+    fn hit_test_json(
+        &self,
+        canvas_point: (f64, f64),
+        include_hidden: bool,
+        details: bool,
+        max_candidates: usize,
+    ) -> PyResult<String> {
+        let input = self.inner.input();
+        spatial::hit_test_json(
+            &input.authoring().meshes,
+            &input.authoring().parts,
+            input.frame(),
+            canvas_point,
+            include_hidden,
+            details,
+            max_candidates,
+        )
     }
 
     #[staticmethod]

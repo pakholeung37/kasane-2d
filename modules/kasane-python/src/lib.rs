@@ -8,6 +8,7 @@ mod handle;
 #[cfg(feature = "observe")]
 mod observe;
 mod session;
+mod spatial;
 
 use animation::{NativeExpressionPreview, NativeMotionPreview, NativePhysicsPreview};
 use edit::NativeEdit;
@@ -18,6 +19,7 @@ use observe::{NativeCapturedScene, NativeObserver, ObservationFailure};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule};
 use session::NativeSession;
+use spatial::NativeSpatialSnapshot;
 
 /// Report available project IO, validation, and GPU observation capabilities.
 #[pyfunction]
@@ -59,6 +61,7 @@ fn _native(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<NativeMotionPreview>()?;
     module.add_class::<NativePhysicsPreview>()?;
     module.add_class::<NativeHandle>()?;
+    module.add_class::<NativeSpatialSnapshot>()?;
     #[cfg(feature = "observe")]
     {
         module.add(

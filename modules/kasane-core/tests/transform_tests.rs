@@ -12,11 +12,16 @@ fn id(n: i32) -> String {
 
 #[test]
 fn test_hierarchical_transforms_and_warp() {
+    hierarchical_transforms_and_warp(1);
+    hierarchical_transforms_and_warp(0);
+}
+
+fn hierarchical_transforms_and_warp(flag: u8) {
     let mut doc = Document::new();
     assert!(doc
         .initialize(
             id(1),
-            Canvas::new(640.0, 480.0, Vec2::new(320.0, 240.0), 100.0)
+            Canvas::with_flag(640.0, 480.0, Vec2::new(320.0, 240.0), 100.0, flag)
         )
         .is_ok());
 

@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 use kasane_animation::{MotionOperation, MotionPreview, MotionSnapshot};
 use kasane_core::draw_order::DrawOrderGroup;
+use kasane_core::evaluation::evaluate_frame_including_hidden;
 use kasane_core::{
     BlendShapeBinding, BlendShapeConstraint, BlendShapeKeyTable, DrawableFrame, Glue, ImageAsset,
     Mesh, MeshBinding, Offscreen, Parameter, Part, PreviewValues, SceneBinding, Transform,
@@ -322,13 +323,15 @@ impl ObservationInput {
         snapshot: &AuthoringSnapshot,
         requested: &PreviewValues,
     ) -> Result<Self, ObservationError> {
-        let frame = snapshot
-            .evaluate(requested)
-            .map_err(|error| ObservationError {
-                code: error.code.into(),
-                message: error.message.into(),
-                asset_id: error.object_ids.first().cloned(),
-            })?;
+        let mut frame = DrawableFrame::default();
+        let status = evaluate_frame_including_hidden(snapshot.document(), requested, &mut frame);
+        if !status.is_ok() {
+            return Err(ObservationError {
+                code: status.code,
+                message: status.message,
+                asset_id: None,
+            });
+        }
         Self::capture_frame(
             snapshot,
             requested.clone(),
@@ -400,7 +403,7 @@ impl ObservationInput {
             .map(|(id, value)| (id.clone(), *value))
             .collect();
         let mut frame = preview
-            .evaluate_drawables()
+            .evaluate_drawables_including_hidden()
             .map_err(|error| ObservationError {
                 code: "ANIMATION_EVALUATION".into(),
                 message: error.to_string(),

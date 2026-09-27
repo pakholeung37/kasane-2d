@@ -69,13 +69,37 @@ pub fn evaluate_frame(doc: &Document, preview: &PreviewValues, out: &mut Drawabl
 }
 
 /// Evaluate geometry for hidden drawables while retaining their visibility.
-/// This is intended for raster exports that include invisible ArtMeshes.
+/// This is intended for raster exports and observation queries. Visible
+/// drawables retain the normal evaluation result, even when Glue connects
+/// them to disabled meshes whose normal positions are placeholders.
 pub fn evaluate_frame_including_hidden(
     doc: &Document,
     preview: &PreviewValues,
     out: &mut DrawableFrame,
 ) -> Status {
-    FrameEvaluator::default().evaluate_with_hidden_geometry(doc, preview, out, true)
+    let mut evaluator = FrameEvaluator::default();
+    let mut captured = DrawableFrame::default();
+    let status = evaluator.evaluate_with_hidden_geometry(doc, preview, &mut captured, true);
+    if !status.is_ok() {
+        return status;
+    }
+    if !doc.glue_order().is_empty() && captured.drawables.iter().any(|d| !d.enabled) {
+        // Hidden geometry must not feed back through Glue into the rendered
+        // pose. Reuse the normal result for enabled drawables; retain the
+        // fully evaluated hidden geometry only for inspection/export.
+        let mut normal = DrawableFrame::default();
+        let status = evaluator.evaluate(doc, preview, &mut normal);
+        if !status.is_ok() {
+            return status;
+        }
+        for (drawable, normal_drawable) in captured.drawables.iter_mut().zip(normal.drawables) {
+            if normal_drawable.enabled {
+                *drawable = normal_drawable;
+            }
+        }
+    }
+    *out = captured;
+    Status::ok()
 }
 
 pub(super) fn set_value<T>(map: &mut HashMap<String, T>, id: &str, value: T) {

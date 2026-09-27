@@ -2,6 +2,31 @@ use super::*;
 
 #[pymethods]
 impl NativeSession {
+    fn resolve_spatial_targets(
+        &self,
+        targets: Vec<(String, String)>,
+    ) -> PyResult<Vec<Vec<String>>> {
+        let snapshot = self.inner.lock().map_err(|_| poisoned())?.read_snapshot();
+        let document = snapshot.document();
+        let meshes: Vec<_> = document
+            .mesh_order()
+            .iter()
+            .filter_map(|id| document.get_mesh(id).cloned())
+            .collect();
+        let parts: Vec<_> = document
+            .part_order()
+            .iter()
+            .filter_map(|id| document.get_part(id).cloned())
+            .collect();
+        targets
+            .into_iter()
+            .map(|target| {
+                let requested = crate::spatial::targets(vec![target])?;
+                kasane_sdk::resolve_mesh_ids(&meshes, &parts, &requested)
+                    .map_err(crate::spatial::spatial_error)
+            })
+            .collect()
+    }
     fn mesh_ids(&self) -> PyResult<Vec<String>> {
         Ok(self
             .inner

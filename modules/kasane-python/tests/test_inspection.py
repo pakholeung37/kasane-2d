@@ -1,5 +1,6 @@
 """CPU-only validation of raw packet readers (also works with a CPU wheel)."""
 from dataclasses import replace
+import hashlib
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -41,6 +42,20 @@ class PacketValidationTests(unittest.TestCase):
                     manifest["views"][0][key] = value
                     path.write_text(json.dumps(manifest))
                     with self.assertRaises(ValueError):
+                        open_inspection_packet(directory)
+
+    def test_rejects_nonobject_analysis_payload(self):
+        for member in ("authoring.json", "evaluated-frame.json"):
+            for payload in (b"[]", b"null"):
+                with self.subTest(member=member, payload=payload), TemporaryDirectory() as temp:
+                    directory = Path(temp) / "packet"
+                    self.packet().save(directory, profile="analysis")
+                    (directory / member).write_bytes(payload)
+                    manifest_path = directory / "packet.json"
+                    manifest = json.loads(manifest_path.read_text())
+                    manifest["files"][member] = hashlib.sha256(payload).hexdigest()
+                    manifest_path.write_text(json.dumps(manifest))
+                    with self.assertRaisesRegex(ValueError, "must be JSON objects"):
                         open_inspection_packet(directory)
 
     def test_checks_remaining_budget_before_reading_next_member(self):

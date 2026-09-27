@@ -5,13 +5,14 @@ tuples; ``Point`` is a type alias, not a two-argument constructor.
 Implementation modules are private; import public names from ``kasane``.
 """
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 
-from ._native import ObjectHandle, SdkFailure, capabilities
+from ._native import NativeSpatialSnapshot, ObjectHandle, SdkFailure, capabilities
 from ._edit import Edit
 from ._animation import ExpressionPreview, MotionPreview, PhysicsPreview
 from ._session import Session, open_project
-from ._observe import CapturedScene, Observer, ObservationFailure, RenderedSceneView
+from ._observe import CapturedScene, Observer, ObservationFailure, RenderedSceneView, FocusedSceneView
+from ._spatial import ObjectRef, ObjectBounds, GeometryHit, TriangleHit, HitTestResult
 from ._inspection import (
     InspectionPacket, InspectionView, PacketSaveReceipt, RawInspectionRequest,
     open_inspection_packet,
@@ -176,6 +177,12 @@ for _public_type in (
     Observer,
     CapturedScene,
     RenderedSceneView,
+    FocusedSceneView,
+    ObjectRef,
+    ObjectBounds,
+    GeometryHit,
+    TriangleHit,
+    HitTestResult,
     InspectionPacket,
     InspectionView,
     PacketSaveReceipt,
@@ -250,6 +257,12 @@ __all__ = [
     "PacketSaveReceipt",
     "RawInspectionRequest",
     "RenderedSceneView",
+    "FocusedSceneView",
+    "ObjectRef",
+    "ObjectBounds",
+    "GeometryHit",
+    "TriangleHit",
+    "HitTestResult",
     "ObservationRun",
     "ObservedFrame",
     "Observer",

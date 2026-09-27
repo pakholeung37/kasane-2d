@@ -232,7 +232,7 @@ with kasane.Observer(512, 512, 512) as observer:
     frame.save_png(Path("/absolute/output/preview.png"))
     run = observer.observe_run(
         session, [{}], Path("/absolute/output/runs"),
-        focus=session.mesh_ids(),
+        crop_targets=[kasane.ObjectRef("mesh", mesh_id) for mesh_id in session.mesh_ids()],
     )
     print(run.report, run.contact_sheet)
 ```

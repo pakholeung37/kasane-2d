@@ -1334,3 +1334,45 @@ fn test_glue_blendshape_seam_a_b_a() {
     assert_eq!(a_init.positions, a_ret.positions);
     assert_eq!(b_init.positions, b_ret.positions);
 }
+
+#[test]
+fn hidden_geometry_capture_preserves_visible_glue_result() {
+    use kasane_core::{evaluate_frame, evaluation::evaluate_frame_including_hidden, DrawableFrame};
+    let mut doc = create_base_document();
+    let mut hidden = doc.get_mesh(MESH_A).unwrap().clone();
+    hidden.enabled = false;
+    hidden.base_positions[0] = Vec2::new(80.0, 30.0);
+    assert!(doc.replace_mesh(hidden).status.is_ok());
+    assert!(doc
+        .create_glue(Glue {
+            id: GLUE_ID.into(),
+            mesh_a_id: MESH_A.into(),
+            mesh_b_id: MESH_B.into(),
+            runtime_id: "capture-glue".into(),
+            name: "capture glue".into(),
+            binding: None,
+            intensity: 1.0,
+            pairs: vec![GlueVertexPair {
+                vertex_a: 1,
+                vertex_b: 10,
+                weight_a: 0.5,
+                weight_b: 0.5
+            }],
+        })
+        .status
+        .is_ok());
+    let mut normal = DrawableFrame::default();
+    let mut captured = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &Default::default(), &mut normal).is_ok());
+    assert!(evaluate_frame_including_hidden(&doc, &Default::default(), &mut captured).is_ok());
+    let visible = |frame: &DrawableFrame| {
+        frame
+            .drawables
+            .iter()
+            .find(|d| d.id == MESH_B)
+            .unwrap()
+            .positions
+            .clone()
+    };
+    assert_eq!(visible(&captured), visible(&normal));
+}

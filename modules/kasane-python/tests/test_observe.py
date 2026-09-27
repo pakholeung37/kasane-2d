@@ -118,6 +118,8 @@ print('PACKET_REOPEN_OK')
                 manifest_path.write_bytes(original_manifest)
             packet.close()
             self.assertTrue(packet.closed)
+            with self.assertRaises(kasane.ObservationFailure):
+                packet.hit_test(packet.views[0].view_id, (10, 10))
             self.assertTrue(extended.capabilities["rerender_scene"])
 
     def test_animation_capture_preserves_pose_part_opacity(self):
@@ -262,7 +264,7 @@ print('REOPEN_OK')
                     edit.replace_png_asset(ASSET, "texture", TEXTURE)
                 self.assertEqual(observer.observe(model).width, 64)
 
-    def test_focus_crop_keeps_mask_and_offscreen_composition(self):
+    def test_crop_keeps_mask_and_offscreen_composition(self):
         model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
         with model.edit("layered scene") as edit:
             edit.add_png_asset(ASSET, "texture", TEXTURE)
@@ -286,7 +288,8 @@ print('REOPEN_OK')
             frame = observer.observe(model)
             self.assertEqual(frame.width, 64)
             with TemporaryDirectory() as directory:
-                run = observer.observe_run(model, [{}], Path(directory).resolve(), focus=[MESH])
+                run = observer.observe_run(model, [{}], Path(directory).resolve(),
+                                           crop_targets=[kasane.ObjectRef("part", PART)])
                 self.assertEqual(run.output, run.directory)
                 report = json.loads(run.report.read_text())
                 self.assertEqual(report["status"], "frames_complete")
@@ -294,7 +297,9 @@ print('REOPEN_OK')
                                  "premultiplied_no_post_conversion")
                 self.assertEqual(report["frames"][0]["background"], "transparent")
                 self.assertEqual(len(run.crops), 1)
-                self.assertEqual(report["frames"][0]["crops"][0]["object_id"], MESH)
+                self.assertEqual(report["frames"][0]["crops"][0]["targets"],
+                                 [{"kind": "part", "id": PART}])
+                self.assertEqual(report["frames"][0]["crops"][0]["mesh_ids"], [MESH])
 
     def test_observer_reuses_device_and_tracks_content(self):
         self.assertTrue(kasane.capabilities()["gpu_observation"])
@@ -338,7 +343,8 @@ print('REOPEN_OK')
                 self.assertNotEqual(third.input_sha256, fourth.input_sha256)
                 self.assertEqual(third.texture_revisions, fourth.texture_revisions)
                 runs = Path(directory).resolve() / "runs"
-                run = observer.observe_run(model, [{}, {}], runs, focus=[MESH, MISSING])
+                run = observer.observe_run(model, [{}, {}], runs,
+                                           crop_targets=[kasane.ObjectRef("mesh", MESH)])
                 report = json.loads(run.report.read_text(encoding="utf-8"))
                 self.assertEqual(report["status"], "frames_complete")
                 self.assertEqual(len(report["sdk_binary_sha256"]), 64)
@@ -352,7 +358,7 @@ print('REOPEN_OK')
                 self.assertEqual(len(run.crops), 2)
                 self.assertTrue(run.contact_sheet.read_bytes().startswith(b"\x89PNG"))
                 crop = report["frames"][0]["crops"][0]
-                self.assertEqual(crop["object_id"], MESH)
+                self.assertEqual(crop["targets"], [{"kind": "mesh", "id": MESH}])
                 self.assertEqual(crop["bounds"], list(fourth.drawable_bounds[0].bounds))
                 crop_png = run.crops[0].read_bytes()
                 crop_width, crop_height = struct.unpack_from(">II", crop_png, 16)
@@ -377,7 +383,10 @@ print('REOPEN_OK')
                 )
                 self.assertEqual(decoded, expected_rows)
                 diagnostics = json.loads((run.directory / "diagnostics.json").read_text())
-                self.assertEqual(diagnostics[0]["code"], "FOCUS_NOT_FOUND")
+                self.assertEqual(diagnostics, [])
+                with self.assertRaises(KeyError):
+                    observer.observe_run(model, [{}], runs,
+                        crop_targets=[kasane.ObjectRef("mesh", MISSING)])
                 self.assertEqual(len(json.loads((run.directory / "samples.json").read_text())), 2)
                 changed.unlink()
                 with self.assertRaises(kasane.ObservationFailure) as error:
@@ -416,6 +425,136 @@ print('REOPEN_OK')
             # Repeated UVs can move a few raster samples at grid boundaries.
             self.assertLessEqual(sum(delta > 0 for delta in pixel_deltas), 128)
             self.assertLessEqual(sum(delta > 1 for delta in pixel_deltas), 2)
+
+
+class SpatialObservationTests(unittest.TestCase):
+    def test_nested_part_focus_hit_test_and_analysis_reopen(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("spatial fixture") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_part(PART, "head")
+            edit.create_part(PART_B, "eye group", PART)
+            edit.create_part(OFFSCREEN, "empty")
+            edit.create_rectangle(BACKGROUND, "face", ASSET, (20, 20), (80, 80))
+            edit.create_rectangle(MESH, "eye", ASSET, (40, 40), (60, 60))
+            edit.set_mesh_part(MESH, PART_B)
+        with kasane.Observer(64, 64, 64) as observer:
+            scene = observer.capture_scene(model)
+            target = kasane.ObjectRef("part", PART)
+            bounds = scene.bounds(target)
+            empty = scene.bounds(kasane.ObjectRef("part", OFFSCREEN))
+            self.assertEqual((empty.status, empty.empty_reason),
+                             ("empty", "no_descendant_mesh"))
+            with self.assertRaises(ValueError):
+                observer.focus(scene, kasane.ObjectRef("part", OFFSCREEN))
+            self.assertEqual(bounds.mesh_ids, (MESH,))
+            for actual, expected in zip(bounds.canvas_bounds, (40, 40, 60, 60)):
+                self.assertAlmostEqual(actual, expected)
+            focused = observer.focus(scene, target, resolution=(128, 128),
+                                     padding_canvas=4)
+            self.assertEqual(focused.bounds, bounds)
+            self.assertEqual(focused.view.requested_roi, (40, 40, 60, 60))
+            point = focused.view.canvas_to_image((50, 50))
+            result = scene.hit_test(focused.view, point, details=True)
+            self.assertEqual(result.status, "hit")
+            self.assertEqual({hit.mesh_id for hit in result.hits}, {MESH, BACKGROUND})
+            eye = next(hit for hit in result.hits if hit.mesh_id == MESH)
+            self.assertEqual(eye.part_path, (PART, PART_B))
+            self.assertEqual(eye.part_names, ("head", "eye group"))
+            self.assertTrue(eye.triangles)
+            self.assertIsNotNone(eye.triangles[0].vertex_ids)
+            self.assertAlmostEqual(sum(eye.triangles[0].barycentric), 1)
+            self.assertEqual(scene.hit_test(focused.view, (-1, 2)).status,
+                             "outside_image")
+            for invalid_point in ((1,), (1, 2, 3), (float("nan"), 2)):
+                with self.subTest(point=invalid_point), self.assertRaises(ValueError):
+                    scene.hit_test(focused.view, invalid_point)
+            self.assertEqual(scene.hit_test(focused.view, point,
+                                            max_candidates=1).total, 2)
+            self.assertTrue(scene.hit_test(focused.view, point,
+                                           max_candidates=1).truncated)
+            other = observer.capture_scene(model)
+            with self.assertRaises(ValueError):
+                other.hit_test(focused.view, point)
+            packet = observer.inspect_scene(scene, request=kasane.RawInspectionRequest(
+                (30, 30, 70, 70), (96, 96)))
+            with self.assertRaises(ValueError):
+                packet.hit_test(packet.views[0].view_id, (1,))
+            with TemporaryDirectory() as temporary:
+                directory = Path(temporary).resolve() / "packet"
+                packet.save(directory, profile="analysis")
+                reopened = observer.open(directory)
+                self.assertTrue(reopened.capabilities["geometry_query"])
+                image_point = reopened.views[0].canvas_to_image((50, 50))
+                self.assertEqual(reopened.hit_test(reopened.views[0].view_id,
+                                                   image_point).total, 2)
+            self.assertEqual(reopened.bounds(target).mesh_ids, (MESH,))
+            with TemporaryDirectory() as temporary:
+                run = observer.observe_run(
+                    model, [{}], Path(temporary).resolve(),
+                    crop_targets=(target, kasane.ObjectRef("mesh", BACKGROUND)),
+                    crop_mode="union",
+                )
+                crops = json.loads(run.report.read_text())["frames"][0]["crops"]
+                self.assertEqual(len(crops), 1)
+                self.assertEqual(set(crops[0]["mesh_ids"]), {MESH, BACKGROUND})
+                repeated = observer.observe_run(
+                    model, [{}], Path(temporary).resolve(),
+                    crop_targets=(target, target),
+                )
+                self.assertEqual(len(repeated.crops), 1)
+
+    def test_focus_scenes_fixed_union_and_hidden_geometry(self):
+        model = kasane.Session(DOCUMENT, 100, 100, (50, 50), 10)
+        with model.edit("initial") as edit:
+            edit.add_png_asset(ASSET, "texture", TEXTURE)
+            edit.create_rectangle(MESH, "target", ASSET, (10, 30), (30, 50))
+        with kasane.Observer(64, 64, 64) as observer:
+            first = observer.capture_scene(model)
+            with model.edit("move") as edit:
+                edit.update_positions(MESH, [0, 1, 2, 3], [
+                    (50, 30), (70, 30), (70, 50), (50, 50),
+                ])
+            second = observer.capture_scene(model)
+            target = kasane.ObjectRef("mesh", MESH)
+            views = observer.focus_scenes((first, second), target,
+                                          padding_canvas=0, resolution=(96, 96))
+            self.assertEqual(views[0].view.requested_roi,
+                             views[1].view.requested_roi)
+            self.assertAlmostEqual(views[0].view.requested_roi[0], 10)
+            self.assertAlmostEqual(views[0].view.requested_roi[2], 70)
+            followed = observer.focus_scenes((first, second), target, follow=True,
+                                             resolution=(96, 96))
+            self.assertNotEqual(followed[0].view.requested_roi,
+                                followed[1].view.requested_roi)
+            props = model.mesh_properties(MESH)
+            with model.edit("hide") as edit:
+                edit.update_mesh_properties(MESH, kasane.MeshProperties(
+                    props.texture_asset_id, props.appearance, props.draw_order,
+                    props.blend_mode, False, props.double_sided,
+                    props.inverted_mask, props.masks,
+                ))
+            hidden = observer.capture_scene(model)
+            self.assertIsNotNone(hidden.bounds(target).canvas_bounds)
+            self.assertEqual(hidden.bounds(target, include_hidden=False).status,
+                             "empty")
+            self.assertEqual(hidden.bounds(target, include_hidden=False).empty_reason,
+                             "filtered_out")
+            visible_only = observer.focus_scenes(
+                (first, hidden), target, include_hidden=False,
+                padding_canvas=0, resolution=(96, 96),
+            )
+            self.assertEqual(visible_only[1].bounds.status, "empty")
+            self.assertEqual(visible_only[0].view.requested_roi,
+                             visible_only[1].view.requested_roi)
+            animated = observer.capture_animation_scene(model, model.motion_preview())
+            self.assertEqual(animated.bounds(target).canvas_bounds,
+                             hidden.bounds(target).canvas_bounds)
+            hidden_view = observer.focus(hidden, target, resolution=(96, 96))
+            query_point = hidden_view.view.canvas_to_image((60, 40))
+            self.assertEqual(hidden.hit_test(hidden_view.view, query_point).total, 1)
+            self.assertEqual(hidden.hit_test(hidden_view.view, query_point,
+                                             include_hidden=False).total, 0)
 
 
 if __name__ == "__main__":

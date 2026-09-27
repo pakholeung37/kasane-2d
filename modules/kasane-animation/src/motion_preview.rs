@@ -1,7 +1,10 @@
 //! Detached MotionBehavior V2 preview for typed project clips.
 use std::{collections::BTreeMap, sync::Arc};
 
-use kasane_core::{evaluate_frame, Document, DrawableFrame, PreviewValues};
+use kasane_core::{
+    evaluate_frame, evaluation::evaluate_frame_including_hidden, Document, DrawableFrame,
+    PreviewValues,
+};
 
 use crate::expression::ExpressionRuntime;
 use crate::motion_runtime::MotionRuntime;
@@ -525,6 +528,18 @@ impl MotionPreview {
     /// Model opacity remains separate in [`MotionSnapshot::model_opacity`].
     /// Does not advance playback. Returns [`AnimationError::Evaluation`] on failure.
     pub fn evaluate_drawables(&self) -> Result<DrawableFrame, AnimationError> {
+        self.evaluate_drawables_with_hidden_geometry(false)
+    }
+
+    /// Preserve hidden mesh positions for frozen observation queries.
+    pub fn evaluate_drawables_including_hidden(&self) -> Result<DrawableFrame, AnimationError> {
+        self.evaluate_drawables_with_hidden_geometry(true)
+    }
+
+    fn evaluate_drawables_with_hidden_geometry(
+        &self,
+        include_hidden: bool,
+    ) -> Result<DrawableFrame, AnimationError> {
         let values: PreviewValues = self
             .snapshot
             .parameters
@@ -532,7 +547,11 @@ impl MotionPreview {
             .map(|(id, value)| (id.clone(), *value))
             .collect();
         let mut frame = DrawableFrame::default();
-        let status = evaluate_frame(&self.document, &values, &mut frame);
+        let status = if include_hidden {
+            evaluate_frame_including_hidden(&self.document, &values, &mut frame)
+        } else {
+            evaluate_frame(&self.document, &values, &mut frame)
+        };
         if status.is_ok() {
             // Core evaluation does not carry runtime Part opacity. Apply it to
             // each drawable once; Offscreen opacity is an independent factor.

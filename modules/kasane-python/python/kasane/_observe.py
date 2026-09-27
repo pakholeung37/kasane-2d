@@ -1,4 +1,6 @@
 """GPU observation and reproducible observation-run reports."""
+# Native implementations are compiled extensions; their source contract is _native.pyi.
+# pyright: reportMissingModuleSource=false
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -9,8 +11,8 @@ import math
 from pathlib import Path
 import platform
 import struct
-from typing import Mapping, Sequence
-from uuid import UUID, uuid4
+from typing import Literal, Mapping, Sequence, cast
+from uuid import uuid4
 import zlib
 from . import _native as _native_module
 from ._animation import MotionPreview
@@ -19,15 +21,25 @@ from ._inspection import (
     InspectionPacket, RawInspectionRequest, append_view, check_next_view,
     open_inspection_packet, packet_from_scene,
 )
+from ._spatial import ObjectBounds, ObjectRef, HitTestResult, object_bounds, hit_test
 
 try:
-    from ._native import NativeCapturedScene, NativeObserver, ObservationFailure
+    from ._native import (
+        NativeCapturedScene as NativeCapturedScene, NativeObserver,
+        ObservationFailure as _NativeObservationFailure,
+    )
+    ObservationFailure = _NativeObservationFailure
 except ImportError:
     NativeObserver = None
     NativeCapturedScene = None
 
-    class ObservationFailure(Exception):
-        """Raised only by wheels built with the observe feature."""
+    class _UnavailableObservationFailure(Exception):
+        """Observation capability failure in a wheel without GPU support."""
+
+        code: str
+        asset_id: str | None
+
+    ObservationFailure = _UnavailableObservationFailure
 
 from ._types import (
     CanvasSnapshot,
@@ -109,6 +121,8 @@ class Observer:
         """Open a saved scene without consulting a live authoring session."""
         if not absolute_directory.is_absolute():
             raise ValueError("Scene directory must be absolute")
+        if NativeCapturedScene is None:
+            raise RuntimeError("This kasane wheel has no GPU observation feature")
         return CapturedScene(NativeCapturedScene.open_scene(str(absolute_directory)))
 
     def render_scene(
@@ -121,7 +135,65 @@ class Observer:
         )
         return RenderedSceneView(
             _frame_from_native(raw), requested, padded, visible, render_digest,
+            scene.capture_id, scene.scene_digest,
         )
+
+    def focus(
+        self, scene: CapturedScene, targets: ObjectRef | Sequence[ObjectRef], *,
+        resolution: tuple[int, int] = (1024, 1024), padding_canvas: float = 12,
+        include_hidden: bool = True,
+    ) -> FocusedSceneView:
+        """Rerender the complete scene around evaluated mesh or Part geometry.
+
+        ``include_hidden`` controls which geometry sets the ROI; it does not
+        make hidden objects visible. ``padding_canvas`` is measured in source
+        pixels. Raises ``ValueError`` when no selected geometry contributes to
+        the ROI.
+        """
+        bounds = scene.bounds(targets, include_hidden=include_hidden)
+        if bounds.canvas_bounds is None:
+            raise ValueError(f"Selected objects have no evaluated geometry: {bounds.empty_reason}")
+        roi = _nonempty_roi(bounds.canvas_bounds)
+        return FocusedSceneView(
+            self.render_scene(scene, roi=roi, resolution=resolution,
+                              padding_canvas=padding_canvas), bounds,
+        )
+
+    def focus_scenes(
+        self, scenes: Sequence[CapturedScene],
+        targets: ObjectRef | Sequence[ObjectRef], *,
+        resolution: tuple[int, int] = (1024, 1024), padding_canvas: float = 12,
+        include_hidden: bool = True, follow: bool = False,
+    ) -> tuple[FocusedSceneView, ...]:
+        """Focus same-document captures with one shared ROI by default.
+
+        The shared ROI is the union of available target bounds, preserving
+        movement between captures. ``follow=True`` uses each scene's bounds;
+        scenes with empty bounds fall back to the union ROI.
+        """
+        if not scenes:
+            raise ValueError("Focus requires at least one scene")
+        if len({scene.metadata["document_id"] for scene in scenes}) != 1:
+            raise ValueError("Focused scenes must come from one document")
+        bounds = tuple(scene.bounds(targets, include_hidden=include_hidden)
+                       for scene in scenes)
+        available = tuple(item.canvas_bounds for item in bounds
+                          if item.canvas_bounds is not None)
+        if not available:
+            raise ValueError(f"Selected objects have no evaluated geometry: "
+                             f"{bounds[0].empty_reason}")
+        xs0, ys0, xs1, ys1 = zip(*available)
+        union = _nonempty_roi((min(xs0), min(ys0), max(xs1), max(ys1)))
+        if follow:
+            rois = tuple(_nonempty_roi(item.canvas_bounds)
+                         if item.canvas_bounds is not None else union
+                         for item in bounds)
+        else:
+            rois = (union,) * len(scenes)
+        return tuple(FocusedSceneView(
+            self.render_scene(scene, roi=roi, resolution=resolution,
+                              padding_canvas=padding_canvas), item,
+        ) for scene, roi, item in zip(scenes, rois, bounds))
 
     def inspect_scene(
         self, scene: CapturedScene, *, request: RawInspectionRequest,
@@ -171,11 +243,13 @@ class Observer:
 
     def observe_run(
         self, session: Session, samples: Sequence[Mapping[str, float]], output: Path,
-        focus: Sequence[str] = (),
+        crop_targets: Sequence[ObjectRef] = (),
+        crop_mode: Literal["each", "union"] = "each",
     ) -> ObservationRun:
         """Render nonempty samples into a unique child of an absolute directory.
 
-        ``focus`` contains drawable IDs to crop. Return paths for the report,
+        ``crop_targets`` selects mesh or Part image crops. ``crop_mode`` selects
+        one crop per target or one crop around their union. Return paths for the report,
         frames, crops, and contact sheet. A failed run still writes a report
         and attaches ``run_directory`` to the raised exception.
         """
@@ -183,6 +257,27 @@ class Observer:
             raise ValueError("Observation output path must be absolute")
         if not samples:
             raise ValueError("Observation run requires at least one sample")
+        if crop_mode not in ("each", "union"):
+            raise ValueError("crop_mode must be 'each' or 'union'")
+        from ._spatial import _targets
+        requested_crops = _targets(crop_targets) if crop_targets else ()
+        crop_meshes: dict[ObjectRef, tuple[str, ...]] = {}
+        crop_version = session.version if requested_crops else None
+        if requested_crops:
+            resolved = session._native.resolve_spatial_targets(
+                [(target.kind, target.id) for target in requested_crops]
+            )
+            crop_meshes = {target: tuple(mesh_ids)
+                           for target, mesh_ids in zip(requested_crops, resolved)}
+            if session.version != crop_version:
+                raise RuntimeError("Document changed while resolving crop targets")
+        if crop_mode == "union" and requested_crops:
+            crop_groups = [(requested_crops, tuple(dict.fromkeys(
+                mesh_id for target in requested_crops
+                for mesh_id in crop_meshes[target])), "union")]
+        else:
+            crop_groups = [((target,), crop_meshes[target],
+                            f"{target.kind}-{target.id}") for target in requested_crops]
         output.mkdir(parents=True, exist_ok=True)
         directory = output / uuid4().hex
         frames_dir = directory / "frames"
@@ -206,33 +301,38 @@ class Observer:
         try:
             for index, requested in enumerate(samples):
                 frame = self.observe(session, requested)
+                if crop_version is not None and frame.version != crop_version:
+                    raise RuntimeError("Document changed during a crop run")
                 path = frames_dir / f"{index:03d}.png"
                 frame.save_png(path)
                 frames.append(path)
                 captured.append(frame)
                 crop_entries = []
                 bounds_by_id = {item.id: item for item in frame.drawable_bounds}
-                for object_id in focus:
-                    try:
-                        safe_id = str(UUID(object_id))
-                    except ValueError:
-                        diagnostics.append({"index": index, "object_id": object_id,
-                                            "code": "INVALID_FOCUS_ID"})
+                for group, mesh_ids, label in crop_groups:
+                    rectangles = [cast(tuple[int, int, int, int], bounds_by_id[mesh_id].bounds)
+                                  for mesh_id in mesh_ids
+                                  if mesh_id in bounds_by_id
+                                  and bounds_by_id[mesh_id].bounds is not None]
+                    if not rectangles:
+                        diagnostics.append({"index": index,
+                                            "targets": [target.__dict__ for target in group],
+                                            "code": "CROP_EMPTY"})
                         continue
-                    drawable = bounds_by_id.get(safe_id)
-                    if drawable is None or drawable.bounds is None:
-                        diagnostics.append({"index": index, "object_id": safe_id,
-                                            "code": "FOCUS_NOT_VISIBLE" if drawable else "FOCUS_NOT_FOUND"})
-                        continue
-                    x0, y0, x1, y1 = drawable.bounds
-                    cropped = _crop_rgba(frame.rgba, frame.width, drawable.bounds)
+                    x0 = min(rect[0] for rect in rectangles)
+                    y0 = min(rect[1] for rect in rectangles)
+                    x1 = max(rect[2] for rect in rectangles)
+                    y1 = max(rect[3] for rect in rectangles)
+                    cropped = _crop_rgba(frame.rgba, frame.width, (x0, y0, x1, y1))
                     crop_png = _encode_rgba_png(x1 - x0, y1 - y0, cropped)
-                    crop_path = directory / "crops" / safe_id / f"{index:03d}.png"
+                    crop_path = directory / "crops" / label / f"{index:03d}.png"
                     crop_path.parent.mkdir(parents=True, exist_ok=True)
                     crop_path.write_bytes(crop_png)
                     crops.append(crop_path)
                     crop_entries.append({
-                        "object_id": safe_id, "bounds": drawable.bounds,
+                        "object_id": group[0].id if len(group) == 1 else None,
+                        "targets": [target.__dict__ for target in group],
+                        "mesh_ids": mesh_ids, "bounds": (x0, y0, x1, y1),
                         "path": str(crop_path.relative_to(directory)),
                         "sha256": hashlib.sha256(crop_png).hexdigest(),
                     })
@@ -294,7 +394,7 @@ class Observer:
         return ObservationRun(directory, report_path, frames, crops, contact_sheet)
 
 
-def _frame_from_native(raw: tuple) -> ObservedFrame:
+def _frame_from_native(raw: _native_module.NativeFrameTuple) -> ObservedFrame:
     """Decode the legacy native tuple; the new view reuses its pixel record."""
     metadata, width, height, rgba, png, textures, adapter_name, backend = raw
     version, input_sha256, evaluation_revision, document_id, source_revision, parameters, canvas, scale, offset, bounds = metadata
@@ -310,7 +410,7 @@ def _frame_from_native(raw: tuple) -> ObservedFrame:
 class CapturedScene:
     """Frozen evaluated scene and textures, independent of later session edits."""
 
-    def __init__(self, native: NativeCapturedScene) -> None:
+    def __init__(self, native: _native_module.NativeCapturedScene) -> None:
         self._native = native
 
     @property
@@ -343,6 +443,36 @@ class CapturedScene:
         """The evaluated geometry and draw plan used by the renderer."""
         return json.loads(self._native.evaluated_frame_json())
 
+    def bounds(
+        self, targets: ObjectRef | Sequence[ObjectRef], *, include_hidden: bool = True,
+    ) -> ObjectBounds:
+        """Query target geometry in this capture's source-canvas coordinates.
+
+        Part targets include descendant meshes. Hidden geometry is included
+        unless ``include_hidden=False``; masks and occlusion are not measured.
+        """
+        return object_bounds(self._native, self.capture_id, self.scene_digest,
+                             targets, include_hidden=include_hidden)
+
+    def hit_test(
+        self, view: RenderedSceneView, point: tuple[float, float], *,
+        include_hidden: bool = True, details: bool = False,
+        max_candidates: int = 256,
+    ) -> HitTestResult:
+        """Find meshes whose evaluated triangles contain an image-space point.
+
+        ``view`` must belong to this capture. ``details=True`` includes every
+        matching triangle and interpolation data; the default groups results
+        by mesh. A hit does not imply painted or visible pixels.
+        """
+        if view.capture_id != self.capture_id or view.scene_digest != self.scene_digest:
+            raise ValueError("View belongs to another captured scene")
+        return hit_test(self._native, self.capture_id, self.scene_digest,
+                        point, view.image_to_canvas,
+                        (view.frame.width, view.frame.height),
+                        include_hidden=include_hidden, details=details,
+                        max_candidates=max_candidates)
+
     def save_scene(self, absolute_directory: Path) -> Path:
         """Write a new data-only scene bundle and return its directory."""
         if not absolute_directory.is_absolute():
@@ -353,24 +483,49 @@ class CapturedScene:
 
 @dataclass(frozen=True)
 class RenderedSceneView:
-    """An explicit ROI render plus source-canvas/image coordinate mapping."""
+    """An explicit ROI render and its source-canvas/image coordinate mapping.
+
+    ``capture_id`` and ``scene_digest`` identify the capture accepted by
+    :meth:`CapturedScene.hit_test`.
+    """
 
     frame: ObservedFrame
     requested_roi: tuple[float, float, float, float]
     padded_roi: tuple[float, float, float, float]
     visible_roi: tuple[float, float, float, float]
     render_digest: str
+    capture_id: str
+    scene_digest: str
 
     def canvas_to_image(self, point: tuple[float, float]) -> tuple[float, float]:
+        """Map a source-canvas pixel coordinate into this view's image pixels."""
         scale, (ox, oy) = self.frame.view_scale, self.frame.view_offset
         return point[0] * scale + ox, point[1] * scale + oy
 
     def image_to_canvas(self, point: tuple[float, float]) -> tuple[float, float]:
+        """Map an image pixel coordinate back into source-canvas pixels."""
         scale, (ox, oy) = self.frame.view_scale, self.frame.view_offset
         return (point[0] - ox) / scale, (point[1] - oy) / scale
 
 
-def _encode_rgba_png(width: int, height: int, rgba: bytes) -> bytes:
+@dataclass(frozen=True)
+class FocusedSceneView:
+    """A rerendered ROI view and this scene's queried target bounds."""
+
+    view: RenderedSceneView
+    bounds: ObjectBounds
+
+
+def _nonempty_roi(bounds: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+    x0, y0, x1, y1 = bounds
+    if x0 == x1:
+        x0, x1 = x0 - 0.5, x1 + 0.5
+    if y0 == y1:
+        y0, y1 = y0 - 0.5, y1 + 0.5
+    return x0, y0, x1, y1
+
+
+def _encode_rgba_png(width: int, height: int, rgba: bytes | bytearray) -> bytes:
     stride = width * 4
     if len(rgba) != stride * height:
         raise ValueError("RGBA buffer dimensions do not match")

@@ -4,6 +4,7 @@ mod diagnostics;
 mod edit;
 mod project_io;
 mod session;
+mod spatial;
 mod types;
 
 pub use assets::{
@@ -19,6 +20,10 @@ pub use kasane_project::{
     FileSystem, ImportReport, NativeFileSystem, ProjectResult, PsdImportReport, ResourceDiagnostic,
 };
 pub use session::{AuthoringSession, AuthoringSnapshot};
+pub use spatial::{
+    hit_test_geometry, object_bounds, resolve_mesh_ids, GeometryHit, GeometryQuery, ObjectBounds,
+    ObjectTarget, SpatialError, TriangleHit,
+};
 pub use types::{
     EditReceipt, GeometrySnapshot, HistoryLimits, HistoryState, ImportReceipt, MeshProperties,
     ObjectHandle, ObjectKind, PsdImportReceipt, SaveReceipt, SdkError, SourceSpace,

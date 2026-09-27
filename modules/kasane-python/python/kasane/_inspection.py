@@ -1,8 +1,9 @@
-"""O1 raw inspection packets and bounded, data-only save profiles.
+"""Raw inspection packets, geometry queries, and bounded save profiles.
 
-Presentation, geometry queries and report runs are layered on this capture in
-later stages. A packet never consults a live authoring session after capture.
+A packet never consults a live authoring session after capture.
 """
+# Native implementations are compiled extensions; their source contract is _native.pyi.
+# pyright: reportMissingModuleSource=false
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -12,8 +13,12 @@ import math
 import os
 from pathlib import Path, PurePosixPath
 from time import perf_counter
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 from uuid import uuid4
+from ._spatial import (
+    ObjectRef, ObjectBounds, HitTestResult, SpatialSource, object_bounds, hit_test,
+)
+from ._native import NativeSpatialSnapshot
 
 if TYPE_CHECKING:
     from ._observe import CapturedScene, RenderedSceneView
@@ -101,6 +106,8 @@ class RawInspectionRequest:
 
 @dataclass(frozen=True)
 class InspectionView:
+    """A saved or captured ROI view with pixel-to-canvas mapping."""
+
     view_id: str
     sample_index: int
     width: int
@@ -119,10 +126,12 @@ class InspectionView:
     frame: ObservedFrame | None = None
 
     def canvas_to_image(self, point: tuple[float, float]) -> tuple[float, float]:
+        """Map a source-canvas pixel coordinate into this view's image pixels."""
         return (point[0] * self.view_scale + self.view_offset[0],
                 point[1] * self.view_scale + self.view_offset[1])
 
     def image_to_canvas(self, point: tuple[float, float]) -> tuple[float, float]:
+        """Map an image pixel coordinate back into source-canvas pixels."""
         return ((point[0] - self.view_offset[0]) / self.view_scale,
                 (point[1] - self.view_offset[1]) / self.view_scale)
 
@@ -139,7 +148,7 @@ class PacketSaveReceipt:
 
 @dataclass(frozen=True)
 class InspectionPacket:
-    """Frozen raw views plus an optional scene for further GPU rendering."""
+    """Frozen raw views, optional geometry data, and an optional rerender scene."""
 
     capture_id: str
     scene_digest: str
@@ -152,6 +161,7 @@ class InspectionPacket:
     evaluated_frame: dict | None
     _scene: CapturedScene | None = None
     _closed: bool = False
+    _spatial: NativeSpatialSnapshot | None = None
 
     @property
     def source_kind(self) -> str:
@@ -181,7 +191,8 @@ class InspectionPacket:
             "evaluated_geometry_data": self.evaluated_frame is not None,
             "rerender_scene": self._scene is not None and not self._closed,
             "presentation": False,
-            "geometry_query": False,
+            "geometry_query": (self.authoring is not None and
+                               self.evaluated_frame is not None and not self._closed),
             "pixel_coverage_query": False,
             "playback_replay": False,
         }
@@ -190,6 +201,53 @@ class InspectionPacket:
         """Release this packet's native scene reference; saved data stays readable."""
         object.__setattr__(self, "_scene", None)
         object.__setattr__(self, "_closed", True)
+        object.__setattr__(self, "_spatial", None)
+
+    def _query_source(self) -> SpatialSource:
+        if self._closed:
+            raise _unavailable("Packet is closed")
+        if self.authoring is None or self.evaluated_frame is None:
+            raise _unavailable("Packet has no evaluated geometry")
+        if self._scene is not None:
+            return self._scene._native
+        if self._spatial is None:
+            object.__setattr__(self, "_spatial", NativeSpatialSnapshot(
+                json.dumps(self.authoring, allow_nan=False),
+                json.dumps(self.evaluated_frame, allow_nan=False),
+            ))
+        assert self._spatial is not None
+        return self._spatial
+
+    def bounds(
+        self, targets: ObjectRef | Sequence[ObjectRef], *,
+        include_hidden: bool = True,
+    ) -> ObjectBounds:
+        """Query source-canvas target bounds from retained packet geometry.
+
+        Reopened ``analysis`` and ``scene`` profiles support this query;
+        ``report`` profiles and closed packets do not.
+        """
+        return object_bounds(self._query_source(), self.capture_id,
+                             self.scene_digest, targets, include_hidden=include_hidden)
+
+    def hit_test(
+        self, view_id: str, point: tuple[float, float], *,
+        include_hidden: bool = True, details: bool = False,
+        max_candidates: int = 256,
+    ) -> HitTestResult:
+        """Find geometry candidates at an image point in ``view_id``.
+
+        Results use this packet's captured pose and remain available after an
+        ``analysis`` reopen. They do not measure texture, mask, or occlusion.
+        """
+        source = self._query_source()
+        view = next((item for item in self.views if item.view_id == view_id), None)
+        if view is None:
+            raise KeyError(f"View not found: {view_id}")
+        return hit_test(source, self.capture_id, self.scene_digest,
+                        point, view.image_to_canvas,
+                        (view.width, view.height), include_hidden=include_hidden,
+                        details=details, max_candidates=max_candidates)
 
     def __enter__(self) -> InspectionPacket:
         return self
@@ -265,7 +323,7 @@ class InspectionPacket:
                 "raw_pixel_data": profile != "report",
                 "evaluated_geometry_data": profile != "report",
                 "rerender_scene": profile == "scene",
-                "presentation": False, "geometry_query": False,
+                "presentation": False, "geometry_query": profile != "report",
                 "pixel_coverage_query": False, "playback_replay": False,
             },
             "files": hashes,
@@ -406,8 +464,12 @@ def open_inspection_packet(absolute_directory: Path) -> InspectionPacket:
         ))
     if sum(view.width * view.height for view in views) > MAX_ARTIFACT_PIXELS:
         raise ValueError("Packet artifact pixel budget exceeded")
-    authoring = _parse_json(members["authoring.json"]) if profile != "report" else None
-    evaluated = _parse_json(members["evaluated-frame.json"]) if profile != "report" else None
+    authoring = evaluated = None
+    if profile != "report":
+        authoring = _parse_json(members["authoring.json"])
+        evaluated = _parse_json(members["evaluated-frame.json"])
+        if not isinstance(authoring, dict) or not isinstance(evaluated, dict):
+            raise ValueError("Packet authoring and evaluated frame must be JSON objects")
     if profile == "scene" and (directory / "scene").is_symlink():
         raise ValueError("Scene bundle directory must not be a symlink")
     scene = None
