@@ -309,6 +309,8 @@ print('REOPEN_OK')
             edit.create_rectangle(MESH, "face", ASSET, (40, 40), (60, 60))
         with kasane.Observer(64, 64, 64) as observer:
             first = observer.observe(model)
+            if sys.platform == "darwin":
+                self.assertEqual(first.adapter_backend, "Metal")
             self.assertEqual(len(first.rgba), 64 * 64 * 4)
             self.assertTrue(first.png.startswith(b"\x89PNG\r\n\x1a\n"))
             with TemporaryDirectory() as directory:

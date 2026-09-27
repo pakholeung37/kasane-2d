@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Immutable observation inputs and wgpu harness for Kasane SDK"
+description = "Immutable observation inputs and GPU capture for Kasane SDK"
 
 [features]
 default = ["framework-texture-filtering"]
@@ -16,8 +16,6 @@ kasane-core = { path = "../kasane-core" }
 kasane-sdk = { path = "../kasane-sdk" }
 kasane-project = { path = "../kasane-project" }
 kasane-render = { path = "../kasane-render" }
-kasane-render-wgpu = { path = "../kasane-render-wgpu" }
-wgpu = { workspace = true }
 png = { workspace = true }
 sha2 = { workspace = true }
 serde = { workspace = true }
@@ -25,3 +23,10 @@ serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
+
+[target.'cfg(target_os = "macos")'.dependencies]
+kasane-render-metal = { path = "../kasane-render-metal" }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+kasane-render-wgpu = { path = "../kasane-render-wgpu" }
+wgpu = { workspace = true }

@@ -7,6 +7,7 @@
 - `modules/kasane-moc3/` — MOC3 import, export and safety checks.
 - `modules/kasane-render/` — renderer-independent scene plan.
 - `modules/kasane-render-wgpu/` — WGPU renderer.
+- `modules/kasane-render-metal/` — native Metal renderer sharing CPU planning with WGPU.
 - `modules/kasane-sdk/` — transactional Rust authoring API.
 - `modules/kasane-sdk-observe/` — immutable observation and GPU capture.
 - `modules/kasane-python/` — Python wheel and agent scripting interface.

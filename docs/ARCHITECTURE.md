@@ -5,12 +5,13 @@ Python wheel (kasane.Session) → kasane-sdk → kasane-core / kasane-project / 
              │                     │
              └── kasane.Observer → kasane-sdk-observe → kasane-project
                                                         ↓
-                                DrawableFrame → kasane-render → kasane-render-wgpu
-                                                                      │
-                                               PNG / focus crop
+                                DrawableFrame → kasane-render → kasane-render-metal (macOS)
+                                                         └────────→ kasane-render-wgpu (其他平台)
+                                                                      ↓
+                                                              PNG / focus crop
 ```
 
-`kasane-sdk` 提供隔离编辑、版本检查、undo/redo、导入、工程保存和 MOC3 导出；Python wheel 暴露脚本入口。`kasane-sdk-observe` 从已发布或未发布的会话制作只读快照，通过 `kasane-project` 读取并验证图像资源，再由 `kasane-render-wgpu` 输出帧与诊断资料。
+`kasane-sdk` 提供隔离编辑、版本检查、undo/redo、导入、工程保存和 MOC3 导出；Python wheel 暴露脚本入口。`kasane-sdk-observe` 从已发布或未发布的会话制作只读快照，通过 `kasane-project` 读取并验证图像资源，再由 macOS 上的原生 `kasane-render-metal` 或其他平台的 `kasane-render-wgpu` 输出帧与诊断资料。两个后端复用 `kasane-render` 的场景规划与 CPU 几何处理。
 
 ## SDK 与 Python 包的职责
 
@@ -28,4 +29,4 @@ Python wheel (kasane.Session) → kasane-sdk → kasane-core / kasane-project / 
 
 正式验收使用仓库外安装的 Python wheel、Rust 契约与 GPU 测试、官方/Purism Core 数值探针，以及仓库内固定的外部 GPU 参考图。参考图的输入哈希和来源记录在 `tests/fixtures/render_reference/`；[验证命令](VALIDATION.md)会检查输入与参考图身份。
 
-Godot 编辑器、Viewer、demo 和 Rust GDExtension 已从当前应用路径移除。`gd-cubism` 仍用于独立的 Cubism benchmark，不参与 SDK 或 WGPU 构建。旧实现方案和里程碑记录见 [archive](archive/)。
+Godot 编辑器、Viewer、demo 和 Rust GDExtension 已从当前应用路径移除。`gd-cubism` 仍用于独立的 Cubism benchmark，不参与 SDK 或 GPU 渲染后端构建。旧实现方案和里程碑记录见 [archive](archive/)。

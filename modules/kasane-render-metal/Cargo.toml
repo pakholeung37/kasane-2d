@@ -1,16 +1,15 @@
 [package]
-name = "kasane-render"
+name = "kasane-render-metal"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-authors.workspace = true
-description = "Backend-neutral frame validation and render planning for Kasane 2D"
 
 [dependencies]
 bytemuck = { workspace = true }
 kasane-core = { path = "../kasane-core" }
+kasane-render = { path = "../kasane-render" }
+thiserror = { workspace = true }
 
-[[bench]]
-name = "render_benchmark"
-harness = false
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33"

@@ -1,5 +1,4 @@
-//! ScenePlan-driven entry point. The old pass-stream API remains temporarily
-//! available while callers migrate, but is not used to plan this path.
+//! ScenePlan-driven wgpu renderer.
 use super::*;
 use kasane_render::{surface_layout, ScenePlan, TargetItem};
 use std::sync::Arc;
@@ -8,7 +7,7 @@ use std::sync::Arc;
 /// The host owns the device, queue, source textures and final output view.
 pub struct WgpuRenderer {
     device: wgpu::Device,
-    renderer: WgpuBasicRenderer,
+    renderer: WgpuPipelines,
     scene: ScenePlan,
     model: Option<RenderSnapshot>,
     viewport: Option<ViewportConfig>,
@@ -161,7 +160,7 @@ impl BindingCache {
     pub(super) fn prepare(
         &mut self,
         key: DrawKey,
-        renderer: &WgpuBasicRenderer,
+        renderer: &WgpuPipelines,
         queue: &wgpu::Queue,
         input: ResourceInput<'_>,
         vertex_buffer: wgpu::Buffer,
@@ -294,7 +293,7 @@ impl GeometryCache {
 impl WgpuRenderer {
     pub fn new(device: &wgpu::Device, target: WgpuTargetConfig) -> Result<Self, Status> {
         validate_target(device, target)?;
-        let renderer = WgpuBasicRenderer::new(device, target)?;
+        let renderer = WgpuPipelines::new(device, target);
         let color = create_color(device, target);
         Ok(Self {
             device: device.clone(),
@@ -314,7 +313,7 @@ impl WgpuRenderer {
     }
 
     pub fn target(&self) -> WgpuTargetConfig {
-        self.renderer.planner.target()
+        self.renderer.target
     }
 
     /// Update the output extent or format after a host surface resize.
@@ -329,14 +328,14 @@ impl WgpuRenderer {
             return Ok(());
         }
         if self.target().format != target.format {
-            self.renderer = WgpuBasicRenderer::new(device, target)?;
+            self.renderer = WgpuPipelines::new(device, target);
             self.surfaces = WgpuSurfacePool::new(target.format);
             self.masks.clear();
             self.destinations.clear();
             self.bindings = BindingCache::default();
             self.mask_signatures.clear();
         } else {
-            self.renderer.planner.target = target;
+            self.renderer.target = target;
         }
         self.color = create_color(device, target);
         self.viewport = None;

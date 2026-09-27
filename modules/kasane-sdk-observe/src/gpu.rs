@@ -1,15 +1,26 @@
 //! A reusable device and renderer for offscreen observation.
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+#[cfg(not(target_os = "macos"))]
 use std::future::Future;
+#[cfg(not(target_os = "macos"))]
 use std::sync::mpsc;
+#[cfg(not(target_os = "macos"))]
 use std::time::Duration;
 
 use kasane_core::Vec2;
 use kasane_render::{Affine2, ViewportConfig};
+#[cfg(target_os = "macos")]
+use kasane_render_metal::{
+    metal, read_rgba8, MetalContext, MetalOutputMode as BackendOutputMode,
+    MetalRenderer as BackendRenderer, MetalTargetConfig as BackendTargetConfig,
+    MetalTexture as BackendTexture, MetalTextureCatalog as BackendTextureCatalog,
+};
+#[cfg(not(target_os = "macos"))]
 use kasane_render_wgpu::{
-    WgpuEncodeTarget, WgpuOutputMode, WgpuRenderer, WgpuTargetConfig, WgpuTexture,
-    WgpuTextureCatalog,
+    WgpuEncodeTarget, WgpuOutputMode as BackendOutputMode, WgpuRenderer as BackendRenderer,
+    WgpuTargetConfig as BackendTargetConfig, WgpuTexture as BackendTexture,
+    WgpuTextureCatalog as BackendTextureCatalog,
 };
 use kasane_sdk::Version;
 use sha2::{Digest, Sha256};
@@ -82,7 +93,11 @@ impl ObservedFrame {
 }
 
 struct OwnedTexture {
+    #[cfg(not(target_os = "macos"))]
     _texture: wgpu::Texture,
+    #[cfg(target_os = "macos")]
+    view: metal::Texture,
+    #[cfg(not(target_os = "macos"))]
     view: wgpu::TextureView,
     width: u32,
     height: u32,
@@ -101,9 +116,13 @@ impl std::fmt::Write for DigestWriter<'_> {
 
 pub struct Observer {
     config: ObserverConfig,
+    #[cfg(target_os = "macos")]
+    context: MetalContext,
+    #[cfg(not(target_os = "macos"))]
     device: wgpu::Device,
+    #[cfg(not(target_os = "macos"))]
     queue: wgpu::Queue,
-    renderer: WgpuRenderer,
+    renderer: BackendRenderer,
     textures: HashMap<String, OwnedTexture>,
     next_texture_revision: u64,
     adapter_name: String,
@@ -118,6 +137,7 @@ fn error(code: &str, message: impl Into<String>) -> ObservationError {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 fn block_on<F: Future>(future: F) -> F::Output {
     let mut future = std::pin::pin!(future);
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -141,36 +161,75 @@ impl Observer {
                 "Output size and fit_long_side must be positive",
             ));
         }
-        let instance = wgpu::Instance::default();
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
-            .map_err(|failure| error("GPU_ADAPTER", failure.to_string()))?;
-        let info = adapter.get_info();
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
-            .map_err(|failure| error("GPU_DEVICE", failure.to_string()))?;
-        let limit = device.limits().max_texture_dimension_2d;
-        if config.width > limit || config.height > limit {
-            return Err(error(
-                "OUTPUT_SIZE_LIMIT",
-                format!("Output size exceeds the device limit {limit}x{limit}"),
-            ));
-        }
-        let renderer = WgpuRenderer::new(
-            &device,
-            WgpuTargetConfig {
-                width: config.width,
-                height: config.height,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-            },
-        )
-        .map_err(|status| error(&status.code, status.message))?;
+        #[cfg(target_os = "macos")]
+        let (context, renderer, adapter_name) = {
+            let context =
+                MetalContext::new().map_err(|failure| error("GPU_ADAPTER", failure.to_string()))?;
+            let limit = context.max_texture_dimension();
+            if config.width > limit || config.height > limit {
+                return Err(error(
+                    "OUTPUT_SIZE_LIMIT",
+                    format!("Output size exceeds the device limit {limit}x{limit}"),
+                ));
+            }
+            let renderer = BackendRenderer::new(
+                &context,
+                BackendTargetConfig {
+                    width: config.width,
+                    height: config.height,
+                    format: metal::MTLPixelFormat::RGBA8Unorm,
+                },
+            )
+            .map_err(|status| error(&status.code, status.message))?;
+            let adapter_name = context.name().to_owned();
+            (context, renderer, adapter_name)
+        };
+        #[cfg(not(target_os = "macos"))]
+        let (info, device, queue, renderer) = {
+            let instance = wgpu::Instance::default();
+            let adapter =
+                block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
+                    .map_err(|failure| error("GPU_ADAPTER", failure.to_string()))?;
+            let info = adapter.get_info();
+            let (device, queue) =
+                block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+                    .map_err(|failure| error("GPU_DEVICE", failure.to_string()))?;
+            let limit = device.limits().max_texture_dimension_2d;
+            if config.width > limit || config.height > limit {
+                return Err(error(
+                    "OUTPUT_SIZE_LIMIT",
+                    format!("Output size exceeds the device limit {limit}x{limit}"),
+                ));
+            }
+            let renderer = BackendRenderer::new(
+                &device,
+                BackendTargetConfig {
+                    width: config.width,
+                    height: config.height,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                },
+            )
+            .map_err(|status| error(&status.code, status.message))?;
+            (info, device, queue, renderer)
+        };
         Ok(Self {
             config,
+            #[cfg(target_os = "macos")]
+            context,
+            #[cfg(not(target_os = "macos"))]
             device,
+            #[cfg(not(target_os = "macos"))]
             queue,
             renderer,
             textures: HashMap::new(),
             next_texture_revision: 1,
+            #[cfg(target_os = "macos")]
+            adapter_name,
+            #[cfg(not(target_os = "macos"))]
             adapter_name: info.name,
+            #[cfg(target_os = "macos")]
+            adapter_backend: "Metal".into(),
+            #[cfg(not(target_os = "macos"))]
             adapter_backend: format!("{:?}", info.backend),
         })
     }
@@ -184,6 +243,9 @@ impl Observer {
     }
 
     fn upload_textures(&mut self, resolved: &[ResolvedTexture]) -> Result<(), ObservationError> {
+        #[cfg(target_os = "macos")]
+        let limit = self.context.max_texture_dimension();
+        #[cfg(not(target_os = "macos"))]
         let limit = self.device.limits().max_texture_dimension_2d;
         for texture in resolved {
             let width = texture.data.width;
@@ -217,61 +279,76 @@ impl Observer {
             } else {
                 Vec::new()
             };
-            let source = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("sdk-observe.source"),
-                size: wgpu::Extent3d {
-                    width: texture.data.width,
-                    height: texture.data.height,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: 1 + mipmaps.len() as u32,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            self.queue.write_texture(
-                source.as_image_copy(),
-                &texture.data.rgba,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(texture.data.width * 4),
-                    rows_per_image: Some(texture.data.height),
-                },
-                wgpu::Extent3d {
-                    width: texture.data.width,
-                    height: texture.data.height,
-                    depth_or_array_layers: 1,
-                },
-            );
-            for (index, (width, height, rgba)) in mipmaps.iter().enumerate() {
-                self.queue.write_texture(
-                    wgpu::TexelCopyTextureInfo {
-                        texture: &source,
-                        mip_level: 1 + index as u32,
-                        origin: wgpu::Origin3d::ZERO,
-                        aspect: wgpu::TextureAspect::All,
+            #[cfg(target_os = "macos")]
+            let view = self
+                .context
+                .upload_rgba8(
+                    texture.data.width,
+                    texture.data.height,
+                    &texture.data.rgba,
+                    &mipmaps,
+                )
+                .map_err(|status| error(&status.code, status.message))?;
+            #[cfg(not(target_os = "macos"))]
+            let (source, view) = {
+                let source = self.device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("sdk-observe.source"),
+                    size: wgpu::Extent3d {
+                        width: texture.data.width,
+                        height: texture.data.height,
+                        depth_or_array_layers: 1,
                     },
-                    rgba,
+                    mip_level_count: 1 + mipmaps.len() as u32,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                self.queue.write_texture(
+                    source.as_image_copy(),
+                    &texture.data.rgba,
                     wgpu::TexelCopyBufferLayout {
                         offset: 0,
-                        bytes_per_row: Some(width * 4),
-                        rows_per_image: Some(*height),
+                        bytes_per_row: Some(texture.data.width * 4),
+                        rows_per_image: Some(texture.data.height),
                     },
                     wgpu::Extent3d {
-                        width: *width,
-                        height: *height,
+                        width: texture.data.width,
+                        height: texture.data.height,
                         depth_or_array_layers: 1,
                     },
                 );
-            }
-            let view = source.create_view(&wgpu::TextureViewDescriptor::default());
+                for (index, (width, height, rgba)) in mipmaps.iter().enumerate() {
+                    self.queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &source,
+                            mip_level: 1 + index as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        rgba,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(width * 4),
+                            rows_per_image: Some(*height),
+                        },
+                        wgpu::Extent3d {
+                            width: *width,
+                            height: *height,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+                let view = source.create_view(&wgpu::TextureViewDescriptor::default());
+                (source, view)
+            };
             let revision = self.next_texture_revision;
             self.next_texture_revision += 1;
             self.textures.insert(
                 id,
                 OwnedTexture {
+                    #[cfg(not(target_os = "macos"))]
                     _texture: source,
                     view,
                     width: texture.data.width,
@@ -309,6 +386,9 @@ impl Observer {
         let (width, height) = request.map_or((self.config.width, self.config.height), |view| {
             (view.width, view.height)
         });
+        #[cfg(target_os = "macos")]
+        let limit = self.context.max_texture_dimension();
+        #[cfg(not(target_os = "macos"))]
         let limit = self.device.limits().max_texture_dimension_2d;
         if width > limit || height > limit || request.is_some_and(|_| width > 4096 || height > 4096)
         {
@@ -359,23 +439,29 @@ impl Observer {
         }
         let input_sha256 = format!("{:x}", digest.finalize());
         self.upload_textures(resolved)?;
+        let target = BackendTargetConfig {
+            width,
+            height,
+            #[cfg(target_os = "macos")]
+            format: metal::MTLPixelFormat::RGBA8Unorm,
+            #[cfg(not(target_os = "macos"))]
+            format: wgpu::TextureFormat::Rgba8Unorm,
+        };
+        #[cfg(target_os = "macos")]
         self.renderer
-            .resize(
-                &self.device,
-                WgpuTargetConfig {
-                    width,
-                    height,
-                    format: wgpu::TextureFormat::Rgba8Unorm,
-                },
-            )
+            .resize(target)
             .map_err(|status| error(&status.code, status.message))?;
-        let mut catalog = WgpuTextureCatalog::new(
+        #[cfg(not(target_os = "macos"))]
+        self.renderer
+            .resize(&self.device, target)
+            .map_err(|status| error(&status.code, status.message))?;
+        let mut catalog = BackendTextureCatalog::new(
             self.textures
                 .iter()
                 .map(|(id, texture)| {
                     (
                         id.clone(),
-                        WgpuTexture {
+                        BackendTexture {
                             view: &texture.view,
                             width: texture.width,
                             height: texture.height,
@@ -389,6 +475,11 @@ impl Observer {
             catalog.set_repeat(id.clone(), cfg!(feature = "framework-texture-filtering"));
         }
         let status = |s: kasane_core::Status| error(&s.code, s.message);
+        #[cfg(target_os = "macos")]
+        self.renderer
+            .sync_model(&input.frame, &catalog)
+            .map_err(status)?;
+        #[cfg(not(target_os = "macos"))]
         self.renderer
             .sync_model(&self.device, &input.frame, &catalog)
             .map_err(status)?;
@@ -441,7 +532,11 @@ impl Observer {
             .collect();
         let rgba = render_sample(
             &mut self.renderer,
+            #[cfg(target_os = "macos")]
+            &self.context,
+            #[cfg(not(target_os = "macos"))]
             &self.device,
+            #[cfg(not(target_os = "macos"))]
             &self.queue,
             &catalog,
             width,
@@ -500,12 +595,57 @@ impl Observer {
     }
 }
 
+#[cfg(target_os = "macos")]
 #[allow(clippy::too_many_arguments)]
 fn render_sample(
-    renderer: &mut WgpuRenderer,
+    renderer: &mut BackendRenderer,
+    context: &MetalContext,
+    catalog: &BackendTextureCatalog<'_>,
+    width: u32,
+    height: u32,
+    scale: f32,
+    offset_x: f32,
+    offset_y: f32,
+) -> Result<Vec<u8>, ObservationError> {
+    // Drain native command buffers even on Python/Rust worker threads.
+    metal::objc::rc::autoreleasepool(|| {
+        let view = ViewportConfig {
+            transform: Affine2 {
+                a: Vec2::new(scale, 0.0),
+                b: Vec2::new(0.0, scale),
+                origin: Vec2::new(offset_x, offset_y),
+            },
+            target_extent: Vec2::new(width as f32, height as f32),
+            mask_scale: scale as f64,
+        };
+        let status = |s: kasane_core::Status| error(&s.code, s.message);
+        renderer.update_view(view).map_err(status)?;
+        let target = BackendTargetConfig {
+            width,
+            height,
+            format: metal::MTLPixelFormat::RGBA8Unorm,
+        };
+        let output = context.output_texture(target).map_err(status)?;
+        let command = context.queue().new_command_buffer();
+        renderer
+            .encode(command, &output, BackendOutputMode::Replace, catalog)
+            .map_err(status)?;
+        command.commit();
+        command.wait_until_completed();
+        if command.status() != metal::MTLCommandBufferStatus::Completed {
+            return Err(error("GPU_SUBMIT", "Metal command buffer failed"));
+        }
+        read_rgba8(&output).map_err(status)
+    })
+}
+
+#[cfg(not(target_os = "macos"))]
+#[allow(clippy::too_many_arguments)]
+fn render_sample(
+    renderer: &mut BackendRenderer,
     device: &wgpu::Device,
     queue: &wgpu::Queue,
-    catalog: &WgpuTextureCatalog<'_>,
+    catalog: &BackendTextureCatalog<'_>,
     width: u32,
     height: u32,
     scale: f32,
@@ -548,7 +688,7 @@ fn render_sample(
                 queue,
                 encoder: &mut encoder,
                 output: &output_view,
-                output_mode: WgpuOutputMode::Replace,
+                output_mode: BackendOutputMode::Replace,
             },
             catalog,
         )

@@ -1,12 +1,6 @@
 use super::*;
 
-#[repr(C)]
-#[derive(Clone, Copy, PartialEq, Pod, Zeroable)]
-pub(super) struct Vertex {
-    pub(super) position: [f32; 2],
-    pub(super) uv: [f32; 2],
-    pub(super) mask_point: [f32; 2],
-}
+pub(super) use kasane_render::gpu::Vertex;
 
 pub(super) const VERTEX_ATTRIBUTES: [wgpu::VertexAttribute; 3] = wgpu::vertex_attr_array![
     0 => Float32x2,
@@ -162,13 +156,9 @@ pub(super) fn create_pipeline(
     })
 }
 
-/// WGPU renderer with a flat normal-draw entry point and a full scene path.
-///
-/// Device and queue ownership stay with the host application. This keeps the
-/// backend usable with a window surface, an offscreen target, or an embedding
-/// runtime that already manages adapter selection and device loss.
-pub struct WgpuBasicRenderer {
-    pub(super) planner: WgpuFramePlanner,
+/// Pipeline and binding resources owned by the scene renderer.
+pub(super) struct WgpuPipelines {
+    pub(super) target: WgpuTargetConfig,
     pub(super) pipeline: wgpu::RenderPipeline,
     pub(super) additive_pipeline: wgpu::RenderPipeline,
     pub(super) multiplicative_pipeline: wgpu::RenderPipeline,
@@ -190,9 +180,8 @@ pub struct WgpuBasicRenderer {
     pub(super) repeat_sampler: wgpu::Sampler,
 }
 
-impl WgpuBasicRenderer {
-    pub fn new(device: &wgpu::Device, target: WgpuTargetConfig) -> Result<Self, Status> {
-        let planner = WgpuFramePlanner::new(target)?;
+impl WgpuPipelines {
+    pub(super) fn new(device: &wgpu::Device, target: WgpuTargetConfig) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("kasane.wgpu.basic.shader"),
             source: wgpu::ShaderSource::Wgsl(BASIC_SHADER.into()),
@@ -468,8 +457,8 @@ impl WgpuBasicRenderer {
             ..Default::default()
         });
 
-        Ok(Self {
-            planner,
+        Self {
+            target,
             pipeline,
             additive_pipeline,
             multiplicative_pipeline,
@@ -489,11 +478,7 @@ impl WgpuBasicRenderer {
             destination_layout,
             sampler,
             repeat_sampler,
-        })
-    }
-
-    pub fn target(&self) -> WgpuTargetConfig {
-        self.planner.target()
+        }
     }
 
     pub(super) fn scene_pipelines(&self) -> ScenePipelines<'_> {
@@ -621,205 +606,5 @@ impl WgpuBasicRenderer {
             destination_bind_group,
             index_count: indices.len() as u32,
         }
-    }
-
-    /// Encode and submit one flat frame into `target_view`.
-    pub fn render<'frame, 'texture>(
-        &self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        target_view: &wgpu::TextureView,
-        frame: &'frame DrawableFrame,
-        textures: &WgpuTextureCatalog<'texture>,
-        viewport: ViewportConfig,
-    ) -> Result<WgpuBasicFrame<'frame>, Status> {
-        if !viewport.transform.is_finite() || viewport.transform.determinant().abs() < 1.0e-12 {
-            return Err(Status::error(
-                "INVALID_TRANSFORM",
-                "Preview transform must be finite and invertible.",
-            ));
-        }
-        let prepared = self.planner.prepare_basic(frame, textures, viewport)?;
-        let mut resources = Vec::with_capacity(prepared.draws.len());
-        for draw in &prepared.draws {
-            if draw.index_count == 0 {
-                continue;
-            }
-            let drawable = frame
-                .drawables
-                .iter()
-                .find(|drawable| drawable.id == draw.drawable_id)
-                .ok_or_else(|| Status::error("INVALID_RENDER_PLAN", draw.drawable_id))?;
-            let texture = textures
-                .get(draw.texture_id)
-                .ok_or_else(|| Status::error("MISSING_TEXTURE", draw.texture_id))?;
-            let vertices = vertices_for(drawable, frame, viewport);
-            let indices = triangle_indices(&drawable.indices);
-            let uniform = draw_uniform(
-                (self.planner.target.width, self.planner.target.height),
-                drawable.multiply_color,
-                drawable.screen_color,
-                drawable.opacity,
-            );
-            resources.push(self.create_resources(ResourceInput {
-                device,
-                texture_view: texture.view,
-                texture_repeat: textures.repeats(draw.texture_id),
-                vertices: &vertices,
-                indices: &indices,
-                uniform,
-                mask: None,
-                destination: None,
-            }));
-        }
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("kasane.wgpu.basic.encoder"),
-        });
-        {
-            let color_attachments = [Some(wgpu::RenderPassColorAttachment {
-                view: target_view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-            })];
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("kasane.wgpu.basic.pass"),
-                color_attachments: &color_attachments,
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            for resource in &resources {
-                pass.set_bind_group(0, &resource.texture_bind_group, &[]);
-                pass.set_bind_group(1, &resource.uniform_bind_group, &[]);
-                pass.set_vertex_buffer(0, resource.vertex_buffer.slice(..));
-                pass.set_index_buffer(resource.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..resource.index_count, 0, 0..1);
-            }
-        }
-        queue.submit(Some(encoder.finish()));
-        drop(resources);
-        Ok(prepared)
-    }
-
-    /// Encode a scene, including fixed blend modes, masks, offscreen surfaces,
-    /// and destination snapshots for extended blend modes.
-    ///
-    /// If the main target contains a destination-reading item, the host must
-    /// provide `WgpuSceneTarget::texture` and create that texture with
-    /// `TextureUsages::COPY_SRC`. The host supplies all attachment pools so it
-    /// can decide when a device-loss or resize should discard backend-owned
-    /// resources.
-    pub fn render_scene<'frame, 'texture>(
-        &self,
-        target: WgpuSceneTarget<'_>,
-        frame: &'frame DrawableFrame,
-        textures: &WgpuTextureCatalog<'texture>,
-        viewport: ViewportConfig,
-    ) -> Result<WgpuSceneFrame<'frame>, Status> {
-        let WgpuSceneTarget {
-            device,
-            queue,
-            view: target_view,
-            texture: target_texture,
-            surface_pool,
-            mask_pool,
-            destination_pool,
-        } = target;
-        if surface_pool.format() != self.planner.target.format {
-            return Err(Status::error(
-                "INVALID_TARGET",
-                "The wgpu surface pool format must match the render target format.",
-            ));
-        }
-        if let Some(texture) = target_texture {
-            if texture.width() != self.planner.target.width
-                || texture.height() != self.planner.target.height
-                || texture.format() != self.planner.target.format
-            {
-                return Err(Status::error(
-                    "INVALID_TARGET",
-                    "The supplied main target texture does not match the wgpu target config.",
-                ));
-            }
-        }
-        if !viewport.transform.is_finite() || viewport.transform.determinant().abs() < 1.0e-12 {
-            return Err(Status::error(
-                "INVALID_TRANSFORM",
-                "Preview transform must be finite and invertible.",
-            ));
-        }
-        let prepared = self.planner.prepare_scene(frame, textures, viewport)?;
-        let scene = build_scene(&prepared)?;
-        surface_pool.sync(device, &prepared)?;
-        mask_pool.sync(device, frame, &prepared, viewport)?;
-        destination_pool.sync(
-            device,
-            self.planner.target.format,
-            frame,
-            &prepared,
-            (self.planner.target.width, self.planner.target.height),
-        )?;
-        let surface_size = surface_extent(prepared.surface_size)?;
-        let surface_to_model = inverse_affine(prepared.surface_transform)?;
-        let surface_to_target = compose_affine(viewport.transform, surface_to_model);
-
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("kasane.wgpu.scene.encoder"),
-        });
-        let mut resources = Vec::new();
-        let mut rendered_surfaces = HashSet::new();
-        {
-            let mut context = SceneEncoder {
-                renderer: self,
-                pipelines: self.scene_pipelines(),
-                device,
-                encoder: &mut encoder,
-                resources: &mut resources,
-                scene: &scene,
-                surface_pool,
-                mask_pool,
-                destination_pool,
-                frame,
-                textures,
-                prepared: &prepared,
-                surface_to_model,
-                queue,
-                geometry: None,
-                bindings: None,
-                dirty_masks: None,
-            };
-            context.encode_masks()?;
-            for id in prepared.active_offscreens.iter().copied() {
-                context.encode_surface(&mut rendered_surfaces, id, surface_size)?;
-            }
-
-            context.encode_target(
-                TargetEncoding {
-                    id: None,
-                    view: target_view,
-                    texture: target_texture,
-                    size: (self.planner.target.width, self.planner.target.height),
-                    draw_transform: viewport.transform,
-                    composite_transform: surface_to_target,
-                    label: "kasane.wgpu.scene.main-pass",
-                },
-                scene.main.iter().copied(),
-            )?;
-        }
-        queue.submit(Some(encoder.finish()));
-        drop(resources);
-
-        Ok(WgpuSceneFrame {
-            prepared,
-            target: self.planner.target,
-            active_surface_count: surface_pool.len(),
-        })
     }
 }

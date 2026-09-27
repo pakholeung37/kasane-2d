@@ -256,6 +256,8 @@ fn renders_unsaved_session_and_reuses_gpu_across_changes() {
     .unwrap();
     let original = ObservationInput::capture(&session, &PreviewValues::new()).unwrap();
     let first = observer.observe(&original).unwrap();
+    #[cfg(target_os = "macos")]
+    assert_eq!(first.adapter_backend, "Metal");
     assert_eq!(first.rgba.len(), 64 * 64 * 4);
     assert!(first
         .rgba

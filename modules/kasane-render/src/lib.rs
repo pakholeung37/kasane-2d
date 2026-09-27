@@ -4,6 +4,7 @@
 //! host-engine resource. Backends consume the same plan but
 //! are free to choose different physical resource implementations.
 
+pub mod gpu;
 mod plan;
 mod scene;
 mod validation;

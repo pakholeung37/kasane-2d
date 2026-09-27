@@ -59,74 +59,8 @@ pub(super) struct MaskRenderInfo {
     pub(super) view: wgpu::TextureView,
 }
 
-pub(super) fn build_scene<'a>(prepared: &PreparedFrame<'a>) -> Result<SceneGraph<'a>, Status> {
-    let mut scene = SceneGraph {
-        main: Vec::new(),
-        surfaces: HashMap::new(),
-    };
-    let mut stack: Vec<&'a str> = Vec::new();
-
-    for pass in &prepared.passes {
-        match *pass {
-            RenderPass::Main => {}
-            RenderPass::Offscreen { id, parent } => {
-                if parent != stack.last().copied() {
-                    return Err(Status::error(
-                        "INVALID_RENDER_PLAN",
-                        "Offscreen parent does not match the active surface.",
-                    ));
-                }
-                scene.surfaces.entry(id).or_default();
-                stack.push(id);
-            }
-            RenderPass::Composite { id, parent } => {
-                let current = stack.last().copied();
-                let expected_parent = stack.iter().rev().nth(1).copied();
-                if current != Some(id) || parent != expected_parent {
-                    return Err(Status::error(
-                        "INVALID_RENDER_PLAN",
-                        "Composite pass does not match the active surface.",
-                    ));
-                }
-                scene_events(&mut scene, parent).push(SceneEvent::Composite(id));
-            }
-            // Mask attachments are rendered once before scene surfaces. The
-            // pass remains in the shared stream as a dependency marker.
-            RenderPass::Mask { .. } => {}
-            RenderPass::Draw(item) => {
-                scene_events(&mut scene, stack.last().copied()).push(SceneEvent::Draw(item));
-            }
-            RenderPass::EndOffscreen { id } => {
-                if stack.pop() != Some(id) {
-                    return Err(Status::error(
-                        "INVALID_RENDER_PLAN",
-                        "End-offscreen pass does not match the active surface.",
-                    ));
-                }
-            }
-        }
-    }
-    if !stack.is_empty() {
-        return Err(Status::error(
-            "INVALID_RENDER_PLAN",
-            "Prepared render passes contain an unclosed offscreen.",
-        ));
-    }
-    Ok(scene)
-}
-
-pub(super) fn scene_events<'scene, 'a>(
-    scene: &'scene mut SceneGraph<'a>,
-    target: Option<&'a str>,
-) -> &'scene mut Vec<SceneEvent<'a>> {
-    match target {
-        Some(id) => scene.surfaces.entry(id).or_default(),
-        None => &mut scene.main,
-    }
-}
-
 pub(super) struct SceneEncoder<'renderer, 'context, 'frame, 'texture> {
-    pub(super) renderer: &'renderer WgpuBasicRenderer,
+    pub(super) renderer: &'renderer WgpuPipelines,
     pub(super) pipelines: ScenePipelines<'renderer>,
     pub(super) device: &'context wgpu::Device,
     pub(super) encoder: &'context mut wgpu::CommandEncoder,

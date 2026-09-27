@@ -12,8 +12,7 @@ pub struct WgpuSurface {
 ///
 /// The pool deliberately owns only render targets created by this backend.
 /// External swapchain or embedding targets remain owned by the host and are
-/// passed to [`WgpuBasicRenderer::render`] or
-/// [`WgpuBasicRenderer::render_scene`].
+/// passed to [`WgpuRenderer::encode`].
 pub struct WgpuSurfacePool {
     pub(super) format: wgpu::TextureFormat,
     pub(super) surfaces: HashMap<String, WgpuSurface>,
@@ -48,71 +47,6 @@ impl WgpuDestinationPool {
             format: None,
             snapshots: HashMap::new(),
         }
-    }
-
-    /// Synchronize snapshot attachments with the targets that read destination
-    /// color in this frame.
-    pub fn sync(
-        &mut self,
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-        frame: &DrawableFrame,
-        prepared: &PreparedFrame<'_>,
-        main_size: (u32, u32),
-    ) -> Result<(), Status> {
-        let (surface_width, surface_height) = surface_extent(prepared.surface_size)?;
-        let required = destination_targets(frame, prepared);
-
-        if self.format != Some(format) {
-            self.snapshots.clear();
-            self.format = Some(format);
-        }
-        self.snapshots.retain(|id, _| required.contains(id));
-
-        for id in required {
-            let (width, height) = if id.is_empty() {
-                main_size
-            } else {
-                (surface_width, surface_height)
-            };
-            if width == 0 || height == 0 {
-                return Err(Status::error(
-                    "INVALID_TARGET",
-                    "Destination snapshot extents must be positive.",
-                ));
-            }
-            let needs_recreate = self
-                .snapshots
-                .get(&id)
-                .is_none_or(|snapshot| snapshot.width != width || snapshot.height != height);
-            if needs_recreate {
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("kasane.wgpu.destination"),
-                    size: wgpu::Extent3d {
-                        width,
-                        height,
-                        depth_or_array_layers: 1,
-                    },
-                    mip_level_count: 1,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
-                    view_formats: &[],
-                });
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                self.snapshots.insert(
-                    id,
-                    WgpuDestination {
-                        width,
-                        height,
-                        view,
-                        _texture: texture,
-                    },
-                );
-            }
-        }
-        Ok(())
     }
 
     pub(super) fn get(&self, target: Option<&str>) -> Option<&WgpuDestination> {
@@ -289,48 +223,7 @@ impl WgpuMaskPool {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct MaskLayout {
-    pub(super) width: u32,
-    pub(super) height: u32,
-    pub(super) origin: Vec2,
-    pub(super) logical_size: Vec2,
-    pub(super) scale: f32,
-}
-
-#[derive(Clone, Copy, Default)]
-pub(super) struct MaskRect {
-    pub(super) position: Vec2,
-    pub(super) size: Vec2,
-}
-
-impl MaskRect {
-    pub(super) fn expand(self, point: Vec2) -> Self {
-        let end = Vec2::new(self.position.x + self.size.x, self.position.y + self.size.y);
-        let min = Vec2::new(self.position.x.min(point.x), self.position.y.min(point.y));
-        let max = Vec2::new(end.x.max(point.x), end.y.max(point.y));
-        Self {
-            position: min,
-            size: Vec2::new(max.x - min.x, max.y - min.y),
-        }
-    }
-
-    pub(super) fn grow(self, amount: f32) -> Self {
-        Self {
-            position: Vec2::new(self.position.x - amount, self.position.y - amount),
-            size: Vec2::new(self.size.x + amount * 2.0, self.size.y + amount * 2.0),
-        }
-    }
-}
-
-#[cfg(test)]
-pub(super) fn mask_layout(
-    frame: &DrawableFrame,
-    source_ids: &[String],
-    requested_scale: f64,
-) -> Result<MaskLayout, Status> {
-    mask_layout_with_limit(frame, source_ids, requested_scale, 4096)
-}
+pub(super) use kasane_render::gpu::MaskLayout;
 
 pub(super) fn mask_layout_with_limit(
     frame: &DrawableFrame,
@@ -338,48 +231,7 @@ pub(super) fn mask_layout_with_limit(
     requested_scale: f64,
     max_dimension: u32,
 ) -> Result<MaskLayout, Status> {
-    if !requested_scale.is_finite() || requested_scale <= 0.0 {
-        return Err(Status::error(
-            "INVALID_MASK_SCALE",
-            "Mask scale must be finite and positive.",
-        ));
-    }
-    let mut bounds = None;
-    for source_id in source_ids {
-        let drawable = frame
-            .drawables
-            .iter()
-            .find(|drawable| drawable.id == *source_id)
-            .ok_or_else(|| Status::error("INVALID_MASK", source_id))?;
-        for position in &drawable.positions {
-            let point = Vec2::new(
-                position.x * frame.canvas.pixels_per_unit + frame.canvas.origin.x,
-                frame.canvas.origin.y - position.y * frame.canvas.pixels_per_unit,
-            );
-            bounds = Some(
-                bounds
-                    .map(|current: MaskRect| current.expand(point))
-                    .unwrap_or(MaskRect {
-                        position: point,
-                        size: Vec2::new(0.0, 0.0),
-                    }),
-            );
-        }
-    }
-    let bounds = bounds.unwrap_or_default().grow(4.0);
-    let size_x = bounds.size.x.ceil().max(1.0);
-    let size_y = bounds.size.y.ceil().max(1.0);
-    let max_dim = size_x.max(size_y);
-    let scale = (requested_scale as f32).min(max_dimension as f32 / max_dim);
-    let width = (size_x * scale).ceil().max(1.0);
-    let height = (size_y * scale).ceil().max(1.0);
-    Ok(MaskLayout {
-        width: width as u32,
-        height: height as u32,
-        origin: bounds.position,
-        logical_size: Vec2::new(width / scale, height / scale),
-        scale,
-    })
+    kasane_render::gpu::mask_layout(frame, source_ids, requested_scale, max_dimension)
 }
 
 impl WgpuSurfacePool {
@@ -478,51 +330,4 @@ pub(super) fn surface_extent(size: Size2) -> Result<(u32, u32), Status> {
         ));
     }
     Ok((width, height))
-}
-
-pub(super) fn destination_targets(
-    frame: &DrawableFrame,
-    prepared: &PreparedFrame<'_>,
-) -> HashSet<String> {
-    let mut targets = HashSet::new();
-    let mut stack: Vec<&str> = Vec::new();
-
-    for pass in &prepared.passes {
-        match *pass {
-            RenderPass::Main => {}
-            RenderPass::Offscreen { id, .. } => stack.push(id),
-            RenderPass::Composite { id, parent } => {
-                if prepared.destination_reads.contains(id)
-                    && prepared.active_offscreens.contains(id)
-                {
-                    targets.insert(parent.unwrap_or_default().to_owned());
-                }
-            }
-            RenderPass::Draw(item) => {
-                if !prepared.destination_reads.contains(item.drawable_id)
-                    || stack
-                        .iter()
-                        .any(|id| !prepared.active_offscreens.contains(id))
-                {
-                    continue;
-                }
-                let is_visible_destination_read = frame
-                    .drawables
-                    .iter()
-                    .find(|drawable| drawable.id == item.drawable_id)
-                    .is_some_and(|drawable| {
-                        drawable.visible && drawable.opacity > 0.0 && !drawable.indices.is_empty()
-                    });
-                if is_visible_destination_read {
-                    targets.insert(stack.last().copied().unwrap_or_default().to_owned());
-                }
-            }
-            RenderPass::EndOffscreen { id } => {
-                debug_assert_eq!(stack.pop(), Some(id));
-            }
-            RenderPass::Mask { .. } => {}
-        }
-    }
-
-    targets
 }
