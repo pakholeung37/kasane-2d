@@ -35,7 +35,7 @@ Python wheel 验证：
 ```sh
 uv build --wheel --python 3.14 --out-dir target/python-wheels modules/kasane-python
 cd /tmp
-uv run --no-project --no-cache --python 3.14 --with /absolute/path/to/kasane-0.1.0-cp314-cp314-macosx_11_0_arm64.whl python /absolute/path/to/kesane-2d/modules/kasane-python/tests/test_cpu.py
+uv run --no-project --no-cache --python 3.14 --with /absolute/path/to/kasane-0.1.0-cp314-cp314-macosx_11_0_arm64.whl python /absolute/path/to/kasane-2d/modules/kasane-python/tests/test_cpu.py
 ```
 
 上面的绝对路径应替换为当前仓库 `target/python-wheels` 中实际 wheel 路径。
