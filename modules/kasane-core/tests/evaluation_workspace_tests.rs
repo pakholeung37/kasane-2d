@@ -332,3 +332,35 @@ fn keyform_order_edit_invalidates_prepared_group_bounds() {
         .is_ok());
     assert!(frame.drawables[0].render_order > frame.drawables[1].render_order);
 }
+
+#[test]
+fn opacity_edits_preserve_prepared_topology_and_reject_invalid_values() {
+    let mut doc = document(2);
+    let mut before = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &PreviewValues::default(), &mut before).is_ok());
+    let edit = doc.set_mesh_opacity(&id(3), 0.5);
+    assert!(edit.status.is_ok());
+    assert_eq!(edit.changes.kind, ChangeKind::Appearance);
+    let mut after = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &PreviewValues::default(), &mut after).is_ok());
+    assert_eq!(after.drawables[0].opacity, 0.5);
+    assert_eq!(before.drawables[0].positions, after.drawables[0].positions);
+    assert!(std::sync::Arc::ptr_eq(
+        &before.drawables[0].indices,
+        &after.drawables[0].indices
+    ));
+    assert!(std::sync::Arc::ptr_eq(
+        &before.drawables[0].uvs,
+        &after.drawables[0].uvs
+    ));
+    let revision = doc.revision();
+    for value in [f32::NAN, f32::INFINITY, -0.1, 1.1] {
+        assert!(!doc.set_mesh_opacity(&id(3), value).status.is_ok());
+        assert_eq!(doc.revision(), revision);
+    }
+    assert!(!doc.set_mesh_opacity(&id(999), 0.5).status.is_ok());
+    assert_eq!(
+        doc.set_mesh_opacity(&id(3), 0.5).changes.kind,
+        ChangeKind::None
+    );
+}

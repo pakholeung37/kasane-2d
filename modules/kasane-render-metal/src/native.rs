@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::ffi::c_void;
+use std::sync::Arc;
 
 use bytemuck::{Pod, Zeroable};
 use kasane_core::evaluation::{DrawableFrame, OffscreenFrame};
@@ -162,7 +162,10 @@ pub enum MetalOutputMode {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MetalRenderStats {
     pub draw_calls: usize,
+    pub render_passes: usize,
     pub masks: usize,
+    pub mask_cache_hits: usize,
+    pub buffer_uploads: usize,
     pub active_surfaces: usize,
     pub destination_copies: usize,
 }
@@ -309,7 +312,6 @@ struct Pipelines {
     mask: RenderPipelineState,
     extended_draw: RenderPipelineState,
     extended_composite: RenderPipelineState,
-    present_replace: RenderPipelineState,
     present_composite: RenderPipelineState,
 }
 
@@ -329,7 +331,6 @@ impl Pipelines {
             mask: build("fs_mask", MTLPixelFormat::RGBA8Unorm, Blend::Normal)?,
             extended_draw: build("fs_extended_draw", format, Blend::Replace)?,
             extended_composite: build("fs_extended_composite", format, Blend::Replace)?,
-            present_replace: build("fs_present", format, Blend::Replace)?,
             present_composite: build("fs_present", format, Blend::Normal)?,
         })
     }
@@ -464,8 +465,86 @@ pub struct MetalRenderer {
     clamp_sampler: SamplerState,
     repeat_sampler: SamplerState,
     scene: ScenePlan,
-    frame: Option<DrawableFrame>,
+    frame: Option<Arc<DrawableFrame>>,
     viewport: Option<ViewportConfig>,
+    meshes: Vec<MeshBuffers>,
+    quad: MeshBuffers,
+    next_geometry_revision: u64,
+    pending_uploads: usize,
+    mask_cache: HashMap<MaskCacheKey, CachedMask>,
+}
+
+/// Immutable buffers can be retained by several submitted command buffers.
+/// An edit replaces only changed buffers; it never overwrites in-flight data.
+#[derive(Clone)]
+struct MeshBuffers {
+    vertices: Arc<[Vertex]>,
+    indices: Arc<[u32]>,
+    vertex: Buffer,
+    index: Buffer,
+    vertex_offset: u64,
+    index_offset: u64,
+    revision: u64,
+}
+
+fn upload_buffer<T>(device: &DeviceRef, data: &[T]) -> Buffer {
+    if data.is_empty() {
+        device.new_buffer(4, MTLResourceOptions::StorageModeShared)
+    } else {
+        device.new_buffer_with_data(
+            data.as_ptr().cast(),
+            std::mem::size_of_val(data) as u64,
+            MTLResourceOptions::StorageModeShared,
+        )
+    }
+}
+
+impl MeshBuffers {
+    fn new(device: &DeviceRef, vertices: Vec<Vertex>, indices: Vec<u32>, revision: u64) -> Self {
+        Self {
+            vertex: upload_buffer(device, &vertices),
+            index: upload_buffer(device, &indices),
+            vertex_offset: 0,
+            index_offset: 0,
+            vertices: vertices.into(),
+            indices: indices.into(),
+            revision,
+        }
+    }
+}
+
+/// Pack changed meshes into immutable slabs instead of allocating a Metal
+/// resource per mesh. Limit slab size so a small retained mesh does not pin an
+/// arbitrarily large allocation after subsequent partial edits.
+fn pack_buffers<T: Copy>(
+    device: &DeviceRef,
+    updates: &[(usize, &[T])],
+) -> (Vec<(usize, Buffer, u64)>, usize) {
+    let limit = device.max_buffer_length().min(4 * 1024 * 1024) as usize;
+    let mut data = Vec::<T>::new();
+    let mut offsets = Vec::new();
+    let mut packed = Vec::new();
+    let mut uploads = 0;
+    let mut flush = |data: &mut Vec<T>, offsets: &mut Vec<(usize, u64)>| {
+        if offsets.is_empty() {
+            return;
+        }
+        let buffer = upload_buffer(device, data);
+        uploads += 1;
+        for (index, offset) in offsets.drain(..) {
+            packed.push((index, buffer.clone(), offset));
+        }
+        data.clear();
+    };
+    for &(index, values) in updates {
+        if (data.len() + values.len()) * std::mem::size_of::<T>() > limit {
+            flush(&mut data, &mut offsets);
+        }
+        offsets.push((index, (data.len() * std::mem::size_of::<T>()) as u64));
+        data.extend_from_slice(values);
+    }
+    flush(&mut data, &mut offsets);
+    (packed, uploads)
 }
 
 impl MetalRenderer {
@@ -483,6 +562,16 @@ impl MetalRenderer {
             scene: ScenePlan::default(),
             frame: None,
             viewport: None,
+            meshes: Vec::new(),
+            quad: MeshBuffers::new(
+                &context.device,
+                quad_vertices((1, 1), Affine2::IDENTITY, Affine2::IDENTITY),
+                quad_indices(),
+                0,
+            ),
+            next_geometry_revision: 1,
+            pending_uploads: 0,
+            mask_cache: HashMap::new(),
         })
     }
 
@@ -507,6 +596,15 @@ impl MetalRenderer {
         frame: &DrawableFrame,
         textures: &MetalTextureCatalog<'_>,
     ) -> Result<(), Status> {
+        self.sync_model_shared(Arc::new(frame.clone()), textures)
+    }
+
+    /// Retain the host's immutable snapshot without copying all mesh positions.
+    pub fn sync_model_shared(
+        &mut self,
+        frame: Arc<DrawableFrame>,
+        textures: &MetalTextureCatalog<'_>,
+    ) -> Result<(), Status> {
         let max_buffer = self.device.max_buffer_length();
         for drawable in &frame.drawables {
             let vertex_bytes = (drawable.positions.len() as u64)
@@ -524,9 +622,93 @@ impl MetalRenderer {
             }
         }
         let mut candidate = self.scene.clone();
-        candidate.update(frame, textures)?;
+        candidate.update(&frame, textures)?;
+        let mut meshes = Vec::with_capacity(frame.drawables.len());
+        let mut vertex_updates = Vec::new();
+        let mut index_updates = Vec::new();
+        for (i, drawable) in frame.drawables.iter().enumerate() {
+            if let (Some(old), Some(previous)) = (self.meshes.get(i), self.frame.as_ref()) {
+                if previous.canvas == frame.canvas
+                    && previous.drawables.get(i).is_some_and(|d| {
+                        d.positions == drawable.positions
+                            && d.uvs == drawable.uvs
+                            && d.indices == drawable.indices
+                    })
+                {
+                    meshes.push(old.clone());
+                    continue;
+                }
+            }
+            let vertices = vertices_for(drawable, &frame);
+            let indices = triangle_indices(&drawable.indices);
+            if let Some(old) = self.meshes.get(i) {
+                let vertex_changed = old.vertices.as_ref() != vertices;
+                let index_changed = old.indices.as_ref() != indices;
+                if !vertex_changed && !index_changed {
+                    meshes.push(old.clone());
+                    continue;
+                }
+                meshes.push(MeshBuffers {
+                    vertex: if vertex_changed {
+                        vertex_updates.push(i);
+                        self.quad.vertex.clone() // Replaced by the packed upload below.
+                    } else {
+                        old.vertex.clone()
+                    },
+                    index: if index_changed {
+                        index_updates.push(i);
+                        self.quad.index.clone()
+                    } else {
+                        old.index.clone()
+                    },
+                    vertex_offset: old.vertex_offset,
+                    index_offset: old.index_offset,
+                    vertices: vertices.into(),
+                    indices: indices.into(),
+                    revision: self.next_geometry_revision,
+                });
+            } else {
+                vertex_updates.push(i);
+                index_updates.push(i);
+                meshes.push(MeshBuffers {
+                    vertex: self.quad.vertex.clone(),
+                    index: self.quad.index.clone(),
+                    vertex_offset: 0,
+                    index_offset: 0,
+                    vertices: vertices.into(),
+                    indices: indices.into(),
+                    revision: self.next_geometry_revision,
+                });
+            }
+            self.next_geometry_revision += 1;
+        }
+        let (buffers, uploads) = pack_buffers(
+            &self.device,
+            &vertex_updates
+                .iter()
+                .map(|&i| (i, meshes[i].vertices.as_ref()))
+                .collect::<Vec<_>>(),
+        );
+        self.pending_uploads += uploads;
+        for (i, buffer, offset) in buffers {
+            meshes[i].vertex = buffer;
+            meshes[i].vertex_offset = offset;
+        }
+        let (buffers, uploads) = pack_buffers(
+            &self.device,
+            &index_updates
+                .iter()
+                .map(|&i| (i, meshes[i].indices.as_ref()))
+                .collect::<Vec<_>>(),
+        );
+        self.pending_uploads += uploads;
+        for (i, buffer, offset) in buffers {
+            meshes[i].index = buffer;
+            meshes[i].index_offset = offset;
+        }
+        self.meshes = meshes;
         self.scene = candidate;
-        self.frame = Some(frame.clone());
+        self.frame = Some(frame);
         Ok(())
     }
 
@@ -567,6 +749,8 @@ impl MetalRenderer {
 
     /// Add all Metal render and blit passes to a host-owned command buffer.
     /// Commit that buffer before encoding another frame with this renderer.
+    /// Use the same command queue for the lifetime of a renderer: cached mask
+    /// writes and later reads are ordered by that queue, without CPU waits.
     pub fn encode(
         &mut self,
         command: &CommandBufferRef,
@@ -588,11 +772,13 @@ impl MetalRenderer {
         output_mode: MetalOutputMode,
         textures: &MetalTextureCatalog<'_>,
     ) -> Result<MetalRenderStats, Status> {
+        let mask_cache = std::mem::take(&mut self.mask_cache);
+        let buffer_uploads = std::mem::take(&mut self.pending_uploads);
         let frame = self
             .frame
             .as_ref()
             .ok_or_else(|| Status::error("MISSING_MODEL", "Submit a model before encoding."))?;
-        let viewport = self
+        let mut viewport = self
             .viewport
             .ok_or_else(|| Status::error("MISSING_VIEW", "Update the view before encoding."))?;
         if output.width() != self.target.width as u64
@@ -633,14 +819,37 @@ impl MetalRenderer {
             viewport.target_extent,
         )?;
         let surface_size = (size.width as u32, size.height as u32);
-        self.validate_attachment_budget(frame, viewport, surface_size)?;
+        // Raw masks do not depend on pan or the final view matrix. Round their
+        // density upward so nearby zoom levels share one high-quality mask.
+        // Keep exact density when rounding would exceed the attachment budget.
+        let rounded_scale = viewport.mask_scale.log2().ceil().exp2();
+        let rounded_view = ViewportConfig {
+            mask_scale: rounded_scale,
+            ..viewport
+        };
+        if rounded_scale.is_finite()
+            && rounded_scale > 0.
+            && self
+                .validate_attachment_budget(frame, rounded_view, surface_size)
+                .is_ok()
+        {
+            viewport = rounded_view;
+        } else {
+            self.validate_attachment_budget(frame, viewport, surface_size)?;
+        }
         let surface_to_model = inverse_affine(surface_transform)?;
-        let main_color = create_texture(
-            &self.device,
-            self.target.width,
-            self.target.height,
-            self.target.format,
-        );
+        // Replace can render directly to the host texture. Composite requires
+        // an intermediate image to preserve the host's existing background.
+        let main_color = if output_mode == MetalOutputMode::Replace {
+            output.to_owned()
+        } else {
+            create_texture(
+                &self.device,
+                self.target.width,
+                self.target.height,
+                self.target.format,
+            )
+        };
         let mut state = FrameEncoder {
             renderer: self,
             frame,
@@ -652,40 +861,49 @@ impl MetalRenderer {
             surface_to_model,
             surfaces: HashMap::new(),
             masks: HashMap::new(),
-            buffers: Vec::new(),
-            stats: MetalRenderStats::default(),
+            pass: None,
+            mask_cache,
+            used_masks: Default::default(),
+            stats: MetalRenderStats {
+                buffer_uploads,
+                ..Default::default()
+            },
         };
         state.encode_masks()?;
         state.encode_target(TargetId::MAIN, &main_color)?;
-        let vertices = quad_vertices(
-            (self.target.width, self.target.height),
-            Affine2::IDENTITY,
-            Affine2::IDENTITY,
-        );
-        let indices = quad_indices();
-        let uniform = Uniform::new(
-            (self.target.width, self.target.height),
-            [1.0; 4],
-            [0.0, 0.0, 0.0, 1.0],
-            1.0,
-        );
-        let pipeline = match output_mode {
-            MetalOutputMode::Replace => &self.pipelines.present_replace,
-            MetalOutputMode::Composite => &self.pipelines.present_composite,
-        };
-        state.draw(
-            output,
-            pipeline,
-            &main_color,
-            None,
-            None,
-            &vertices,
-            &indices,
-            &uniform,
-            false,
-            matches!(output_mode, MetalOutputMode::Replace),
-        );
-        Ok(state.stats)
+        if output_mode == MetalOutputMode::Composite {
+            let mut uniform = Uniform::new(
+                (self.target.width, self.target.height),
+                [1.0; 4],
+                [0.0, 0.0, 0.0, 1.0],
+                1.0,
+            );
+            uniform.view(Affine2 {
+                a: Vec2::new(self.target.width as f32, 0.),
+                b: Vec2::new(0., self.target.height as f32),
+                origin: Vec2::default(),
+            });
+            state.draw(
+                output,
+                &self.pipelines.present_composite,
+                &main_color,
+                None,
+                None,
+                &self.quad,
+                &uniform,
+                false,
+                false,
+            );
+        }
+        state.finish_pass();
+        state
+            .mask_cache
+            .retain(|key, _| state.used_masks.contains(key));
+        let mask_cache = std::mem::take(&mut state.mask_cache);
+        let stats = state.stats;
+        drop(state);
+        self.mask_cache = mask_cache;
+        Ok(stats)
     }
 
     pub fn render(
@@ -715,17 +933,27 @@ impl MetalRenderer {
         let bytes = |size: (u32, u32)| u64::from(size.0) * u64::from(size.1) * 4;
         let mut total = bytes((self.target.width, self.target.height));
         total = total.saturating_add(self.scene.active_target_count() as u64 * bytes(surface_size));
-        for drawable in &frame.drawables {
-            if !drawable.masks.is_empty() {
-                let layout = mask_layout(frame, &drawable.masks, viewport.mask_scale, 4096)?;
+        let mut masks = std::collections::HashSet::new();
+        let mut count_mask = |sources: &[String], scale: f64| -> Result<(), Status> {
+            if masks.insert(MaskCacheKey::new(sources, scale)) {
+                let layout = mask_layout(frame, sources, scale, 4096)?;
                 total = total.saturating_add(bytes((layout.width, layout.height)));
+            }
+            Ok(())
+        };
+        for (index, drawable) in frame.drawables.iter().enumerate() {
+            if !drawable.masks.is_empty()
+                && drawable.visible
+                && drawable.opacity > 0.
+                && !drawable.indices.is_empty()
+                && self.scene.targets()[self.scene.meshes()[index].target.0].active
+            {
+                count_mask(&drawable.masks, viewport.mask_scale)?;
             }
         }
         for (index, offscreen) in frame.offscreens.iter().enumerate() {
             if self.scene.targets()[index + 1].active && !offscreen.masks.is_empty() {
-                let layout =
-                    mask_layout(frame, &offscreen.masks, viewport.mask_scale.max(1.0), 4096)?;
-                total = total.saturating_add(bytes((layout.width, layout.height)));
+                count_mask(&offscreen.masks, viewport.mask_scale.max(1.0))?;
             }
         }
         for (index, target) in self.scene.targets().iter().enumerate() {
@@ -787,6 +1015,42 @@ struct MaskAttachment {
     layout: MaskLayout,
 }
 
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct MaskCacheKey {
+    sources: Vec<String>,
+    scale: u64,
+}
+
+impl MaskCacheKey {
+    fn new(sources: &[String], scale: f64) -> Self {
+        let mut unique = Vec::new();
+        for source in sources {
+            if !unique.contains(source) {
+                unique.push(source.clone());
+            }
+        }
+        Self {
+            sources: unique,
+            scale: scale.to_bits(),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+struct MaskSourceStamp {
+    geometry: u64,
+    texture: usize,
+    revision: Option<u64>,
+    repeat: bool,
+}
+
+struct CachedMask {
+    attachment: MaskAttachment,
+    sources: Vec<MaskSourceStamp>,
+    // Keep source identities alive while their raw pointers are in the stamps.
+    _textures: Vec<Texture>,
+}
+
 struct FrameEncoder<'a, 'tex> {
     renderer: &'a MetalRenderer,
     frame: &'a DrawableFrame,
@@ -798,14 +1062,22 @@ struct FrameEncoder<'a, 'tex> {
     surface_to_model: Affine2,
     surfaces: HashMap<TargetId, Texture>,
     masks: HashMap<String, MaskAttachment>,
-    buffers: Vec<Buffer>,
+    pass: Option<(Texture, metal::RenderCommandEncoder)>,
+    mask_cache: HashMap<MaskCacheKey, CachedMask>,
+    used_masks: std::collections::HashSet<MaskCacheKey>,
     stats: MetalRenderStats,
 }
 
 impl FrameEncoder<'_, '_> {
     fn encode_masks(&mut self) -> Result<(), Status> {
-        for drawable in &self.frame.drawables {
-            if !drawable.masks.is_empty() {
+        for (index, drawable) in self.frame.drawables.iter().enumerate() {
+            if !drawable.masks.is_empty()
+                && drawable.visible
+                && drawable.opacity > 0.
+                && !drawable.indices.is_empty()
+                && self.renderer.scene.targets()[self.renderer.scene.meshes()[index].target.0]
+                    .active
+            {
                 self.encode_mask(&drawable.id, &drawable.masks, self.viewport.mask_scale)?;
             }
         }
@@ -822,6 +1094,44 @@ impl FrameEncoder<'_, '_> {
     }
 
     fn encode_mask(&mut self, id: &str, sources: &[String], scale: f64) -> Result<(), Status> {
+        let key = MaskCacheKey::new(sources, scale);
+        let source_indices: Vec<_> = key
+            .sources
+            .iter()
+            .map(|id| {
+                self.frame
+                    .drawables
+                    .iter()
+                    .position(|d| &d.id == id)
+                    .ok_or_else(|| Status::error("INVALID_MASK", id))
+            })
+            .collect::<Result<_, _>>()?;
+        let stamps: Vec<_> = source_indices
+            .iter()
+            .map(|&index| {
+                let source = &self.frame.drawables[index];
+                let texture = self
+                    .textures
+                    .get(&source.texture_asset_id)
+                    .ok_or_else(|| Status::error("MISSING_TEXTURE", &source.texture_asset_id))?;
+                Ok(MaskSourceStamp {
+                    geometry: self.renderer.meshes[index].revision,
+                    texture: texture.view as *const TextureRef as usize,
+                    revision: self.textures.revision(&source.texture_asset_id),
+                    repeat: self.textures.repeats(&source.texture_asset_id),
+                })
+            })
+            .collect::<Result<_, Status>>()?;
+        // Unversioned textures may be changed in-place by the host. They can
+        // share a mask within this encoding, but never reuse an earlier frame.
+        if stamps.iter().all(|s| s.revision.is_some()) || self.used_masks.contains(&key) {
+            if let Some(cached) = self.mask_cache.get(&key).filter(|c| c.sources == stamps) {
+                self.masks.insert(id.to_owned(), cached.attachment.clone());
+                self.used_masks.insert(key);
+                self.stats.mask_cache_hits += 1;
+                return Ok(());
+            }
+        }
         let layout = mask_layout(self.frame, sources, scale, MAX_TEXTURE_DIMENSION.min(4096))?;
         let texture = create_texture(
             &self.renderer.device,
@@ -838,19 +1148,18 @@ impl FrameEncoder<'_, '_> {
             ),
         };
         let mut clear = true;
-        let mut seen = std::collections::HashSet::new();
-        for source_id in sources {
-            // Match ScenePlan's unique mask inputs: repeated references must
-            // not blend the same alpha into the mask more than once.
-            if !seen.insert(source_id) {
-                continue;
-            }
-            let source = self
-                .frame
-                .drawables
-                .iter()
-                .find(|mesh| mesh.id == *source_id)
-                .ok_or_else(|| Status::error("INVALID_MASK", source_id))?;
+        let retained_textures = source_indices
+            .iter()
+            .map(|&index| {
+                self.textures
+                    .get(&self.frame.drawables[index].texture_asset_id)
+                    .unwrap()
+                    .view
+                    .to_owned()
+            })
+            .collect();
+        for index in source_indices {
+            let source = &self.frame.drawables[index];
             if source.indices.is_empty() {
                 continue;
             }
@@ -858,8 +1167,6 @@ impl FrameEncoder<'_, '_> {
                 .textures
                 .get(&source.texture_asset_id)
                 .ok_or_else(|| Status::error("MISSING_TEXTURE", &source.texture_asset_id))?;
-            let vertices = vertices_for(source, self.frame);
-            let indices = triangle_indices(&source.indices);
             let mut uniform = Uniform::new(
                 (layout.width, layout.height),
                 [1.0; 4],
@@ -873,8 +1180,7 @@ impl FrameEncoder<'_, '_> {
                 texture_view.view,
                 None,
                 None,
-                &vertices,
-                &indices,
+                &self.renderer.meshes[index],
                 &uniform,
                 self.textures.repeats(&source.texture_asset_id),
                 clear,
@@ -884,8 +1190,17 @@ impl FrameEncoder<'_, '_> {
         if clear {
             self.clear(&texture);
         }
-        self.masks
-            .insert(id.to_owned(), MaskAttachment { texture, layout });
+        let attachment = MaskAttachment { texture, layout };
+        self.masks.insert(id.to_owned(), attachment.clone());
+        self.used_masks.insert(key.clone());
+        self.mask_cache.insert(
+            key,
+            CachedMask {
+                attachment,
+                sources: stamps,
+                _textures: retained_textures,
+            },
+        );
         self.stats.masks += 1;
         Ok(())
     }
@@ -989,8 +1304,6 @@ impl FrameEncoder<'_, '_> {
             .textures
             .get(&drawable.texture_asset_id)
             .ok_or_else(|| Status::error("MISSING_TEXTURE", &drawable.texture_asset_id))?;
-        let vertices = vertices_for(drawable, self.frame);
-        let indices = triangle_indices(&drawable.indices);
         let mut uniform = Uniform::new(
             size,
             drawable.multiply_color,
@@ -1028,8 +1341,7 @@ impl FrameEncoder<'_, '_> {
             texture.view,
             mask.as_ref().map(|m| m.texture.as_ref()),
             destination,
-            &vertices,
-            &indices,
+            &self.renderer.meshes[index],
             &uniform,
             self.textures.repeats(&drawable.texture_asset_id),
             clear,
@@ -1056,8 +1368,6 @@ impl FrameEncoder<'_, '_> {
             .ok_or_else(|| Status::error("MISSING_SURFACE", &group.id))?
             .clone();
         let offscreen: &OffscreenFrame = &self.frame.offscreens[child.0 - 1];
-        let vertices = quad_vertices((1, 1), Affine2::IDENTITY, Affine2::IDENTITY);
-        let indices = quad_indices();
         let mut uniform = Uniform::new(
             size,
             offscreen.multiply_color,
@@ -1092,8 +1402,7 @@ impl FrameEncoder<'_, '_> {
             &source,
             mask.as_ref().map(|m| m.texture.as_ref()),
             destination,
-            &vertices,
-            &indices,
+            &self.renderer.quad,
             &uniform,
             false,
             clear,
@@ -1102,6 +1411,7 @@ impl FrameEncoder<'_, '_> {
     }
 
     fn snapshot(&mut self, source: &TextureRef, size: (u32, u32)) -> Texture {
+        self.finish_pass();
         let destination = create_texture(
             &self.renderer.device,
             size.0,
@@ -1125,10 +1435,33 @@ impl FrameEncoder<'_, '_> {
         destination
     }
 
-    fn clear(&self, target: &TextureRef) {
-        let descriptor = render_pass(target, true);
-        let encoder = self.command.new_render_command_encoder(descriptor);
-        encoder.end_encoding();
+    fn finish_pass(&mut self) {
+        if let Some((_, encoder)) = self.pass.take() {
+            encoder.end_encoding();
+        }
+    }
+
+    fn begin_pass(&mut self, target: &TextureRef, clear: bool) {
+        if !clear
+            && self
+                .pass
+                .as_ref()
+                .is_some_and(|(texture, _)| std::ptr::eq(texture.as_ref(), target))
+        {
+            return;
+        }
+        self.finish_pass();
+        let descriptor = render_pass(target, clear);
+        let encoder = self
+            .command
+            .new_render_command_encoder(descriptor)
+            .to_owned();
+        self.pass = Some((target.to_owned(), encoder));
+        self.stats.render_passes += 1;
+    }
+
+    fn clear(&mut self, target: &TextureRef) {
+        self.begin_pass(target, true);
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1139,26 +1472,15 @@ impl FrameEncoder<'_, '_> {
         source: &TextureRef,
         mask: Option<&TextureRef>,
         destination: Option<&TextureRef>,
-        vertices: &[Vertex],
-        indices: &[u32],
+        mesh: &MeshBuffers,
         uniform: &Uniform,
         repeat: bool,
         clear: bool,
     ) {
-        let vertex = self.renderer.device.new_buffer_with_data(
-            vertices.as_ptr().cast::<c_void>(),
-            std::mem::size_of_val(vertices) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let index = self.renderer.device.new_buffer_with_data(
-            indices.as_ptr().cast::<c_void>(),
-            std::mem::size_of_val(indices) as u64,
-            MTLResourceOptions::StorageModeShared,
-        );
-        let descriptor = render_pass(target, clear);
-        let encoder = self.command.new_render_command_encoder(descriptor);
+        self.begin_pass(target, clear);
+        let encoder = &self.pass.as_ref().unwrap().1;
         encoder.set_render_pipeline_state(pipeline);
-        encoder.set_vertex_buffer(0, Some(&vertex), 0);
+        encoder.set_vertex_buffer(0, Some(&mesh.vertex), mesh.vertex_offset);
         encoder.set_vertex_bytes(
             1,
             std::mem::size_of::<Uniform>() as u64,
@@ -1186,15 +1508,18 @@ impl FrameEncoder<'_, '_> {
         encoder.set_fragment_sampler_state(2, Some(&self.renderer.clamp_sampler));
         encoder.draw_indexed_primitives(
             MTLPrimitiveType::Triangle,
-            indices.len() as u64,
+            mesh.indices.len() as u64,
             MTLIndexType::UInt32,
-            &index,
-            0,
+            &mesh.index,
+            mesh.index_offset,
         );
-        encoder.end_encoding();
-        self.buffers.push(vertex);
-        self.buffers.push(index);
         self.stats.draw_calls += 1;
+    }
+}
+
+impl Drop for FrameEncoder<'_, '_> {
+    fn drop(&mut self) {
+        self.finish_pass();
     }
 }
 

@@ -207,6 +207,7 @@ impl Document {
 
     /// Swap all persistent content while retaining the saved baseline.
     fn swap_checkpoint(&mut self, checkpoint: &mut DocumentCheckpoint, invalidate: bool) {
+        self.modified_cache.take();
         let content = &mut checkpoint.0;
         macro_rules! swap_field {
             ($field:ident) => {

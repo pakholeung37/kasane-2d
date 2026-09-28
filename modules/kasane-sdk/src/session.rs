@@ -293,6 +293,12 @@ impl AuthoringSession {
     pub fn mesh(&self, id: &str) -> Option<Mesh> {
         self.project.document().get_mesh(id).cloned()
     }
+
+    /// Borrow model data for synchronous inspection without cloning geometry or
+    /// keyforms. Mutation continues to go through an EditSession.
+    pub fn document(&self) -> &Document {
+        self.project.document()
+    }
     pub fn parameter(&self, id: &str) -> Option<Parameter> {
         self.project.document().get_parameter(id).cloned()
     }

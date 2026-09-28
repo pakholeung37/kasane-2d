@@ -301,6 +301,12 @@ impl EditSession<'_> {
         let result = self.document().rename_mesh(id, name.into());
         self.record(result, "rename_mesh", id)
     }
+    pub fn set_mesh_opacity(&mut self, id: &str, opacity: f32) -> Result<(), SdkError> {
+        self.ensure_active("set_mesh_opacity")?;
+        let result = self.document().set_mesh_opacity(id, opacity);
+        self.record(result, "set_mesh_opacity", id)
+    }
+
     pub fn update_mesh_properties(
         &mut self,
         id: &str,
@@ -606,6 +612,7 @@ fn merge_kind(a: ChangeKind, b: ChangeKind) -> ChangeKind {
         (Structure, _) | (_, Structure) => Structure,
         (Resources, _) | (_, Resources) => Resources,
         (Positions, _) | (_, Positions) => Positions,
+        (Appearance, _) | (_, Appearance) => Appearance,
         (Metadata, _) | (_, Metadata) => Metadata,
         _ => None,
     }

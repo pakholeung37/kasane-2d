@@ -6,6 +6,32 @@ const DOC: &str = "11111111-1111-4111-8111-111111111111";
 const ASSET: &str = "22222222-2222-4222-8222-222222222222";
 const MESH: &str = "33333333-3333-4333-8333-333333333333";
 
+#[test]
+fn modified_cache_tracks_initialization_and_unversioned_batch_changes() {
+    let mut doc = Document::new();
+    assert!(!doc.modified());
+    assert!(doc.begin_batch_build().is_ok());
+    assert!(doc
+        .initialize(DOC, Canvas::new(100., 100., Vec2::default(), 1.))
+        .is_ok());
+    assert!(doc.modified());
+    doc.mark_saved();
+    assert!(!doc.modified());
+    let revision = doc.revision();
+    assert!(doc
+        .set_missing_attachments(vec!["attachment.json".into()])
+        .status
+        .is_ok());
+    assert_eq!(doc.revision(), revision);
+    assert!(doc.modified());
+    doc.mark_saved();
+    assert!(!doc.modified());
+    assert!(doc.set_missing_attachments(Vec::new()).status.is_ok());
+    assert!(doc.modified());
+    assert!(doc.finish_batch_build().is_ok());
+    assert!(doc.modified());
+}
+
 fn sample() -> Mesh {
     Mesh {
         id: MESH.to_string(),

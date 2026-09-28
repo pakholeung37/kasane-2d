@@ -152,6 +152,31 @@ fn center(pixels: &[u8]) -> [u8; 4] {
 }
 
 #[test]
+fn packed_mesh_buffers_preserve_vertex_and_index_offsets() {
+    let mut left = quad("left", "red");
+    for position in &mut left.positions {
+        position.x *= 0.5;
+    }
+    // Only the upper/right triangle of the left half.
+    left.indices = Arc::from([0, 1, 2]);
+    let mut right = quad("right", "green");
+    for position in &mut right.positions {
+        position.x = 32. + position.x * 0.5;
+    }
+    let (pixels, stats) = fixture(&DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        drawables: vec![left, right],
+        ..Default::default()
+    });
+    assert_eq!(stats.buffer_uploads, 2, "one vertex and one index upload");
+    let pixel = |x: usize, y: usize| &pixels[(y * 64 + x) * 4..][..4];
+    assert_eq!(pixel(24, 8), [255, 0, 0, 255]);
+    assert_eq!(pixel(8, 56), [0; 4]);
+    assert_eq!(pixel(40, 56), [0, 255, 0, 255]);
+    assert_eq!(pixel(56, 8), [0, 255, 0, 255]);
+}
+
+#[test]
 fn raw_mask_and_inverted_mask_use_source_alpha() {
     let mut source = quad("source", "half");
     source.visible = false;
@@ -440,4 +465,204 @@ fn texture_rows_follow_the_shared_uv_orientation() {
     assert_eq!(pixel(56, 8), &[255, 255, 255, 255]);
     assert_eq!(pixel(8, 56), &[255, 0, 0, 255]);
     assert_eq!(pixel(56, 56), &[0, 255, 0, 255]);
+}
+
+#[test]
+fn view_changes_reuse_buffers_and_masks_but_source_changes_invalidate_them() {
+    let context = MetalContext::new().unwrap();
+    let source = context
+        .upload_rgba8(1, 1, &[255, 255, 255, 128], &[])
+        .unwrap();
+    let color = context.upload_rgba8(1, 1, &[255, 0, 0, 255], &[]).unwrap();
+    let mut catalog = MetalTextureCatalog::new(HashMap::from([
+        (
+            "half".into(),
+            MetalTexture {
+                view: &source,
+                width: 1,
+                height: 1,
+            },
+        ),
+        (
+            "red".into(),
+            MetalTexture {
+                view: &color,
+                width: 1,
+                height: 1,
+            },
+        ),
+    ]));
+    catalog.set_revision("half", 1);
+    catalog.set_revision("red", 1);
+    let mut mask = quad("mask", "half");
+    mask.visible = false;
+    let mut a = quad("a", "red");
+    a.masks = vec!["mask".into()];
+    let mut b = a.clone();
+    b.id = "b".into();
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        drawables: vec![mask, a, b],
+        ..Default::default()
+    };
+    let target = MetalTargetConfig {
+        width: 64,
+        height: 64,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let mut renderer = MetalRenderer::new(&context, target).unwrap();
+    let draw =
+        |renderer: &mut MetalRenderer, catalog: &MetalTextureCatalog<'_>, pan: f32, scale: f64| {
+            renderer
+                .update_view(ViewportConfig {
+                    transform: Affine2 {
+                        origin: Vec2::new(pan, 0.),
+                        ..Affine2::IDENTITY
+                    },
+                    target_extent: Vec2::new(64., 64.),
+                    mask_scale: scale,
+                })
+                .unwrap();
+            let output = context.output_texture(target).unwrap();
+            let command = context.queue().new_command_buffer();
+            let stats = renderer
+                .encode(command, &output, MetalOutputMode::Replace, catalog)
+                .unwrap();
+            command.commit();
+            command.wait_until_completed();
+            assert_eq!(
+                command.status(),
+                kasane_render_metal::metal::MTLCommandBufferStatus::Completed
+            );
+            (read_rgba8(&output).unwrap(), stats)
+        };
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let (first, stats) = draw(&mut renderer, &catalog, 0., 1.);
+    assert_eq!(stats.masks, 1, "consumers share the same raw mask");
+    assert_eq!(stats.render_passes, 2, "one mask pass and one color pass");
+    let (_, stats) = draw(&mut renderer, &catalog, 4., 1.);
+    assert_eq!(
+        (stats.masks, stats.buffer_uploads, stats.render_passes),
+        (0, 0, 1)
+    );
+    assert_eq!(stats.mask_cache_hits, 2);
+    // Re-submitting an unchanged model also preserves immutable geometry.
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let (_, stats) = draw(&mut renderer, &catalog, 0., 2.);
+    assert_eq!(stats.masks, 1, "zoom changes mask density");
+    assert_eq!(stats.buffer_uploads, 0);
+    let (_, stats) = draw(&mut renderer, &catalog, 0., 1.1);
+    assert_eq!(
+        stats.masks, 0,
+        "nearby zoom levels share rounded-up density"
+    );
+    // A source edit changes coverage and uploads only its vertex buffer.
+    for p in &mut frame.drawables[0].positions {
+        p.x += 64.;
+    }
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let (moved, stats) = draw(&mut renderer, &catalog, 0., 2.);
+    assert_eq!(stats.buffer_uploads, 1);
+    assert_eq!(stats.masks, 1);
+    assert_eq!(center(&moved), [0; 4]);
+    for p in &mut frame.drawables[0].positions {
+        p.x -= 64.;
+    }
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let _ = draw(&mut renderer, &catalog, 0., 1.);
+    source.replace_region(
+        kasane_render_metal::metal::MTLRegion::new_2d(0, 0, 1, 1),
+        0,
+        [255u8, 255, 255, 255].as_ptr().cast(),
+        4,
+    );
+    catalog.set_revision("half", 2);
+    let (opaque, stats) = draw(&mut renderer, &catalog, 0., 1.);
+    assert_eq!(stats.masks, 1);
+    assert_eq!(center(&opaque), [255, 0, 0, 255]);
+    assert!(center(&first)[3] < 255);
+    // Hosts without revision tracking must never get a stale cached mask.
+    let unversioned = MetalTextureCatalog::new(HashMap::from([
+        (
+            "half".into(),
+            MetalTexture {
+                view: &source,
+                width: 1,
+                height: 1,
+            },
+        ),
+        (
+            "red".into(),
+            MetalTexture {
+                view: &color,
+                width: 1,
+                height: 1,
+            },
+        ),
+    ]));
+    for _ in 0..2 {
+        assert_eq!(draw(&mut renderer, &unversioned, 0., 1.).1.masks, 1);
+    }
+    // Budget the shared allocation once, not once per consumer. The old
+    // estimate exceeded 512 MiB here despite using a single ~4 MiB mask.
+    for index in 0..200 {
+        let mut consumer = frame.drawables[1].clone();
+        consumer.id = format!("consumer-{index}");
+        frame.drawables.push(consumer);
+    }
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let (_, stats) = draw(&mut renderer, &catalog, 0., 16.);
+    assert_eq!(stats.masks, 1);
+    assert_eq!(stats.mask_cache_hits, 201);
+}
+
+#[test]
+fn edits_do_not_overwrite_buffers_referenced_by_submitted_frames() {
+    let context = MetalContext::new().unwrap();
+    let source = context.upload_rgba8(1, 1, &[255, 0, 0, 255], &[]).unwrap();
+    let catalog = MetalTextureCatalog::new(HashMap::from([(
+        "red".into(),
+        MetalTexture {
+            view: &source,
+            width: 1,
+            height: 1,
+        },
+    )]));
+    let target = MetalTargetConfig {
+        width: 64,
+        height: 64,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let mut renderer = MetalRenderer::new(&context, target).unwrap();
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        drawables: vec![quad("mesh", "red")],
+        ..Default::default()
+    };
+    let mut outputs = Vec::new();
+    for _ in 0..2 {
+        renderer.sync_model(&frame, &catalog).unwrap();
+        renderer
+            .update_view(ViewportConfig {
+                transform: Affine2::IDENTITY,
+                target_extent: Vec2::new(64., 64.),
+                mask_scale: 1.,
+            })
+            .unwrap();
+        let output = context.output_texture(target).unwrap();
+        let command = context.queue().new_command_buffer();
+        renderer
+            .encode(command, &output, MetalOutputMode::Replace, &catalog)
+            .unwrap();
+        command.commit();
+        outputs.push(output);
+        for p in &mut frame.drawables[0].positions {
+            p.x += 64.;
+        }
+    }
+    let barrier = context.queue().new_command_buffer();
+    barrier.commit();
+    barrier.wait_until_completed();
+    assert_eq!(center(&read_rgba8(&outputs[0]).unwrap()), [255, 0, 0, 255]);
+    assert_eq!(center(&read_rgba8(&outputs[1]).unwrap()), [0; 4]);
 }

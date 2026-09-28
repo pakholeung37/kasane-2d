@@ -491,6 +491,31 @@ impl Document {
         Ok(())
     }
 
+    /// Preserve prepared topology for a property-only edit. Parameter keyforms
+    /// and parent appearance are still applied by the normal evaluator.
+    pub fn set_mesh_opacity(&mut self, id: &str, opacity: f32) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error(
+                "TRANSACTION_ACTIVE",
+                "Commit or cancel first",
+            ));
+        }
+        if !opacity.is_finite() || !(0.0..=1.0).contains(&opacity) {
+            return self.failed(Status::error(
+                "INVALID_OPACITY",
+                "Opacity must be between 0 and 1",
+            ));
+        }
+        let Some(mesh) = self.meshes.get_mut(id) else {
+            return self.failed(Status::error("MISSING_MESH", id));
+        };
+        if mesh.appearance.opacity == opacity {
+            return self.failed(Status::ok());
+        }
+        mesh.appearance.opacity = opacity;
+        self.changed(ChangeKind::Appearance, vec![id.to_owned()], Vec::new())
+    }
+
     pub fn rename_mesh(&mut self, id: &str, name: String) -> EditResult {
         if self.mutation_blocked() {
             return self.failed(Status::error(

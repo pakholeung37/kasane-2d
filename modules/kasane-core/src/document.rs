@@ -120,6 +120,9 @@ pub struct Document {
     package_attachments: Vec<PackageAttachment>,
 
     saved_content: Option<Arc<DocumentContent>>,
+    // Valid until persistent content or its saved baseline changes. OnceLock
+    // keeps read-only queries thread-safe without repeating deep comparisons.
+    modified_cache: OnceLock<bool>,
     lookup: OnceLock<DocumentLookup>,
     prepared: OnceLock<Result<crate::evaluation::PreparedEvaluation, Status>>,
 }
@@ -294,6 +297,7 @@ impl Document {
         }
         self.id = id_str;
         self.canvas = canvas;
+        self.modified_cache.take();
         Status::ok()
     }
 
@@ -515,14 +519,17 @@ impl Document {
     }
 
     pub fn modified(&self) -> bool {
-        match &self.saved_content {
-            Some(saved) => self.content_ref() != saved.content_ref(),
-            None => self.initialized(),
-        }
+        *self
+            .modified_cache
+            .get_or_init(|| match &self.saved_content {
+                Some(saved) => self.content_ref() != saved.content_ref(),
+                None => self.initialized(),
+            })
     }
 
     pub fn mark_saved(&mut self) {
         self.saved_content = Some(Arc::new(self.content()));
+        self.modified_cache = OnceLock::from(false);
     }
 
     pub fn restore_from(&mut self, source: &Document) {
@@ -530,6 +537,8 @@ impl Document {
         let saved = self.saved_content.clone();
         *self = source.clone();
         self.saved_content = saved;
+        // The source's cached result refers to its own saved baseline.
+        self.modified_cache.take();
         self.revision = next_rev;
         self.evaluation_revision = next_rev;
         self.transaction_active = false;
@@ -641,6 +650,8 @@ impl Document {
         mesh_ids: Vec<String>,
         mut object_ids: Vec<String>,
     ) -> EditResult {
+        // Batch construction mutates content without advancing revision too.
+        self.modified_cache.take();
         if self.batch_build_active {
             if object_ids.is_empty() {
                 object_ids = mesh_ids.clone();
