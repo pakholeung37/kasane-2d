@@ -507,6 +507,16 @@ fn test_document_session_lifecycle() {
     assert!(res.status.is_ok(), "Save failed: {:?}", res.status);
     let snapshot = snapshot.unwrap();
     assert!(snapshot.manifest.exists());
+    let short_source = format!("assets/{}.png", &sha1[..16]);
+    assert_eq!(
+        snapshot.document.get_asset(&id(2)).unwrap().source,
+        short_source
+    );
+    assert_eq!(
+        snapshot.document.get_asset(&id(3)).unwrap().source,
+        short_source
+    );
+    assert_eq!(fs::read_dir(project_dir.join("assets")).unwrap().count(), 1);
 
     // Open project in session
     let mut session = DocumentSession::new();
@@ -529,6 +539,10 @@ fn test_document_session_lifecycle() {
     let save_res = session.save(&snapshot.manifest);
     assert!(save_res.status.is_ok());
     assert!(!session.document().modified());
+    assert_eq!(
+        session.document().get_asset(&id(2)).unwrap().source,
+        short_source
+    );
 
     // Second session attempting concurrent overwrite with stale sha
     let (conf_res, _) = store.save(
@@ -819,15 +833,15 @@ fn save_repairs_corrupt_asset_name_without_overwriting_old_bytes() {
     let destination = tmp.0.join("destination");
     let sha = &doc.get_asset(&id(2)).unwrap().sha256;
     fs::create_dir_all(destination.join("assets")).unwrap();
-    let corrupted = destination.join(format!("assets/{sha}.png"));
+    let corrupted = destination.join(format!("assets/{}.png", &sha[..16]));
     fs::write(&corrupted, b"partial old file").unwrap();
     let (result, snapshot) = DocumentStore::new().save(&doc, &input, &destination, None);
     assert!(result.status.is_ok(), "{result:?}");
     assert_eq!(fs::read(corrupted).unwrap(), b"partial old file");
     let snapshot = snapshot.unwrap();
-    assert_ne!(
+    assert_eq!(
         snapshot.document.get_asset(&id(2)).unwrap().source,
-        format!("assets/{sha}.png")
+        format!("assets/{}.png", &sha[..24])
     );
     assert!(DocumentStore::new()
         .open(&destination)

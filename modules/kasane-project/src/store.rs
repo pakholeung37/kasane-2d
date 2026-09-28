@@ -419,22 +419,35 @@ impl DocumentStore {
         for id in document.asset_order() {
             let mut asset = document.get_asset(id).unwrap().clone();
             let data = self.read_verified_asset(source_root, &asset)?;
-            let mut name = format!("{}.png", data.sha256);
-            let mut target = assets_dir.join(&name);
-            let mut reuse = false;
-            match fs::symlink_metadata(&target) {
-                Ok(info) => {
-                    reuse = info.is_file()
-                        && !info.file_type().is_symlink()
-                        && content_sha256(&fs::read(&target).map_err(io::io_error)?) == data.sha256;
-                    if !reuse {
-                        name = format!("{}-{}.png", data.sha256, io::unique_name());
-                        target = assets_dir.join(&name);
+            // Start with 16 hex characters. Extend the hash prefix when an
+            // occupied name belongs to different bytes; keep the full hash in
+            // the manifest for integrity checks.
+            let mut prefix_len = 16;
+            let (name, target, reuse) = loop {
+                let name = format!("{}.png", &data.sha256[..prefix_len]);
+                let target = assets_dir.join(&name);
+                match fs::symlink_metadata(&target) {
+                    Ok(info) => {
+                        let reuse = info.is_file()
+                            && !info.file_type().is_symlink()
+                            && content_sha256(&fs::read(&target).map_err(io::io_error)?)
+                                == data.sha256;
+                        if reuse {
+                            break (name, target, true);
+                        }
+                        if prefix_len < 64 {
+                            prefix_len += 8;
+                            continue;
+                        }
+                        let name = format!("{}-{}.png", &data.sha256[..16], io::unique_name());
+                        break (name.clone(), assets_dir.join(name), false);
                     }
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        break (name, target, false)
+                    }
+                    Err(e) => return Err(io::io_error(e)),
                 }
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                Err(e) => return Err(io::io_error(e)),
-            }
+            };
             if !reuse {
                 files
                     .write_new(&target, &data.bytes)
