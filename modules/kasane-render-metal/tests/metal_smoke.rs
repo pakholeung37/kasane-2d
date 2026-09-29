@@ -666,3 +666,144 @@ fn edits_do_not_overwrite_buffers_referenced_by_submitted_frames() {
     assert_eq!(center(&read_rgba8(&outputs[0]).unwrap()), [255, 0, 0, 255]);
     assert_eq!(center(&read_rgba8(&outputs[1]).unwrap()), [0; 4]);
 }
+
+#[test]
+fn mask_atlas_matches_individual_masks_without_neighbor_bleed() {
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        ..Default::default()
+    };
+    for i in 0..40 {
+        let mut source = quad(&format!("mask-{i}"), "half");
+        let x = (i % 8) as f32 * 8. + 0.25;
+        let y = (i / 8) as f32 * 12. + 0.125;
+        for p in &mut source.positions {
+            p.x = p.x / 16. + x;
+            p.y = p.y / 8. - y;
+        }
+        source.visible = false;
+        let mut consumer = source.clone();
+        consumer.id = format!("consumer-{i}");
+        consumer.texture_asset_id = "red".into();
+        consumer.visible = true;
+        consumer.masks = vec![source.id.clone()];
+        consumer.inverted_mask = i % 2 == 0;
+        // Cover both the mask edge and the transparent padding.
+        consumer.positions[1].x += 3.;
+        consumer.positions[2].x += 3.;
+        frame.drawables.extend([source, consumer]);
+    }
+    let (atlas, stats) = fixture(&frame);
+    assert_eq!(stats.masks, 40);
+    assert_eq!(stats.render_passes, 2, "all masks share one atlas pass");
+    let mut expected = vec![0u8; atlas.len()];
+    for chunk in frame.drawables.chunks(40) {
+        let (pixels, stats) = fixture(&DrawableFrame {
+            canvas: frame.canvas,
+            drawables: chunk.to_vec(),
+            ..Default::default()
+        });
+        assert_eq!(stats.render_passes, 21);
+        for (dst, src) in expected.iter_mut().zip(pixels) {
+            *dst = (*dst).max(src); // These grid cells never overlap.
+        }
+    }
+    assert!(atlas.iter().any(|&v| v != 0));
+    assert_eq!(atlas, expected);
+}
+
+#[test]
+fn atlas_cache_edits_and_transition_preserve_submitted_frames() {
+    let context = MetalContext::new().unwrap();
+    let texture = context.upload_rgba8(1, 1, &[255, 0, 0, 128], &[]).unwrap();
+    let mut catalog = MetalTextureCatalog::new(HashMap::from([(
+        "red".into(),
+        MetalTexture {
+            view: &texture,
+            width: 1,
+            height: 1,
+        },
+    )]));
+    catalog.set_revision("red", 1);
+    let target = MetalTargetConfig {
+        width: 64,
+        height: 64,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let mut renderer = MetalRenderer::new(&context, target).unwrap();
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        ..Default::default()
+    };
+    for i in 0..40 {
+        let mut source = quad(&format!("mask-{i}"), "red");
+        source.visible = false;
+        for p in &mut source.positions {
+            p.x *= 0.5;
+        }
+        let mut consumer = quad(&format!("consumer-{i}"), "red");
+        consumer.masks = vec![source.id.clone()];
+        for p in &mut consumer.positions {
+            p.x = p.x / 8. + (i % 8) as f32 * 8.;
+            p.y = p.y / 8. - (i / 8) as f32 * 12.;
+        }
+        frame.drawables.extend([source, consumer]);
+    }
+    let mut outputs = Vec::new();
+    for step in 0..5 {
+        if step == 2 {
+            for source in frame.drawables.iter_mut().step_by(2) {
+                for p in &mut source.positions {
+                    p.x += 32.;
+                }
+            }
+        }
+        if step == 3 {
+            catalog.set_revision("red", 2);
+        }
+        if step == 4 {
+            // Shrink below the atlas threshold and edit a remaining source.
+            // Its cached atlas texture must not become a standalone mask.
+            frame.drawables.truncate(40);
+            for p in &mut frame.drawables[0].positions {
+                p.x -= 32.;
+            }
+        }
+        renderer.sync_model(&frame, &catalog).unwrap();
+        renderer
+            .update_view(ViewportConfig {
+                transform: Affine2::IDENTITY,
+                target_extent: Vec2::new(64., 64.),
+                mask_scale: 1.,
+            })
+            .unwrap();
+        let output = context.output_texture(target).unwrap();
+        let command = context.queue().new_command_buffer();
+        let stats = renderer
+            .encode(command, &output, MetalOutputMode::Replace, &catalog)
+            .unwrap();
+        if step == 1 {
+            assert_eq!(stats.masks, 0);
+        }
+        if step == 2 || step == 3 {
+            assert_eq!(stats.masks, 40);
+        }
+        command.commit();
+        outputs.push(output);
+    }
+    let barrier = context.queue().new_command_buffer();
+    barrier.commit();
+    barrier.wait_until_completed();
+    let pixels: Vec<_> = outputs
+        .iter()
+        .map(|output| read_rgba8(output).unwrap())
+        .collect();
+    let pixel = |step: usize, x: usize| &pixels[step][(4 * 64 + x) * 4..][..4];
+    assert_eq!(pixel(0, 4), [64, 0, 0, 64]);
+    assert_eq!(pixel(0, 52), [0; 4]);
+    assert_eq!(pixels[0], pixels[1]);
+    assert_eq!(pixel(2, 4), [0; 4]);
+    assert_eq!(pixel(2, 52), [64, 0, 0, 64]);
+    assert_eq!(pixels[2], pixels[3]);
+    assert_eq!(pixel(4, 4), [64, 0, 0, 64]);
+}

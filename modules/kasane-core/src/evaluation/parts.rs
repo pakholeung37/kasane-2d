@@ -2,7 +2,7 @@ use crate::document::Document;
 
 use super::evaluator::{set_value, EvalContext};
 use super::prepared::PreparedEvaluation;
-use super::selection::{evaluate_blend_binding, select};
+use super::selection::evaluate_blend_binding;
 use super::transforms::f32_to_i32;
 use crate::types::DeltaKeyforms;
 
@@ -17,7 +17,7 @@ pub(super) fn evaluate(doc: &Document, prepared: &PreparedEvaluation, state: &mu
             p.enabled && (p.parent_id.is_empty() || state.enabled_parts[&p.parent_id]);
         let mut order = p.draw_order;
         if let Some(b) = doc.binding_for_scene(id) {
-            let s = select(doc, state.values, &b.axes, state.selection);
+            let s = &state.selections[prepared.scene_selections[id]];
             enabled &= s.enabled;
             if s.enabled {
                 order = 0.0;

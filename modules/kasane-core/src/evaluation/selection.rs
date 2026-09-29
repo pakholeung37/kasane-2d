@@ -4,7 +4,7 @@ use crate::document::Document;
 use crate::geometry::validate_positions;
 use crate::keyforms::find_key_segment;
 use crate::types::{
-    Appearance, BindingAxis, BlendShapeBinding, BlendShapeConstraint, RotationPose, Status, Vec2,
+    Appearance, BlendShapeBinding, BlendShapeConstraint, RotationPose, Status, Vec2,
 };
 
 #[derive(Debug, Clone)]
@@ -39,10 +39,11 @@ pub(super) struct Selection {
     pub(super) enabled: bool,
 }
 
+#[cfg(test)]
 pub(super) fn select<'a>(
     doc: &Document,
     values: &HashMap<String, f32>,
-    binding: &[BindingAxis],
+    binding: &[crate::types::BindingAxis],
     out: &'a mut Selection,
 ) -> &'a Selection {
     out.indices.clear();
@@ -68,6 +69,40 @@ pub(super) fn select<'a>(
         stride *= axis.keys.len();
     }
     out
+}
+
+/// Sample an interned grid once per frame using numeric parameter slots.
+/// Keep the Cartesian expansion order identical to the scalar reference.
+pub(super) fn select_prepared(
+    parameters: &[super::types::EvaluatedParameter],
+    axes: &[super::prepared::SelectionAxis],
+    out: &mut Selection,
+) {
+    out.indices.clear();
+    out.weights.clear();
+    out.indices.push(0);
+    out.weights.push(1.0);
+    out.enabled = true;
+    let mut stride = 1;
+    for axis in axes {
+        let segment = find_key_segment(
+            parameters[axis.parameter].value,
+            &axis.keys,
+            axis.epsilon,
+            axis.epsilon * 1.5,
+        );
+        out.enabled &= !segment.is_outside;
+        let count = out.indices.len();
+        for i in 0..count {
+            out.indices[i] += segment.index as usize * stride;
+            if segment.weight != 0.0 {
+                out.indices.push(out.indices[i] + stride);
+                out.weights.push(out.weights[i] * segment.weight);
+                out.weights[i] *= 1.0 - segment.weight;
+            }
+        }
+        stride *= axis.keys.len();
+    }
 }
 
 pub(super) fn blend_appearance<F>(s: &Selection, mut get: F) -> Appearance
@@ -254,7 +289,7 @@ where
 mod selection_tests {
     use super::*;
     use crate::keyforms::{key_combinations, KeyAxis};
-    use crate::Parameter;
+    use crate::{BindingAxis, Parameter};
 
     #[test]
     fn sparse_selection_matches_cartesian_reference() {
@@ -303,6 +338,26 @@ mod selection_tests {
             );
             assert_eq!(result.weights, weights[..count]);
             assert_eq!(result.enabled, !segment.is_outside);
+            let axes: Vec<_> = binding
+                .iter()
+                .map(|axis| super::super::prepared::SelectionAxis {
+                    parameter: 0,
+                    keys: axis.keys.clone(),
+                    epsilon: 0.1f32.powi(doc.get_parameter(id).unwrap().decimal_places),
+                })
+                .collect();
+            let mut compiled = Selection::default();
+            select_prepared(
+                &[super::super::types::EvaluatedParameter {
+                    value,
+                    ..Default::default()
+                }],
+                &axes,
+                &mut compiled,
+            );
+            assert_eq!(compiled.indices, result.indices);
+            assert_eq!(compiled.weights, result.weights);
+            assert_eq!(compiled.enabled, result.enabled);
         }
         let binding = vec![
             BindingAxis {

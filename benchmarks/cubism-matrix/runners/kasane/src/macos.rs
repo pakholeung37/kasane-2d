@@ -277,6 +277,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let mut sample_start = None;
     let mut frame_times_ms = Vec::new();
     let mut evaluation_ms = Vec::new();
+    let mut animation_update_ms = Vec::new();
+    let mut geometry_evaluation_ms = Vec::new();
     let mut assembly_ms = Vec::new();
     let mut sync_ms = Vec::new();
     let mut encode_ms = Vec::new();
@@ -286,7 +288,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         let dt = frame_start.duration_since(previous_frame).as_secs_f32();
         previous_frame = frame_start;
         let mut frames = Vec::with_capacity(workload.instances);
+        let mut animation_time = 0.0;
+        let mut geometry_time = 0.0;
         for preview in &mut previews {
+            let animation_start = Instant::now();
             preview.advance(dt)?;
             if preview.snapshot().active_motions.is_empty() {
                 preview.schedule_motion_entry(
@@ -295,12 +300,15 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     preview.snapshot().time,
                 )?;
             }
+            let geometry_start = Instant::now();
+            animation_time += geometry_start.duration_since(animation_start).as_secs_f64() * 1000.0;
             let mut frame = preview.evaluate_drawables()?;
             let opacity = preview.snapshot().model_opacity;
             for drawable in &mut frame.drawables {
                 drawable.opacity *= opacity;
             }
             frames.push(frame);
+            geometry_time += geometry_start.elapsed().as_secs_f64() * 1000.0;
         }
         let evaluated_at = Instant::now();
         let scene = assemble(frames, &workload);
@@ -312,9 +320,11 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         renderer
             .update_view(viewport)
             .map_err(|s| format!("{s:?}"))?;
-        let command = context.queue().new_command_buffer();
+        // This CLI has no AppKit event loop to drain autoreleased commands.
+        let command =
+            metal::objc::rc::autoreleasepool(|| context.queue().new_command_buffer().to_owned());
         let stats = renderer
-            .encode(command, &output, MetalOutputMode::Replace, &catalog)
+            .encode(&command, &output, MetalOutputMode::Replace, &catalog)
             .map_err(|s| format!("{s:?}"))?;
         let encoded_at = Instant::now();
         command.commit();
@@ -326,6 +336,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         if let Some(start) = sample_start {
             frame_times_ms.push(now.duration_since(frame_start).as_secs_f64() * 1000.0);
             evaluation_ms.push(evaluated_at.duration_since(frame_start).as_secs_f64() * 1000.0);
+            animation_update_ms.push(animation_time);
+            geometry_evaluation_ms.push(geometry_time);
             assembly_ms.push(assembled_at.duration_since(evaluated_at).as_secs_f64() * 1000.0);
             sync_ms.push(synced_at.duration_since(assembled_at).as_secs_f64() * 1000.0);
             encode_ms.push(encoded_at.duration_since(synced_at).as_secs_f64() * 1000.0);
@@ -334,6 +346,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 let elapsed = now.duration_since(start).as_secs_f64();
                 frame_times_ms.sort_by(f64::total_cmp);
                 evaluation_ms.sort_by(f64::total_cmp);
+                animation_update_ms.sort_by(f64::total_cmp);
+                geometry_evaluation_ms.sort_by(f64::total_cmp);
                 assembly_ms.sort_by(f64::total_cmp);
                 sync_ms.sort_by(f64::total_cmp);
                 encode_ms.sort_by(f64::total_cmp);
@@ -369,6 +383,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     "p95_frame_ms": percentile(&frame_times_ms, 0.95),
                     "p99_frame_ms": percentile(&frame_times_ms, 0.99),
                     "p50_animation_evaluation_ms": percentile(&evaluation_ms, 0.50),
+                    "p50_animation_update_ms": percentile(&animation_update_ms, 0.50),
+                    "p50_geometry_evaluation_ms": percentile(&geometry_evaluation_ms, 0.50),
                     "p50_scene_assembly_ms": percentile(&assembly_ms, 0.50),
                     "p50_metal_sync_ms": percentile(&sync_ms, 0.50),
                     "p50_metal_encode_ms": percentile(&encode_ms, 0.50),
@@ -380,6 +396,10 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     "mask_count": stats.masks,
                     "timing_scope": "animation+evaluation+scene_assembly+metal_sync+encode+gpu_wait",
                     "presentation": "offscreen",
+                    "gpu_synchronization": "wait_until_completed_each_frame",
+                    "layout": {"columns": workload.layout.columns, "rows": workload.layout.rows, "cell_fill": workload.layout.cell_fill},
+                    "motion": {"group": workload.motion.group, "index": workload.motion.index},
+                    "mask_policy": "canvas_pixel_density_1_with_4px_padding",
                 });
                 println!("BENCHMARK_RESULT {result}");
                 let results = workload_path

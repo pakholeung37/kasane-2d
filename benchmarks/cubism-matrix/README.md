@@ -176,6 +176,19 @@ evaluation, scene assembly, Metal buffer synchronization, encoding, and GPU
 completion. It renders to an offscreen target. The official Native case updates
 the Cubism runtime and presents an OpenGL window. Interpret the reported ratio
 as a stack-level comparison; the two graphics APIs and presentation paths differ.
+This is **not a matched rendering workload**: Native hardcodes model height
+`0.44` and vertical offset `1.27`, whereas Kasane fits the canvas to `cell_fill`.
+Native swaps with VSync disabled but does not explicitly wait for GPU completion;
+Kasane waits after every frame. Native uses the Framework's default 256×256 mask
+buffer; Kasane sizes masks at canvas-pixel density with padding. Native selects
+an Idle motion (Mao currently has only Idle index 0), rather than reading the
+configured motion. The `model_hash` hashes only model3.json, not all referenced
+assets. The comparison validator checks instance count, viewport, mipmaps, and
+that hash; it does not establish pixel equivalence or equal mask quality.
+
+Use unchanged Kasane workload/settings for optimization acceptance. The
+[Metal optimization audit](results/historical/2026-09-29-kasane-metal-optimized.md)
+records the 20 FPS target and before/after measurements.
 
 ## Measurement rules
 
@@ -186,3 +199,23 @@ as a stack-level comparison; the two graphics APIs and presentation paths differ
 - Compare medians and spread, not a single best run.
 - Treat Native-vs-Godot FPS as end-to-end stack measurements; it includes
   engine overhead and is not a direct Core-only measurement.
+
+### Animation and geometry profiling
+
+The Kasane result separates `p50_animation_update_ms` (Motion, Expression,
+Physics, Pose and rescheduling) from `p50_geometry_evaluation_ms` (drawable
+geometry, Part opacity and model opacity). The combined
+`p50_animation_evaluation_ms` remains the enclosing end-to-end phase. Each
+preview still evaluates independently and serially.
+
+For deterministic CPU output comparison across code revisions:
+
+```sh
+cargo run --release --locked -p cubism-matrix-kasane --example evaluation_trace -- \
+  models/local/mao/runtime/mao_pro.model3.json /tmp/evaluation-trace.jsonl
+```
+
+This writes 600 snapshots and frames with a fixed irregular delta sequence,
+including reset, seek and periodic hidden-geometry evaluations. Compare traces
+from the same model package with `cmp`. Serialization is outside the reported
+CPU timings; this diagnostic is not the end-to-end FPS benchmark.

@@ -38,3 +38,9 @@ uv run --locked python benchmarks/cubism-matrix/tools/matrix.py benchmark-render
 
 Full per-trial JSON and the Kasane output PNG are written to the ignored
 `benchmarks/cubism-matrix/artifacts/results/` directory.
+
+A subsequent [fairness audit and Metal optimization](2026-09-29-kasane-metal-optimized.md)
+keeps this historical result intact and measures the same Kasane workload after
+removing repeated mask lookups and batching masks into atlases. The audit also
+identifies model-placement and mask-resolution differences beyond the API and
+presentation differences described above.

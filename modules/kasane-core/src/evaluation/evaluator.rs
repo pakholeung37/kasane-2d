@@ -12,7 +12,7 @@ pub(super) struct EvalContext<'a> {
     pub(super) values: &'a mut HashMap<String, f32>,
     pub(super) enabled_parts: &'a mut HashMap<String, bool>,
     pub(super) part_orders: &'a mut HashMap<String, i32>,
-    pub(super) selection: &'a mut Selection,
+    pub(super) selections: &'a mut Vec<Selection>,
     pub(super) transforms: &'a mut Vec<TransformState>,
     pub(super) points: &'a mut Vec<crate::types::Vec2>,
     pub(super) orders: &'a mut Vec<i32>,
@@ -29,7 +29,7 @@ pub struct FrameEvaluator {
     values: HashMap<String, f32>,
     enabled_parts: HashMap<String, bool>,
     part_orders: HashMap<String, i32>,
-    selection: Selection,
+    selections: Vec<Selection>,
     transforms: Vec<TransformState>,
     points: Vec<crate::types::Vec2>,
     orders: Vec<i32>,
@@ -121,7 +121,7 @@ fn evaluate_into(
         values,
         enabled_parts,
         part_orders,
-        selection,
+        selections,
         transforms,
         points,
         orders,
@@ -152,7 +152,7 @@ fn evaluate_into(
         values,
         enabled_parts,
         part_orders,
-        selection,
+        selections,
         transforms,
         points,
         orders,
@@ -166,6 +166,12 @@ fn evaluate_into(
     let status = super::parameters::evaluate(doc, preview, &mut state);
     if !status.is_ok() {
         return status;
+    }
+    state
+        .selections
+        .resize_with(prepared.selections.len(), Selection::default);
+    for (axes, selection) in prepared.selections.iter().zip(state.selections.iter_mut()) {
+        super::selection::select_prepared(&state.frame.parameters, axes, selection);
     }
     super::parts::evaluate(doc, prepared, &mut state);
     let status = super::transforms::evaluate(doc, prepared, &mut state);

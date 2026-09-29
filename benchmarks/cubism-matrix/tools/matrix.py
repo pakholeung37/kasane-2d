@@ -453,7 +453,9 @@ def benchmark_render(repeats: int, jobs: int) -> Path:
         "comparison_note": (
             "Kasane evaluates an imported editable model and waits for offscreen Metal GPU completion; "
             "Cubism Native updates the official runtime and presents through an OpenGL window. "
-            "The ratio is an end-to-end stack comparison, not an isolated renderer ratio."
+            "Native hardcodes model placement and uses default Framework mask resolution; "
+            "Kasane uses cell_fill and canvas-pixel mask density. Only model3.json is hashed. "
+            "The ratio is an end-to-end stack reference, not a matched-workload or isolated renderer ratio."
         ),
     }
     output_path = MATRIX_ROOT / "artifacts/results/latest-render-comparison.json"

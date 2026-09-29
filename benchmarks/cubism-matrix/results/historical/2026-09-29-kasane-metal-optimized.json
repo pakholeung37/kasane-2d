@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "benchmark": "cubism-render-comparison",
+  "repeats": 3,
+  "trials": {
+    "cubism-native": [
+      {
+        "schema_version": 1,
+        "case_id": "cubism-native",
+        "core_backend": "cubism",
+        "host_backend": "cubism-framework-native",
+        "graphics_api": "opengl",
+        "build_profile": "release",
+        "workload_id": "mao-40",
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "instances": 40,
+        "viewport": [
+          1280,
+          720
+        ],
+        "texture_mipmaps": true,
+        "warmup_seconds": 5.0,
+        "sample_seconds": 15.011047,
+        "frames": 836,
+        "average_fps": 55.692319,
+        "p50_frame_ms": 17.138625,
+        "p95_frame_ms": 22.216208,
+        "p99_frame_ms": 23.91475
+      },
+      {
+        "schema_version": 1,
+        "case_id": "cubism-native",
+        "core_backend": "cubism",
+        "host_backend": "cubism-framework-native",
+        "graphics_api": "opengl",
+        "build_profile": "release",
+        "workload_id": "mao-40",
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "instances": 40,
+        "viewport": [
+          1280,
+          720
+        ],
+        "texture_mipmaps": true,
+        "warmup_seconds": 5.0,
+        "sample_seconds": 15.016294,
+        "frames": 829,
+        "average_fps": 55.206697,
+        "p50_frame_ms": 17.399208,
+        "p95_frame_ms": 22.430792,
+        "p99_frame_ms": 23.523333
+      },
+      {
+        "schema_version": 1,
+        "case_id": "cubism-native",
+        "core_backend": "cubism",
+        "host_backend": "cubism-framework-native",
+        "graphics_api": "opengl",
+        "build_profile": "release",
+        "workload_id": "mao-40",
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "instances": 40,
+        "viewport": [
+          1280,
+          720
+        ],
+        "texture_mipmaps": true,
+        "warmup_seconds": 5.0,
+        "sample_seconds": 15.012813,
+        "frames": 805,
+        "average_fps": 53.620865,
+        "p50_frame_ms": 17.899042,
+        "p95_frame_ms": 22.724958,
+        "p99_frame_ms": 24.61
+      }
+    ],
+    "kasane-metal": [
+      {
+        "average_fps": 23.049630044321194,
+        "build_profile": "release",
+        "case_id": "kasane-metal",
+        "core_backend": "kasane",
+        "draw_calls": 6920,
+        "frames": 346,
+        "gpu_synchronization": "wait_until_completed_each_frame",
+        "graphics_api": "metal",
+        "host_backend": "kasane-render-metal",
+        "import_diagnostics": 16,
+        "instances": 40,
+        "layout": {
+          "cell_fill": 0.9200000166893005,
+          "columns": 10,
+          "rows": 4
+        },
+        "mask_count": 520,
+        "mask_policy": "canvas_pixel_density_1_with_4px_padding",
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "motion": {
+          "group": "Idle",
+          "index": 0
+        },
+        "p50_animation_evaluation_ms": 22.163417000000003,
+        "p50_frame_ms": 41.798709,
+        "p50_gpu_wait_ms": 2.122666,
+        "p50_metal_encode_ms": 4.55175,
+        "p50_metal_sync_ms": 9.525167,
+        "p50_scene_assembly_ms": 3.072792,
+        "p95_frame_ms": 50.953084000000004,
+        "p99_frame_ms": 82.595792,
+        "presentation": "offscreen",
+        "render_passes": 3,
+        "sample_seconds": 15.011086917,
+        "schema_version": 1,
+        "texture_mipmaps": true,
+        "timing_scope": "animation+evaluation+scene_assembly+metal_sync+encode+gpu_wait",
+        "viewport": [
+          1280,
+          720
+        ],
+        "visible_pixels": 174560,
+        "warmup_seconds": 5.0,
+        "workload_id": "mao-40"
+      },
+      {
+        "average_fps": 23.85318610532816,
+        "build_profile": "release",
+        "case_id": "kasane-metal",
+        "core_backend": "kasane",
+        "draw_calls": 6920,
+        "frames": 358,
+        "gpu_synchronization": "wait_until_completed_each_frame",
+        "graphics_api": "metal",
+        "host_backend": "kasane-render-metal",
+        "import_diagnostics": 16,
+        "instances": 40,
+        "layout": {
+          "cell_fill": 0.9200000166893005,
+          "columns": 10,
+          "rows": 4
+        },
+        "mask_count": 520,
+        "mask_policy": "canvas_pixel_density_1_with_4px_padding",
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "motion": {
+          "group": "Idle",
+          "index": 0
+        },
+        "p50_animation_evaluation_ms": 22.235999999999997,
+        "p50_frame_ms": 41.755,
+        "p50_gpu_wait_ms": 1.6307500000000001,
+        "p50_metal_encode_ms": 4.5036249999999995,
+        "p50_metal_sync_ms": 9.709667,
+        "p50_scene_assembly_ms": 3.111875,
+        "p95_frame_ms": 45.891,
+        "p99_frame_ms": 47.871207999999996,
+        "presentation": "offscreen",
+        "render_passes": 3,
+        "sample_seconds": 15.008477208,
+        "schema_version": 1,
+        "texture_mipmaps": true,
+        "timing_scope": "animation+evaluation+scene_assembly+metal_sync+encode+gpu_wait",
+        "viewport": [
+          1280,
+          720
+        ],
+        "visible_pixels": 174440,
+        "warmup_seconds": 5.0,
+        "workload_id": "mao-40"
+      },
+      {
+        "average_fps": 23.854421463774308,
+        "build_profile": "release",
+        "case_id": "kasane-metal",
+        "core_backend": "kasane",
+        "draw_calls": 6920,
+        "frames": 358,
+        "gpu_synchronization": "wait_until_completed_each_frame",
+        "graphics_api": "metal",
+        "host_backend": "kasane-render-metal",
+        "import_diagnostics": 16,
+        "instances": 40,
+        "layout": {
+          "cell_fill": 0.9200000166893005,
+          "columns": 10,
+          "rows": 4
+        },
+        "mask_count": 520,
+        "mask_policy": "canvas_pixel_density_1_with_4px_padding",
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "motion": {
+          "group": "Idle",
+          "index": 0
+        },
+        "p50_animation_evaluation_ms": 22.286375,
+        "p50_frame_ms": 41.765834,
+        "p50_gpu_wait_ms": 1.669041,
+        "p50_metal_encode_ms": 4.49875,
+        "p50_metal_sync_ms": 9.770916,
+        "p50_scene_assembly_ms": 3.0560840000000002,
+        "p95_frame_ms": 46.472624999999994,
+        "p99_frame_ms": 47.941916,
+        "presentation": "offscreen",
+        "render_passes": 3,
+        "sample_seconds": 15.007699958,
+        "schema_version": 1,
+        "texture_mipmaps": true,
+        "timing_scope": "animation+evaluation+scene_assembly+metal_sync+encode+gpu_wait",
+        "viewport": [
+          1280,
+          720
+        ],
+        "visible_pixels": 174600,
+        "warmup_seconds": 5.0,
+        "workload_id": "mao-40"
+      }
+    ]
+  },
+  "medians": {
+    "cubism-native": {
+      "average_fps": 55.206697,
+      "p50_frame_ms": 17.399208,
+      "p95_frame_ms": 22.430792,
+      "p99_frame_ms": 23.91475
+    },
+    "kasane-metal": {
+      "average_fps": 23.85318610532816,
+      "p50_frame_ms": 41.765834,
+      "p95_frame_ms": 46.472624999999994,
+      "p99_frame_ms": 47.941916
+    }
+  },
+  "kasane_to_cubism_fps_ratio": 0.43207051683110403,
+  "comparison_note": "End-to-end stack reference only: Native and Kasane differ in API, presentation, GPU synchronization, model placement, mask resolution and animation implementation. model_hash hashes model3.json only; this is not a matched-workload renderer ratio.",
+  "before_optimization": {
+    "base_commit": "cf79382",
+    "trials": [
+      {
+        "average_fps": 9.36891487732851,
+        "build_profile": "release",
+        "case_id": "kasane-metal",
+        "core_backend": "kasane",
+        "draw_calls": 6920,
+        "frames": 141,
+        "graphics_api": "metal",
+        "host_backend": "kasane-render-metal",
+        "import_diagnostics": 16,
+        "instances": 40,
+        "mask_count": 520,
+        "model": "mao_pro",
+        "model_hash": "27b71a0e5476d870ba69d1b52f5bd068ed5a03113739b4f5337e579e954b7e2a",
+        "p50_animation_evaluation_ms": 22.588041999999998,
+        "p50_frame_ms": 106.13229100000001,
+        "p50_gpu_wait_ms": 25.294792,
+        "p50_metal_encode_ms": 46.344249999999995,
+        "p50_metal_sync_ms": 8.567167000000001,
+        "p50_scene_assembly_ms": 2.924167,
+        "p95_frame_ms": 114.92545799999999,
+        "p99_frame_ms": 116.533125,
+        "presentation": "offscreen",
+        "render_passes": 521,
+        "sample_seconds": 15.0497685,
+        "schema_version": 1,
+        "texture_mipmaps": true,
+        "timing_scope": "animation+evaluation+scene_assembly+metal_sync+encode+gpu_wait",
+        "viewport": [
+          1280,
+          720
+        ],
+        "visible_pixels": 174160,
+        "warmup_seconds": 5.0,
+        "workload_id": "mao-40"
+      }
+    ],
+    "note": "One fresh pre-change run; historical three-trial baseline is 8.693 FPS."
+  },
+  "acceptance": {
+    "target_average_fps": 20,
+    "all_optimized_trials_pass": true,
+    "scope": "Same Kasane mao-40 end-to-end workload, including per-frame GPU completion wait."
+  }
+}

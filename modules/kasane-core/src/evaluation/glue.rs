@@ -4,7 +4,7 @@ use crate::types::{DeltaKeyforms, Status, Vec2};
 
 use super::evaluator::EvalContext;
 use super::prepared::PreparedEvaluation;
-use super::selection::{evaluate_blend_binding, select};
+use super::selection::evaluate_blend_binding;
 
 pub(super) fn evaluate(
     doc: &Document,
@@ -19,7 +19,7 @@ pub(super) fn evaluate(
         for gid in glue_order {
             if let Some(glue) = doc.get_glue(gid) {
                 let mut intensity = if let Some(binding) = &glue.binding {
-                    let selection = select(doc, state.values, &binding.axes, state.selection);
+                    let selection = &state.selections[prepared.scene_selections[gid]];
                     selection
                         .indices
                         .iter()

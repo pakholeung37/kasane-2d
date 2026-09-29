@@ -1,8 +1,11 @@
 //! Detached MotionBehavior V2 preview for typed project clips.
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use kasane_core::{
-    evaluate_frame, evaluation::evaluate_frame_including_hidden, Document, DrawableFrame,
+    evaluation::evaluate_frame_including_hidden, Document, DrawableFrame, FrameEvaluator,
     PreviewValues,
 };
 
@@ -94,6 +97,12 @@ pub enum MotionOperationKind {
     StabilizePhysics,
 }
 
+#[derive(Default)]
+struct GeometryWorkspace {
+    values: PreviewValues,
+    evaluator: FrameEvaluator,
+}
+
 /// Detached combined preview with immutable assets and bounded canonical seek checkpoints.
 /// Create a new preview after authoring edits; playback never edits the source document.
 pub struct MotionPreview {
@@ -108,6 +117,9 @@ pub struct MotionPreview {
     motion: MotionRuntime,
     cache: SeekCache,
     operation: MotionOperation,
+    // Scratch only, not simulation state. A mutex preserves the shared-reference
+    // API and Send + Sync while independent previews use independent workspaces.
+    geometry: Mutex<GeometryWorkspace>,
 }
 
 impl MotionPreview {
@@ -143,6 +155,7 @@ impl MotionPreview {
             document: Arc::clone(&document),
             curves,
             source_identity: None,
+            geometry: Mutex::default(),
             cache: SeekCache::default(),
             operation: MotionOperation {
                 preview_id: uuid::Uuid::new_v4().to_string(),
@@ -433,7 +446,10 @@ impl MotionPreview {
             dt,
             &mut self.snapshot.coverage,
         );
-        self.snapshot.part_opacities = self.pose.opacities.clone();
+        crate::parameter_values::copy_values(
+            &mut self.snapshot.part_opacities,
+            &self.pose.opacities,
+        );
         self.snapshot.time = time;
         self.snapshot.coverage.sort();
         self.snapshot.coverage.dedup();
@@ -540,17 +556,25 @@ impl MotionPreview {
         &self,
         include_hidden: bool,
     ) -> Result<DrawableFrame, AnimationError> {
-        let values: PreviewValues = self
-            .snapshot
-            .parameters
-            .iter()
-            .map(|(id, value)| (id.clone(), *value))
-            .collect();
+        let mut workspace = self
+            .geometry
+            .lock()
+            .map_err(|_| AnimationError::Evaluation("Geometry workspace lock poisoned".into()))?;
+        let GeometryWorkspace { values, evaluator } = &mut *workspace;
+        // The captured document has an immutable parameter set. Reuse the
+        // UUID keys instead of allocating a HashMap and strings on every call.
+        for (id, value) in &self.snapshot.parameters {
+            if let Some(slot) = values.get_mut(id) {
+                *slot = *value;
+            } else {
+                values.insert(id.clone(), *value);
+            }
+        }
         let mut frame = DrawableFrame::default();
         let status = if include_hidden {
-            evaluate_frame_including_hidden(&self.document, &values, &mut frame)
+            evaluate_frame_including_hidden(&self.document, values, &mut frame)
         } else {
-            evaluate_frame(&self.document, &values, &mut frame)
+            evaluator.evaluate(&self.document, values, &mut frame)
         };
         if status.is_ok() {
             // Core evaluation does not carry runtime Part opacity. Apply it to

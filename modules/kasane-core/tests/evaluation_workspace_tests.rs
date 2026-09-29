@@ -364,3 +364,71 @@ fn opacity_edits_preserve_prepared_topology_and_reject_invalid_values() {
         ChangeKind::None
     );
 }
+
+#[test]
+fn prepared_selection_tracks_precision_axes_and_restored_documents() {
+    let mut doc = document(2);
+    let parameter = id(10);
+    assert!(doc
+        .create_parameter(Parameter {
+            id: parameter.clone(),
+            minimum: -1.,
+            maximum: 1.,
+            decimal_places: 6,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    for mesh in [3, 4] {
+        let base = doc.get_mesh(&id(mesh)).unwrap().base_positions.clone();
+        assert!(doc
+            .create_binding(MeshBinding {
+                id: id(mesh + 10),
+                mesh_id: id(mesh),
+                axes: vec![BindingAxis {
+                    parameter_id: parameter.clone(),
+                    keys: vec![-1., 0., 1.]
+                }],
+                keyforms: [-1., 0., 1.]
+                    .into_iter()
+                    .map(|key| MeshKeyform {
+                        keys: vec![key],
+                        positions: base
+                            .iter()
+                            .map(|p| Vec2::new(p.x + 20. * key, p.y))
+                            .collect(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            })
+            .status
+            .is_ok());
+    }
+    let original = doc.clone();
+    let values = [(parameter.clone(), 0.049)].into();
+    let mut evaluator = FrameEvaluator::default();
+    let mut frame = DrawableFrame::default();
+    assert!(evaluator.evaluate(&doc, &values, &mut frame).is_ok());
+    let interpolated = frame.clone();
+    assert_eq!(frame.drawables[0].positions, frame.drawables[1].positions);
+    let mut p = doc.get_parameter(&parameter).unwrap().clone();
+    p.decimal_places = 1;
+    assert!(doc.replace_parameter(p).status.is_ok());
+    assert!(evaluator.evaluate(&doc, &values, &mut frame).is_ok());
+    let snapped = frame.drawables[0].positions.clone();
+    assert_ne!(snapped, interpolated.drawables[0].positions);
+    let mut zero = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &[(parameter.clone(), 0.)].into(), &mut zero).is_ok());
+    assert_eq!(snapped, zero.drawables[0].positions);
+    // One binding diverges from the shared grid; the other must stay snapped.
+    let mut b = doc.get_binding(&id(13)).unwrap().clone();
+    b.axes[0].keys = vec![-1., 1.];
+    b.keyforms.remove(1);
+    assert!(doc.replace_binding(b).status.is_ok());
+    assert!(evaluator.evaluate(&doc, &values, &mut frame).is_ok());
+    assert_ne!(frame.drawables[0].positions, snapped);
+    assert_eq!(frame.drawables[1].positions, snapped);
+    doc.restore_from(&original);
+    assert!(evaluator.evaluate(&doc, &values, &mut frame).is_ok());
+    assert_eq!(frame.drawables, interpolated.drawables);
+}

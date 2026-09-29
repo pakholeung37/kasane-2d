@@ -1,4 +1,7 @@
-use crate::deformers::{rotation_parent_angle, rotation_points, warp_points, PsmVec2};
+use crate::deformers::{
+    rotation_parent_angle, rotation_points, rotation_points_in_place, warp_points,
+    warp_points_in_place, PsmVec2,
+};
 use crate::document::Document;
 use crate::geometry::validate_positions;
 use crate::types::{Appearance, DeltaKeyforms, Status, Transform, TransformKind, Vec2};
@@ -7,7 +10,7 @@ use super::evaluator::EvalContext;
 use super::prepared::PreparedEvaluation;
 use super::selection::{
     blend_appearance, blend_positions, default_selection, evaluate_blend_binding,
-    inherit_appearance, select, RuntimeRotationPose,
+    inherit_appearance, RuntimeRotationPose,
 };
 use super::types::to_parent_origin;
 
@@ -42,6 +45,28 @@ pub(super) struct TransformState {
 }
 
 impl TransformState {
+    pub(super) fn apply(&self, points: &mut [Vec2]) {
+        if self.source.kind == TransformKind::Warp {
+            warp_points_in_place(
+                self.source.rows as i32,
+                self.source.columns as i32,
+                self.source.quad,
+                &self.points,
+                points,
+            );
+        } else {
+            rotation_points_in_place(
+                self.source.base_angle,
+                self.pose.angle,
+                self.pose.scale,
+                PsmVec2::new(self.pose.origin.x, self.pose.origin.y),
+                self.pose.reflect_x,
+                self.pose.reflect_y,
+                points,
+            );
+        }
+    }
+
     pub(super) fn point(&self, p: PsmVec2) -> PsmVec2 {
         let input = [p.x, p.y];
         let mut output = [0.0f32; 2];
@@ -105,7 +130,10 @@ pub(super) fn evaluate(
             state.points.extend_from_slice(&w.points);
         }
         let b = doc.binding_for_scene(id);
-        let selection = b.map(|binding| select(doc, state.values, &binding.axes, state.selection));
+        let selection = prepared
+            .scene_selections
+            .get(id)
+            .map(|&slot| &state.selections[slot]);
 
         if let Some(sel) = selection {
             transform_state.enabled &= sel.enabled;
@@ -292,10 +320,7 @@ pub(super) fn evaluate(
                 let parent = &state.transforms[prepared.transform_slots[t.parent()]];
                 inherit_appearance(&mut transform_state.appearance, &parent.appearance);
                 if t.kind() == TransformKind::Warp {
-                    for p in state.points.iter_mut() {
-                        let q = parent.point(PsmVec2::new(p.x, p.y));
-                        *p = Vec2::new(q.x, q.y);
-                    }
+                    parent.apply(state.points);
                     transform_state.inherited_scale = parent.inherited_scale;
                 } else {
                     let mut origin =

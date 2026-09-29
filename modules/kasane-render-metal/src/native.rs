@@ -5,11 +5,12 @@ use bytemuck::{Pod, Zeroable};
 use kasane_core::evaluation::{DrawableFrame, OffscreenFrame};
 use kasane_core::types::{BlendMode, Status, Vec2};
 use kasane_render::gpu::{
-    compose_affine, inverse_affine, mask_layout, quad_indices, quad_vertices, triangle_indices,
-    vertices_for, MaskLayout, Vertex,
+    compose_affine, inverse_affine, mask_layout_from_bounds, quad_indices, quad_vertices,
+    triangle_indices, vertices_for, MaskLayout, Vertex,
 };
 use kasane_render::{
-    surface_layout, Affine2, ScenePlan, TargetId, TargetItem, TextureCatalog, ViewportConfig,
+    surface_layout, Affine2, MaskId, ScenePlan, TargetId, TargetItem, TextureCatalog,
+    ViewportConfig,
 };
 use metal::{
     Buffer, CommandBufferRef, CommandQueue, Device, DeviceRef, MTLBlendFactor, MTLClearColor,
@@ -242,6 +243,7 @@ struct Uniform {
     mask_a: [f32; 4],
     mask_b: [f32; 4],
     mask_origin: [f32; 4],
+    mask_region: [f32; 4],
 }
 
 impl Uniform {
@@ -265,6 +267,7 @@ impl Uniform {
             mask_a: [1.0, 0.0, 0.0, 0.0],
             mask_b: [0.0, 1.0, 0.0, 0.0],
             mask_origin: [0.0; 4],
+            mask_region: [0.0, 0.0, 1.0, 1.0],
         }
     }
 
@@ -280,7 +283,9 @@ impl Uniform {
         self.mask_origin = [value.origin.x, value.origin.y, 0.0, 0.0];
     }
 
-    fn mask(&mut self, layout: MaskLayout, inverted: bool) {
+    fn mask(&mut self, attachment: &MaskAttachment, inverted: bool) {
+        let layout = attachment.layout;
+        self.mask_region = attachment.region;
         self.mask_bounds = [
             layout.origin.x,
             layout.origin.y,
@@ -472,6 +477,7 @@ pub struct MetalRenderer {
     next_geometry_revision: u64,
     pending_uploads: usize,
     mask_cache: HashMap<MaskCacheKey, CachedMask>,
+    mask_atlas_pages: Vec<Texture>,
 }
 
 /// Immutable buffers can be retained by several submitted command buffers.
@@ -572,6 +578,7 @@ impl MetalRenderer {
             next_geometry_revision: 1,
             pending_uploads: 0,
             mask_cache: HashMap::new(),
+            mask_atlas_pages: Vec::new(),
         })
     }
 
@@ -773,6 +780,7 @@ impl MetalRenderer {
         textures: &MetalTextureCatalog<'_>,
     ) -> Result<MetalRenderStats, Status> {
         let mask_cache = std::mem::take(&mut self.mask_cache);
+        let atlas_pages = std::mem::take(&mut self.mask_atlas_pages);
         let buffer_uploads = std::mem::take(&mut self.pending_uploads);
         let frame = self
             .frame
@@ -864,12 +872,17 @@ impl MetalRenderer {
             pass: None,
             mask_cache,
             used_masks: Default::default(),
+            atlas_pages,
+            atlas_slots: HashMap::new(),
+            atlas_cleared: Default::default(),
             stats: MetalRenderStats {
                 buffer_uploads,
                 ..Default::default()
             },
         };
+        state.prepare_mask_atlas()?;
         state.encode_masks()?;
+        state.finish_pass();
         state.encode_target(TargetId::MAIN, &main_color)?;
         if output_mode == MetalOutputMode::Composite {
             let mut uniform = Uniform::new(
@@ -900,9 +913,11 @@ impl MetalRenderer {
             .mask_cache
             .retain(|key, _| state.used_masks.contains(key));
         let mask_cache = std::mem::take(&mut state.mask_cache);
+        let atlas_pages = std::mem::take(&mut state.atlas_pages);
         let stats = state.stats;
         drop(state);
         self.mask_cache = mask_cache;
+        self.mask_atlas_pages = atlas_pages;
         Ok(stats)
     }
 
@@ -924,19 +939,29 @@ impl MetalRenderer {
         })
     }
 
+    fn mask_layout(&self, mask: MaskId, scale: f64) -> Result<MaskLayout, Status> {
+        let bounds = self.scene.masks()[mask.0].bounds;
+        mask_layout_from_bounds(
+            bounds.position,
+            bounds.end(),
+            scale,
+            MAX_TEXTURE_DIMENSION.min(4096),
+        )
+    }
+
     fn validate_attachment_budget(
         &self,
         frame: &DrawableFrame,
         viewport: ViewportConfig,
         surface_size: (u32, u32),
-    ) -> Result<(), Status> {
+    ) -> Result<u64, Status> {
         let bytes = |size: (u32, u32)| u64::from(size.0) * u64::from(size.1) * 4;
         let mut total = bytes((self.target.width, self.target.height));
         total = total.saturating_add(self.scene.active_target_count() as u64 * bytes(surface_size));
         let mut masks = std::collections::HashSet::new();
-        let mut count_mask = |sources: &[String], scale: f64| -> Result<(), Status> {
+        let mut count_mask = |sources: &[String], mask: MaskId, scale: f64| -> Result<(), Status> {
             if masks.insert(MaskCacheKey::new(sources, scale)) {
-                let layout = mask_layout(frame, sources, scale, 4096)?;
+                let layout = self.mask_layout(mask, scale)?;
                 total = total.saturating_add(bytes((layout.width, layout.height)));
             }
             Ok(())
@@ -948,12 +973,20 @@ impl MetalRenderer {
                 && !drawable.indices.is_empty()
                 && self.scene.targets()[self.scene.meshes()[index].target.0].active
             {
-                count_mask(&drawable.masks, viewport.mask_scale)?;
+                count_mask(
+                    &drawable.masks,
+                    self.scene.meshes()[index].mask.unwrap(),
+                    viewport.mask_scale,
+                )?;
             }
         }
         for (index, offscreen) in frame.offscreens.iter().enumerate() {
             if self.scene.targets()[index + 1].active && !offscreen.masks.is_empty() {
-                count_mask(&offscreen.masks, viewport.mask_scale.max(1.0))?;
+                count_mask(
+                    &offscreen.masks,
+                    self.scene.targets()[index + 1].mask.unwrap(),
+                    viewport.mask_scale.max(1.0),
+                )?;
             }
         }
         for (index, target) in self.scene.targets().iter().enumerate() {
@@ -990,7 +1023,7 @@ impl MetalRenderer {
                 "Metal attachments exceed the configured budget.",
             ));
         }
-        Ok(())
+        Ok(total)
     }
 }
 
@@ -1013,6 +1046,7 @@ fn sampler(device: &DeviceRef, repeat: bool) -> SamplerState {
 struct MaskAttachment {
     texture: Texture,
     layout: MaskLayout,
+    region: [f32; 4],
 }
 
 #[derive(Clone, PartialEq, Eq, Hash)]
@@ -1065,10 +1099,145 @@ struct FrameEncoder<'a, 'tex> {
     pass: Option<(Texture, metal::RenderCommandEncoder)>,
     mask_cache: HashMap<MaskCacheKey, CachedMask>,
     used_masks: std::collections::HashSet<MaskCacheKey>,
+    atlas_pages: Vec<Texture>,
+    atlas_slots: HashMap<MaskCacheKey, (usize, u32, u32)>,
+    atlas_cleared: std::collections::HashSet<usize>,
     stats: MetalRenderStats,
 }
 
 impl FrameEncoder<'_, '_> {
+    /// Batch large sets of raw masks into shelves at their original pixel
+    /// density. A dirty atlas is rebuilt as a unit; unchanged atlases still
+    /// reuse their rendered coverage. Queue ordering protects in-flight reads.
+    fn prepare_mask_atlas(&mut self) -> Result<(), Status> {
+        const SIDE: u32 = 1024;
+        if self.renderer.scene.masks().len() < 32 {
+            if !self.atlas_pages.is_empty() {
+                // Do not keep large atlas pages alive via a few small masks.
+                self.mask_cache.clear();
+            }
+            self.atlas_pages.clear();
+            return Ok(());
+        }
+        let mut jobs = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut add = |sources: &[String], mask: MaskId, scale: f64| -> Result<(), Status> {
+            let key = MaskCacheKey::new(sources, scale);
+            if seen.insert(key.clone()) {
+                jobs.push((key, self.renderer.mask_layout(mask, scale)?));
+            }
+            Ok(())
+        };
+        for (i, drawable) in self.frame.drawables.iter().enumerate() {
+            let mesh = &self.renderer.scene.meshes()[i];
+            if drawable.visible
+                && drawable.opacity > 0.
+                && !drawable.indices.is_empty()
+                && self.renderer.scene.targets()[mesh.target.0].active
+            {
+                if let Some(mask) = mesh.mask {
+                    add(&drawable.masks, mask, self.viewport.mask_scale)?;
+                }
+            }
+        }
+        for (i, offscreen) in self.frame.offscreens.iter().enumerate() {
+            let target = &self.renderer.scene.targets()[i + 1];
+            if target.active {
+                if let Some(mask) = target.mask {
+                    add(&offscreen.masks, mask, self.viewport.mask_scale.max(1.))?;
+                }
+            }
+        }
+        let all_valid = jobs.iter().all(|(key, _)| {
+            self.mask_cache.get(key).is_some_and(|cached| {
+                key.sources.iter().zip(&cached.sources).all(|(id, stamp)| {
+                    let index = self.renderer.scene.mesh_id(id).unwrap().0;
+                    let source = &self.frame.drawables[index];
+                    let texture = self.textures.get(&source.texture_asset_id).unwrap();
+                    stamp.geometry == self.renderer.meshes[index].revision
+                        && stamp.texture == texture.view as *const TextureRef as usize
+                        && stamp.revision.is_some()
+                        && stamp.revision == self.textures.revision(&source.texture_asset_id)
+                        && stamp.repeat == self.textures.repeats(&source.texture_asset_id)
+                })
+            })
+        });
+        let logical_bytes = self.renderer.validate_attachment_budget(
+            self.frame,
+            self.viewport,
+            self.surface_size,
+        )?;
+        let cached_bytes: u64 = self
+            .atlas_pages
+            .iter()
+            .map(|t| t.width() * t.height() * 4)
+            .sum();
+        if all_valid
+            && logical_bytes.saturating_add(cached_bytes)
+                <= kasane_render::OFFSCREEN_BUDGET_BYTES as u64
+        {
+            if jobs.is_empty() {
+                self.atlas_pages.clear();
+            }
+            return Ok(());
+        }
+        self.mask_cache.clear();
+        let mut sizes: Vec<(u32, u32)> = Vec::new();
+        let (mut x, mut y, mut row_height) = (0, 0, 0);
+        for (key, layout) in jobs {
+            if sizes.is_empty()
+                || layout.width > SIDE
+                || layout.height > SIDE
+                || sizes.last().is_some_and(|&(w, h)| w > SIDE || h > SIDE)
+            {
+                sizes.push((0, 0));
+                (x, y, row_height) = (0, 0, 0);
+            }
+            if x + layout.width > SIDE && x != 0 {
+                y += row_height;
+                x = 0;
+                row_height = 0;
+            }
+            if y + layout.height > SIDE && y != 0 {
+                sizes.push((0, 0));
+                (x, y, row_height) = (0, 0, 0);
+            }
+            let page = sizes.len() - 1;
+            self.atlas_slots.insert(key, (page, x, y));
+            sizes[page].0 = sizes[page].0.max(x + layout.width);
+            sizes[page].1 = sizes[page].1.max(y + layout.height);
+            x += layout.width;
+            row_height = row_height.max(layout.height);
+        }
+        // Include shelf waste in the resource budget, conservatively retaining
+        // the logical-mask estimate as well as physical atlas storage.
+        let atlas_bytes: u64 = sizes
+            .iter()
+            .map(|&(w, h)| u64::from(w) * u64::from(h) * 4)
+            .sum();
+        if logical_bytes.saturating_add(atlas_bytes) > kasane_render::OFFSCREEN_BUDGET_BYTES as u64
+        {
+            self.atlas_slots.clear();
+            self.atlas_pages.clear();
+            return Ok(()); // Fall back to tightly sized individual masks.
+        }
+        let old_pages = std::mem::take(&mut self.atlas_pages);
+        self.atlas_pages = sizes
+            .into_iter()
+            .enumerate()
+            .map(|(i, (w, h))| {
+                old_pages
+                    .get(i)
+                    .filter(|t| t.width() == w as u64 && t.height() == h as u64)
+                    .cloned()
+                    .unwrap_or_else(|| {
+                        create_texture(&self.renderer.device, w, h, MTLPixelFormat::RGBA8Unorm)
+                    })
+            })
+            .collect();
+        Ok(())
+    }
+
     fn encode_masks(&mut self) -> Result<(), Status> {
         for (index, drawable) in self.frame.drawables.iter().enumerate() {
             if !drawable.masks.is_empty()
@@ -1078,7 +1247,12 @@ impl FrameEncoder<'_, '_> {
                 && self.renderer.scene.targets()[self.renderer.scene.meshes()[index].target.0]
                     .active
             {
-                self.encode_mask(&drawable.id, &drawable.masks, self.viewport.mask_scale)?;
+                self.encode_mask(
+                    &drawable.id,
+                    &drawable.masks,
+                    self.renderer.scene.meshes()[index].mask.unwrap(),
+                    self.viewport.mask_scale,
+                )?;
             }
         }
         for (index, offscreen) in self.frame.offscreens.iter().enumerate() {
@@ -1086,6 +1260,7 @@ impl FrameEncoder<'_, '_> {
                 self.encode_mask(
                     &offscreen.id,
                     &offscreen.masks,
+                    self.renderer.scene.targets()[index + 1].mask.unwrap(),
                     self.viewport.mask_scale.max(1.0),
                 )?;
             }
@@ -1093,16 +1268,22 @@ impl FrameEncoder<'_, '_> {
         Ok(())
     }
 
-    fn encode_mask(&mut self, id: &str, sources: &[String], scale: f64) -> Result<(), Status> {
+    fn encode_mask(
+        &mut self,
+        id: &str,
+        sources: &[String],
+        mask: MaskId,
+        scale: f64,
+    ) -> Result<(), Status> {
         let key = MaskCacheKey::new(sources, scale);
         let source_indices: Vec<_> = key
             .sources
             .iter()
             .map(|id| {
-                self.frame
-                    .drawables
-                    .iter()
-                    .position(|d| &d.id == id)
+                self.renderer
+                    .scene
+                    .mesh_id(id)
+                    .map(|id| id.0)
                     .ok_or_else(|| Status::error("INVALID_MASK", id))
             })
             .collect::<Result<_, _>>()?;
@@ -1132,22 +1313,51 @@ impl FrameEncoder<'_, '_> {
                 return Ok(());
             }
         }
-        let layout = mask_layout(self.frame, sources, scale, MAX_TEXTURE_DIMENSION.min(4096))?;
-        let texture = create_texture(
-            &self.renderer.device,
-            layout.width,
-            layout.height,
-            MTLPixelFormat::RGBA8Unorm,
-        );
+        let layout = self.renderer.mask_layout(mask, scale)?;
+        // Commands are submitted on one queue, so an earlier frame's reads
+        // finish before this frame clears and rewrites the same attachment.
+        let atlas_slot = self.atlas_slots.get(&key).copied();
+        let texture = if let Some((page, _, _)) = atlas_slot {
+            self.atlas_pages[page].clone()
+        } else {
+            self.mask_cache
+                .get(&key)
+                .filter(|cached| {
+                    cached.attachment.texture.width() == layout.width as u64
+                        && cached.attachment.texture.height() == layout.height as u64
+                })
+                .map(|cached| cached.attachment.texture.clone())
+                .unwrap_or_else(|| {
+                    create_texture(
+                        &self.renderer.device,
+                        layout.width,
+                        layout.height,
+                        MTLPixelFormat::RGBA8Unorm,
+                    )
+                })
+        };
+        let (_, x, y) = atlas_slot.unwrap_or((0, 0, 0));
+        let size = (texture.width() as u32, texture.height() as u32);
         let transform = Affine2 {
             a: Vec2::new(layout.scale, 0.0),
             b: Vec2::new(0.0, layout.scale),
             origin: Vec2::new(
-                -layout.origin.x * layout.scale,
-                -layout.origin.y * layout.scale,
+                -layout.origin.x * layout.scale + x as f32,
+                -layout.origin.y * layout.scale + y as f32,
             ),
         };
-        let mut clear = true;
+        let clear = atlas_slot.map_or(true, |(page, _, _)| self.atlas_cleared.insert(page));
+        self.begin_pass(&texture, clear);
+        self.pass
+            .as_ref()
+            .unwrap()
+            .1
+            .set_scissor_rect(metal::MTLScissorRect {
+                x: x as u64,
+                y: y as u64,
+                width: layout.width as u64,
+                height: layout.height as u64,
+            });
         let retained_textures = source_indices
             .iter()
             .map(|&index| {
@@ -1167,12 +1377,7 @@ impl FrameEncoder<'_, '_> {
                 .textures
                 .get(&source.texture_asset_id)
                 .ok_or_else(|| Status::error("MISSING_TEXTURE", &source.texture_asset_id))?;
-            let mut uniform = Uniform::new(
-                (layout.width, layout.height),
-                [1.0; 4],
-                [0.0, 0.0, 0.0, 1.0],
-                1.0,
-            );
+            let mut uniform = Uniform::new(size, [1.0; 4], [0.0, 0.0, 0.0, 1.0], 1.0);
             uniform.view(transform);
             self.draw(
                 &texture,
@@ -1183,14 +1388,19 @@ impl FrameEncoder<'_, '_> {
                 &self.renderer.meshes[index],
                 &uniform,
                 self.textures.repeats(&source.texture_asset_id),
-                clear,
+                false,
             );
-            clear = false;
         }
-        if clear {
-            self.clear(&texture);
-        }
-        let attachment = MaskAttachment { texture, layout };
+        let attachment = MaskAttachment {
+            texture,
+            layout,
+            region: [
+                x as f32 / size.0 as f32,
+                y as f32 / size.1 as f32,
+                layout.width as f32 / size.0 as f32,
+                layout.height as f32 / size.1 as f32,
+            ],
+        };
         self.masks.insert(id.to_owned(), attachment.clone());
         self.used_masks.insert(key.clone());
         self.mask_cache.insert(
@@ -1317,7 +1527,7 @@ impl FrameEncoder<'_, '_> {
         });
         let mask = self.masks.get(&drawable.id).cloned();
         if let Some(mask) = &mask {
-            uniform.mask(mask.layout, drawable.inverted_mask);
+            uniform.mask(mask, drawable.inverted_mask);
         }
         let pipeline = if let Some(mode) = drawable.raw_blend_mode {
             uniform.raw_blend(mode);
@@ -1388,7 +1598,7 @@ impl FrameEncoder<'_, '_> {
         uniform.mask_view(compose_affine(self.surface_to_model, source_scale));
         let mask = self.masks.get(&offscreen.id).cloned();
         if let Some(mask) = &mask {
-            uniform.mask(mask.layout, offscreen.flags & 8 != 0);
+            uniform.mask(mask, offscreen.flags & 8 != 0);
         }
         let pipeline = if offscreen.blend_mode != 0 {
             uniform.raw_blend(offscreen.blend_mode);

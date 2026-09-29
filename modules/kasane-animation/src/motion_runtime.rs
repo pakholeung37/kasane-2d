@@ -1,4 +1,5 @@
 //! Motion stage. The owner supplies one clock and frame for all stages.
+use crate::parameter_values::{copy_values, set_value};
 use crate::pose::real_parameter_for_part;
 use crate::{sample_motion_curve, AnimationError, CompiledCurve, MotionEventFired, MotionSnapshot};
 use kasane_core::{
@@ -168,11 +169,14 @@ impl MotionRuntime {
             && self.parameter_inputs[self.next_parameter_input].time <= time
         {
             let input = &self.parameter_inputs[self.next_parameter_input];
-            self.motion_parameters
-                .insert(input.parameter_id.clone(), input.value);
+            set_value(
+                &mut self.motion_parameters,
+                &input.parameter_id,
+                input.value,
+            );
             self.next_parameter_input += 1;
         }
-        snapshot.parameters = self.motion_parameters.clone();
+        copy_values(&mut snapshot.parameters, &self.motion_parameters);
         snapshot.fired_events.clear();
         snapshot.coverage.clear();
         while self.next_activation < self.activations.len()
@@ -246,8 +250,9 @@ impl MotionRuntime {
                         let parameter = document
                             .get_parameter(parameter_id)
                             .expect("resolved parameter");
-                        snapshot.parameters.insert(
-                            parameter_id.clone(),
+                        set_value(
+                            &mut snapshot.parameters,
+                            parameter_id,
                             lerp(
                                 current,
                                 value,
@@ -325,7 +330,7 @@ impl MotionRuntime {
                     .get_motion(&item.id)
                     .is_some_and(|clip| clip.looping || time - item.start_time < clip.duration)
         });
-        self.motion_parameters = snapshot.parameters.clone();
+        copy_values(&mut self.motion_parameters, &snapshot.parameters);
         snapshot.active_motions = self.playing.iter().map(|item| item.id.clone()).collect();
         Ok(())
     }

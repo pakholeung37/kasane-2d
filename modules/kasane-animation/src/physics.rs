@@ -1,4 +1,5 @@
 //! Framework-compatible fixed-step physics state for detached previews.
+use crate::parameter_values::set_value;
 use std::collections::BTreeMap;
 
 use crate::AnimationError;
@@ -277,8 +278,8 @@ impl PhysicsRuntime {
             for (id, value) in parameters.iter() {
                 let previous = self.input_cache.get(id).copied().unwrap_or(*value);
                 let blended = previous * (1.0 - weight) + *value * weight;
-                self.parameter_cache.insert(id.clone(), blended);
-                self.input_cache.insert(id.clone(), blended);
+                set_value(&mut self.parameter_cache, id, blended);
+                set_value(&mut self.input_cache, id, blended);
             }
             for (setting, rig) in asset.data.settings.iter().zip(&mut self.rigs) {
                 rig.previous.clone_from(&rig.current);
@@ -514,8 +515,9 @@ fn write_output(
     let value = (raw * output.scale).clamp(parameter.minimum, parameter.maximum);
     let current = values.get(id).copied().unwrap_or(parameter.default_value);
     let weight = output.weight / 100.0;
-    values.insert(
-        id.clone(),
+    set_value(
+        values,
+        id,
         if weight >= 1.0 {
             value
         } else {

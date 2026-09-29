@@ -3,7 +3,7 @@ use crate::types::{DeltaKeyforms, Status};
 
 use super::evaluator::EvalContext;
 use super::prepared::PreparedEvaluation;
-use super::selection::{evaluate_blend_binding, select};
+use super::selection::evaluate_blend_binding;
 use super::types::OffscreenFrame;
 
 pub(super) fn evaluate(
@@ -68,7 +68,7 @@ pub(super) fn evaluate(
 
             if owner_enabled {
                 if let Some(b) = doc.binding_for_scene(part_id) {
-                    let s = select(doc, state.values, &b.axes, state.selection);
+                    let s = &state.selections[prepared.scene_selections[part_id]];
                     let mut interp_opa = 0.0f32;
                     let mut interp_mul = [0.0f32; 3];
                     let mut interp_scr = [0.0f32; 3];

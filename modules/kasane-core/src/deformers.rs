@@ -264,6 +264,34 @@ pub fn warp_points(
     outputs: &mut [f32],
     count: usize,
 ) {
+    let mut map = warp_mapper(row, col, is_quad, pos);
+    for i in 0..count {
+        v2_store(outputs, i, map(v2_load(inputs, i)));
+    }
+}
+
+/// Apply one warp to a vertex batch without converting or allocating buffers.
+/// The extrapolation basis is computed lazily once for the whole batch.
+pub(crate) fn warp_points_in_place(
+    row: i32,
+    col: i32,
+    is_quad: bool,
+    pos: &[f32],
+    points: &mut [crate::types::Vec2],
+) {
+    let mut map = warp_mapper(row, col, is_quad, pos);
+    for point in points {
+        let mapped = map(PsmVec2::new(point.x, point.y));
+        *point = crate::types::Vec2::new(mapped.x, mapped.y);
+    }
+}
+
+fn warp_mapper(
+    row: i32,
+    col: i32,
+    is_quad: bool,
+    pos: &[f32],
+) -> impl FnMut(PsmVec2) -> PsmVec2 + '_ {
     let stride = col + 1;
     let fr = row as f32;
     let fc = col as f32;
@@ -275,8 +303,7 @@ pub fn warp_points(
         dpdu: PsmVec2::default(),
     };
 
-    for i in 0..count {
-        let uv = v2_load(inputs, i);
+    move |uv: PsmVec2| {
         let gu = uv.x * fc;
         let gv = uv.y * fr;
 
@@ -292,7 +319,7 @@ pub fn warp_points(
             let p01 = v2_load(pos, bi + stride as usize);
             let p11 = v2_load(pos, bi + stride as usize + 1);
 
-            let result = if is_quad {
+            if is_quad {
                 PsmVec2::bilinear(p00, p10, p01, p11, fu, fv)
             } else {
                 let cell = WarpCell {
@@ -304,8 +331,7 @@ pub fn warp_points(
                     p11,
                 };
                 interp_triangle(&cell)
-            };
-            v2_store(outputs, i, result);
+            }
         } else {
             if !extrap_setup {
                 basis = warp_extrap_basis(pos, row, col, stride);
@@ -314,13 +340,11 @@ pub fn warp_points(
 
             if uv.x > -2.0 && uv.x < 3.0 && uv.y > -2.0 && uv.y < 3.0 {
                 let cell = warp_extrap_cell(uv.x, uv.y, gu, gv, row, col, stride, pos, &basis);
-                let r = interp_triangle(&cell);
-                v2_store(outputs, i, r);
+                interp_triangle(&cell)
             } else {
                 let rx = basis.dpdu.x * uv.x + basis.center.x + basis.dpdv.x * uv.y;
                 let ry = basis.dpdu.y * uv.x + basis.center.y + basis.dpdv.y * uv.y;
-                outputs[i * 2] = rx;
-                outputs[i * 2 + 1] = ry;
+                PsmVec2::new(rx, ry)
             }
         }
     }
@@ -338,6 +362,37 @@ pub fn rotation_points(
     outputs: &mut [f32],
     count: usize,
 ) {
+    let map = rotation_mapper(base_angle, angle, scale, origin, rx, ry);
+    for i in 0..count {
+        v2_store(outputs, i, map(v2_load(inputs, i)));
+    }
+}
+
+/// Compute the rotation coefficients once, preserving scalar arithmetic order.
+pub(crate) fn rotation_points_in_place(
+    base_angle: f32,
+    angle: f32,
+    scale: f32,
+    origin: PsmVec2,
+    rx: bool,
+    ry: bool,
+    points: &mut [crate::types::Vec2],
+) {
+    let map = rotation_mapper(base_angle, angle, scale, origin, rx, ry);
+    for point in points {
+        let mapped = map(PsmVec2::new(point.x, point.y));
+        *point = crate::types::Vec2::new(mapped.x, mapped.y);
+    }
+}
+
+fn rotation_mapper(
+    base_angle: f32,
+    angle: f32,
+    scale: f32,
+    origin: PsmVec2,
+    rx: bool,
+    ry: bool,
+) -> impl Fn(PsmVec2) -> PsmVec2 {
     let angle_rad = (base_angle + angle) * PI / 180.0;
     let (sin_a, cos_a) = angle_rad.sin_cos();
 
@@ -349,15 +404,13 @@ pub fn rotation_points(
     let m10 = scale * sin_a * rxf;
     let m11 = scale * cos_a * ryf;
 
-    for i in 0..count {
-        let p = v2_load(inputs, i);
+    move |p: PsmVec2| {
         // Accumulate the linear part before translation. Interleaving origin
         // loses low bits that nested rotation-parent angle estimation amplifies.
-        let r = PsmVec2::new(
+        PsmVec2::new(
             m00.mul_add(p.x, m01 * p.y) + origin.x,
             m10.mul_add(p.x, m11 * p.y) + origin.y,
-        );
-        v2_store(outputs, i, r);
+        )
     }
 }
 

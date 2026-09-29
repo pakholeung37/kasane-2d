@@ -155,6 +155,23 @@ pub fn mask_layout(
         }
     }
     let (min, max) = bounds.unwrap_or((Vec2::default(), Vec2::default()));
+    mask_layout_from_bounds(min, max, requested_scale, max_dimension)
+}
+
+/// Lower already computed canvas-pixel bounds using the same sampling policy
+/// as `mask_layout`, without resolving source IDs or walking geometry again.
+pub fn mask_layout_from_bounds(
+    min: Vec2,
+    max: Vec2,
+    requested_scale: f64,
+    max_dimension: u32,
+) -> Result<MaskLayout, Status> {
+    if !requested_scale.is_finite() || requested_scale <= 0.0 {
+        return Err(Status::error(
+            "INVALID_MASK_SCALE",
+            "Mask scale must be finite and positive.",
+        ));
+    }
     let origin = Vec2::new(min.x - 4.0, min.y - 4.0);
     let size_x = (max.x - min.x + 8.0).ceil().max(1.0);
     let size_y = (max.y - min.y + 8.0).ceil().max(1.0);

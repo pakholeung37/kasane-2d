@@ -8,6 +8,7 @@ pub use motion::{sample_motion_curve, CompiledCurve};
 pub use seek_cache::SeekCacheStats;
 mod motion_preview;
 mod motion_runtime;
+mod parameter_values;
 mod physics;
 pub use physics::PhysicsPreview;
 mod pose;

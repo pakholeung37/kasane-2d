@@ -26,6 +26,16 @@ Mesh buffers are immutable and retained across view changes. Model submissions
 replace only buffers whose geometry changed, so earlier submitted frames keep
 their original data. Changed meshes share packed vertex/index slabs (normally
 up to 4 MiB each), avoiding a Metal allocation per drawable during deformation.
+Mask lookup and layout use `ScenePlan`'s indexed sources and cached bounds.
+Scenes with at least 32 logical masks pack active masks into atlas shelves
+(normally up to 1024×1024 per page), preserving each mask's pixel density and
+padding. Scissoring isolates writes and sampling clamps within each tile.
+A changed source invalidates the atlas as a unit; unchanged atlases remain
+cached. Pages are reused when their sizes match, with writes ordered after
+previous frames by the command queue. Oversized masks get dedicated pages;
+if shelf storage would exceed the attachment budget, rendering falls back to
+individual masks. Small scenes retain individual-mask caching.
+
 Raw masks are shared by consumers and cached across frames
 using geometry, scale, texture identity/revision, and repeat mode.
 Mask density rounds up to powers of two to share masks across nearby zoom levels,

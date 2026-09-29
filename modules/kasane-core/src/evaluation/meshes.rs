@@ -1,4 +1,3 @@
-use crate::deformers::PsmVec2;
 use crate::document::Document;
 use crate::types::{Appearance, DeltaKeyforms, Status, Vec2};
 
@@ -6,7 +5,7 @@ use super::evaluator::EvalContext;
 use super::prepared::PreparedEvaluation;
 use super::selection::{
     blend_appearance, blend_positions, default_selection, evaluate_blend_binding,
-    inherit_appearance, select,
+    inherit_appearance,
 };
 use super::transforms::f32_to_i32;
 
@@ -48,7 +47,7 @@ pub(super) fn evaluate(
                 || state.transforms[prepared.transform_slots[&mesh.deformer_id]].enabled);
 
         let b = doc.binding_for_mesh(id);
-        let selection = b.map(|binding| select(doc, state.values, &binding.axes, state.selection));
+        let selection = prepared.mesh_selections[mesh_index].map(|slot| &state.selections[slot]);
         if let Some(sel) = selection {
             d.visible &= sel.enabled;
         }
@@ -143,10 +142,7 @@ pub(super) fn evaluate(
             if !mesh.deformer_id.is_empty() {
                 let parent = &state.transforms[prepared.transform_slots[&mesh.deformer_id]];
                 inherit_appearance(&mut appearance, &parent.appearance);
-                for p in &mut d.positions {
-                    let q = parent.point(PsmVec2::new(p.x, p.y));
-                    *p = Vec2::new(q.x, q.y);
-                }
+                parent.apply(&mut d.positions);
             }
         } else {
             d.positions.resize(mesh.vertex_ids.len(), Vec2::default());

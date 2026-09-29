@@ -691,3 +691,95 @@ fn cache_eviction_cancellation_and_failed_schedule_are_atomic() {
     preview.reset();
     assert_eq!(preview.seek_cache_stats().budget_bytes, 1);
 }
+
+#[test]
+fn geometry_workspace_preserves_owned_frames_and_shared_reads() {
+    use kasane_core::{evaluate_frame, BindingAxis, DrawableFrame, MeshBinding, MeshKeyform};
+    let mut doc = document();
+    let asset = "00000000-0000-4000-8000-000000000e01";
+    let mesh = "00000000-0000-4000-8000-000000000e02";
+    let binding = "00000000-0000-4000-8000-000000000e03";
+    assert!(doc
+        .add_asset(ImageAsset {
+            id: asset.into(),
+            source: "memory://geometry".into(),
+            width: 8,
+            height: 8,
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    let positions = vec![Vec2::new(0., 0.), Vec2::new(10., 0.), Vec2::new(0., 10.)];
+    assert!(doc
+        .create_mesh(Mesh {
+            id: mesh.into(),
+            texture_asset_id: asset.into(),
+            vertex_ids: vec![1, 2, 3],
+            base_positions: positions.clone(),
+            uvs: vec![Vec2::default(); 3],
+            triangles: vec![[1, 2, 3]],
+            ..Default::default()
+        })
+        .status
+        .is_ok());
+    assert!(doc
+        .create_binding(MeshBinding {
+            id: binding.into(),
+            mesh_id: mesh.into(),
+            axes: vec![BindingAxis {
+                parameter_id: PARAM.into(),
+                keys: vec![0., 1.]
+            }],
+            keyforms: [0., 1.]
+                .into_iter()
+                .map(|key| MeshKeyform {
+                    keys: vec![key],
+                    positions: positions
+                        .iter()
+                        .map(|p| Vec2::new(p.x + key * 20., p.y))
+                        .collect(),
+                    ..Default::default()
+                })
+                .collect(),
+        })
+        .status
+        .is_ok());
+    let mut preview = MotionPreview::new(&doc);
+    let saved = preview.evaluate_drawables().unwrap();
+    for value in [0.25, 1., 0., 0.75] {
+        preview.set_base_parameter(PARAM, value).unwrap();
+        let mut reference = DrawableFrame::default();
+        assert!(evaluate_frame(&doc, &[(PARAM.into(), value)].into(), &mut reference).is_ok());
+        assert_eq!(preview.evaluate_drawables().unwrap(), reference);
+        assert_eq!(
+            preview.evaluate_drawables_including_hidden().unwrap(),
+            reference
+        );
+        // Mutating a caller-owned result must never contaminate later results.
+        let mut changed = preview.evaluate_drawables().unwrap();
+        changed.drawables[0].positions.fill(Vec2::new(999., 999.));
+        changed.parameters.clear();
+        assert_eq!(preview.evaluate_drawables().unwrap(), reference);
+    }
+    assert_eq!(saved.parameters[0].value, 0.);
+    assert_ne!(
+        saved.drawables[0].positions,
+        preview.evaluate_drawables().unwrap().drawables[0].positions
+    );
+    let expected = preview.evaluate_drawables().unwrap();
+    let snapshot = preview.snapshot().clone();
+    let operation = preview.operation().clone();
+    // Also compile-checks that MotionPreview remains Send + Sync.
+    std::thread::scope(|scope| {
+        for _ in 0..4 {
+            let (preview, expected) = (&preview, &expected);
+            scope.spawn(move || {
+                for _ in 0..8 {
+                    assert_eq!(&preview.evaluate_drawables().unwrap(), expected);
+                }
+            });
+        }
+    });
+    assert_eq!(*preview.snapshot(), snapshot);
+    assert_eq!(*preview.operation(), operation);
+}

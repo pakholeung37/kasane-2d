@@ -21,6 +21,7 @@ struct Uniform {
     float4 mask_a;
     float4 mask_b;
     float4 mask_origin;
+    float4 mask_region;
 };
 
 struct Varying {
@@ -49,7 +50,12 @@ float mask_alpha(Varying in, constant Uniform& u,
     if (u.flags.x == 0) return 1.0;
     float2 uv = (in.mask_point - u.mask_bounds.xy) / u.mask_bounds.zw;
     if (any(uv < 0.0) || any(uv > 1.0)) return u.flags.y != 0 ? 1.0 : 0.0;
-    float alpha = mask.sample(mask_sampler, uv).a;
+    // Clamp within the original mask's texel centers before atlas mapping,
+    // preserving standalone ClampToEdge sampling without adjacent-tile bleed.
+    float2 texture_size = float2(mask.get_width(), mask.get_height());
+    float2 half_texel = 0.5 / (texture_size * u.mask_region.zw);
+    uv = clamp(uv, half_texel, 1.0 - half_texel);
+    float alpha = mask.sample(mask_sampler, u.mask_region.xy + uv * u.mask_region.zw).a;
     return u.flags.y != 0 ? 1.0 - alpha : alpha;
 }
 
