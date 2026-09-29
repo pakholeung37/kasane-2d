@@ -246,8 +246,9 @@ fn decode_curve(raw: Motion3CurveWire, index: usize) -> Result<Motion3Curve, Mot
         id: raw.id,
         initial,
         segments,
-        fade_in: raw.fade_in,
-        fade_out: raw.fade_out,
+        // Cubism writes -1 on a curve to inherit the motion's fade duration.
+        fade_in: raw.fade_in.filter(|&value| value != -1.0),
+        fade_out: raw.fade_out.filter(|&value| value != -1.0),
         extensions: raw.extensions,
     })
 }

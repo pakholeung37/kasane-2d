@@ -61,3 +61,15 @@ fn accepts_editor_rounded_duration_with_last_point_within_half_frame() {
         "CURVE_EXCEEDS_DURATION"
     );
 }
+
+#[test]
+fn curve_negative_one_fades_inherit_motion_fades() {
+    let source = TYPED.replace(
+        "\"Segments\":[",
+        "\"FadeInTime\":-1,\"FadeOutTime\":-1,\"Segments\":[",
+    );
+    let motion = decode_motion3(&source).unwrap();
+    assert_eq!(motion.curves[0].fade_in, None);
+    assert_eq!(motion.curves[0].fade_out, None);
+    assert!(encode_motion3(&motion).is_ok());
+}

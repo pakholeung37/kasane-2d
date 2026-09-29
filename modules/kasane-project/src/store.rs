@@ -517,7 +517,10 @@ impl DocumentStore {
             }
         };
         let file_refs = &model3["FileReferences"];
-        let cdi_ref = file_refs.get("DisplayInfo").cloned();
+        let cdi_ref = file_refs
+            .get("DisplayInfo")
+            .filter(|value| !value.is_null())
+            .cloned();
         let cdi_diagnostics = if let Some(reference) = cdi_ref {
             let Some(relative) = reference.as_str() else {
                 return (
@@ -610,43 +613,46 @@ impl DocumentStore {
             Vec::new()
         };
 
-        let pose_diagnostics = if let Some(reference) = file_refs.get("Pose") {
-            let Some(relative) = reference.as_str() else {
-                return (
-                    ProjectResult::failed("INVALID_MODEL3_JSON", "Pose path must be a string"),
-                    None,
-                    None,
-                );
-            };
-            let text = match read_model_attachment(base_dir, relative, "Pose") {
-                Ok(text) => text,
-                Err(status) => return (ProjectResult::from_status(status), None, None),
-            };
-            let id = stable_pose_id(&res.document);
-            match crate::import_pose3(&res.document, &id, &text) {
-                Ok(imported) => {
-                    res.document = imported.candidate;
-                    res.report
-                        .unimported_attachments
-                        .retain(|item| !item.starts_with("Pose:"));
-                    imported.diagnostics
-                }
-                Err(error) => {
+        let pose_diagnostics =
+            if let Some(reference) = file_refs.get("Pose").filter(|value| !value.is_null()) {
+                let Some(relative) = reference.as_str() else {
                     return (
-                        ProjectResult::failed(
-                            &error.code,
-                            &format!("Pose {}: {}", error.path, error.message),
-                        ),
+                        ProjectResult::failed("INVALID_MODEL3_JSON", "Pose path must be a string"),
                         None,
                         None,
-                    )
+                    );
+                };
+                let text = match read_model_attachment(base_dir, relative, "Pose") {
+                    Ok(text) => text,
+                    Err(status) => return (ProjectResult::from_status(status), None, None),
+                };
+                let id = stable_pose_id(&res.document);
+                match crate::import_pose3(&res.document, &id, &text) {
+                    Ok(imported) => {
+                        res.document = imported.candidate;
+                        res.report
+                            .unimported_attachments
+                            .retain(|item| !item.starts_with("Pose:"));
+                        imported.diagnostics
+                    }
+                    Err(error) => {
+                        return (
+                            ProjectResult::failed(
+                                &error.code,
+                                &format!("Pose {}: {}", error.path, error.message),
+                            ),
+                            None,
+                            None,
+                        )
+                    }
                 }
-            }
-        } else {
-            Vec::new()
-        };
+            } else {
+                Vec::new()
+            };
 
-        let physics_diagnostics = if let Some(reference) = file_refs.get("Physics") {
+        let physics_diagnostics = if let Some(reference) =
+            file_refs.get("Physics").filter(|value| !value.is_null())
+        {
             let Some(relative) = reference.as_str() else {
                 return (
                     ProjectResult::failed("INVALID_MODEL3_JSON", "Physics path must be a string"),
@@ -698,7 +704,10 @@ impl DocumentStore {
         };
 
         let mut expression_diagnostics = Vec::new();
-        if let Some(references) = file_refs.get("Expressions") {
+        if let Some(references) = file_refs
+            .get("Expressions")
+            .filter(|value| !value.is_null())
+        {
             let Some(references) = references.as_array() else {
                 return (
                     ProjectResult::failed("INVALID_MODEL3_JSON", "Expressions must be an array"),
@@ -706,6 +715,7 @@ impl DocumentStore {
                     None,
                 );
             };
+            let mut expression_paths = std::collections::HashMap::new();
             for (index, registration) in references.iter().enumerate() {
                 let Some(name) = registration.get("Name").and_then(|value| value.as_str()) else {
                     return (
@@ -728,6 +738,19 @@ impl DocumentStore {
                         None,
                     );
                 };
+                if let Some(previous) = expression_paths.insert(name, relative) {
+                    if previous == relative {
+                        continue;
+                    }
+                    return (
+                        ProjectResult::failed(
+                            "DUPLICATE_EXPRESSION_NAME",
+                            &format!("Expressions[{index}].Name {name} has conflicting files"),
+                        ),
+                        None,
+                        None,
+                    );
+                }
                 let text = match read_model_attachment(base_dir, relative, "Expression") {
                     Ok(text) => text,
                     Err(status) => return (ProjectResult::from_status(status), None, None),
@@ -762,7 +785,7 @@ impl DocumentStore {
         }
 
         let mut motion_diagnostics = Vec::new();
-        if let Some(references) = file_refs.get("Motions") {
+        if let Some(references) = file_refs.get("Motions").filter(|value| !value.is_null()) {
             let Some(groups) = references.as_object() else {
                 return (
                     ProjectResult::failed("INVALID_MODEL3_JSON", "Motions must be an object"),
@@ -990,7 +1013,7 @@ impl DocumentStore {
         let mut managed_diagnostics = Vec::new();
         let mut managed = Vec::new();
         let mut paths = std::collections::HashSet::new();
-        let user_data_value = file_refs.get("UserData");
+        let user_data_value = file_refs.get("UserData").filter(|value| !value.is_null());
         if user_data_value.is_some_and(|value| !value.is_string()) {
             return (
                 ProjectResult::failed("INVALID_MODEL3_JSON", "UserData must be a string"),

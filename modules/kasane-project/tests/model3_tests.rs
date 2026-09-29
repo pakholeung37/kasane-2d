@@ -2,6 +2,98 @@ use kasane_project::DocumentSession;
 use serde_json::Value;
 
 #[test]
+fn null_optional_file_references_import_as_absent() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let source = root.join("tests/fixtures/external_v50");
+    let temporary = std::env::temp_dir().join(format!(
+        "kasane-model3-null-references-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&temporary);
+    std::fs::create_dir_all(&temporary).unwrap();
+    std::fs::copy(source.join("model.moc3"), temporary.join("model.moc3")).unwrap();
+    std::fs::copy(
+        source.join("texture_00.png"),
+        temporary.join("texture_00.png"),
+    )
+    .unwrap();
+    let mut model3: Value =
+        serde_json::from_slice(&std::fs::read(source.join("model.model3.json")).unwrap()).unwrap();
+    for key in [
+        "Physics",
+        "Pose",
+        "DisplayInfo",
+        "Expressions",
+        "Motions",
+        "UserData",
+    ] {
+        model3["FileReferences"][key] = Value::Null;
+    }
+    let path = temporary.join("model.model3.json");
+    std::fs::write(&path, serde_json::to_vec(&model3).unwrap()).unwrap();
+
+    let mut session = DocumentSession::new();
+    let (result, report) = session.import_model3(&path);
+    assert!(result.status.is_ok(), "{result:?}");
+    assert!(result.diagnostics.is_empty(), "{result:?}");
+    assert!(result.warnings.is_empty(), "{result:?}");
+    assert!(report.unwrap().unimported_attachments.is_empty());
+    std::fs::remove_dir_all(temporary).unwrap();
+}
+
+#[test]
+fn identical_expression_registrations_import_once() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    let source = root.join("tests/fixtures/external_v50");
+    let temporary = std::env::temp_dir().join(format!(
+        "kasane-model3-duplicate-expressions-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&temporary);
+    std::fs::create_dir_all(&temporary).unwrap();
+    std::fs::copy(source.join("model.moc3"), temporary.join("model.moc3")).unwrap();
+    std::fs::copy(
+        source.join("texture_00.png"),
+        temporary.join("texture_00.png"),
+    )
+    .unwrap();
+    std::fs::write(
+        temporary.join("smile.exp3.json"),
+        r#"{"Type":"Live2D Expression","Parameters":[{"Id":"ParamX","Value":0.5}]}"#,
+    )
+    .unwrap();
+    let mut model3: Value =
+        serde_json::from_slice(&std::fs::read(source.join("model.model3.json")).unwrap()).unwrap();
+    model3["FileReferences"]["Physics"] = Value::Null;
+    model3["FileReferences"]["Motions"] = Value::Null;
+    model3["FileReferences"]["Expressions"] = serde_json::json!([
+        {"Name":"Smile","File":"smile.exp3.json"},
+        {"Name":"Smile","File":"smile.exp3.json"}
+    ]);
+    let path = temporary.join("model.model3.json");
+    std::fs::write(&path, serde_json::to_vec(&model3).unwrap()).unwrap();
+
+    let mut session = DocumentSession::new();
+    let (result, _) = session.import_model3(&path);
+    assert!(result.status.is_ok(), "{result:?}");
+    assert_eq!(session.document().expression_order().len(), 1);
+
+    model3["FileReferences"]["Expressions"][1]["File"] = "other.exp3.json".into();
+    std::fs::write(&path, serde_json::to_vec(&model3).unwrap()).unwrap();
+    let (result, _) = session.import_model3(&path);
+    assert_eq!(result.status.code, "DUPLICATE_EXPRESSION_NAME");
+    std::fs::remove_dir_all(temporary).unwrap();
+}
+
+#[test]
 fn model3_groups_layout_and_hit_areas_survive_project_and_package() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()

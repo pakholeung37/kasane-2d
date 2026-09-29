@@ -34,40 +34,15 @@ impl Document {
         }
         let mut seen = HashSet::new();
         for mask in &m.masks {
-            if mask == &m.id || !seen.insert(mask.clone()) {
+            if !seen.insert(mask.clone()) {
                 return Status::error("INVALID_MASK", format!("{}.masks", m.id));
             }
             if !self.meshes.contains_key(mask) {
                 return Status::error("MISSING_MESH", format!("{}.masks: {}", m.id, mask));
             }
         }
-        fn reaches(
-            start: &str,
-            target: &str,
-            meshes: &HashMap<String, Mesh>,
-            visited: &mut HashSet<String>,
-        ) -> bool {
-            if start == target {
-                return true;
-            }
-            if !visited.insert(start.to_string()) {
-                return false;
-            }
-            if let Some(m) = meshes.get(start) {
-                for next in &m.masks {
-                    if reaches(next, target, meshes, visited) {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-        for mask in &m.masks {
-            let mut visited = HashSet::new();
-            if reaches(mask, &m.id, &self.meshes, &mut visited) {
-                return Status::error("RELATION_CYCLE", format!("{}.masks", m.id));
-            }
-        }
+        // Masks render their source meshes directly. A source mesh's own masks
+        // do not participate, so self references and cycles are well defined.
         Status::ok()
     }
 

@@ -47,6 +47,80 @@ fn workspace_root() -> PathBuf {
     }
 }
 
+#[test]
+fn import_preserves_keys_outside_declared_parameter_range() {
+    let mut bytes =
+        fs::read(workspace_root().join("tests/fixtures/external_v50/model.moc3")).unwrap();
+    let inspection = inspect_moc3(&bytes).unwrap();
+    let maximum_offset = inspection.section_offsets[51] as usize;
+    bytes[maximum_offset..maximum_offset + 4].copy_from_slice(&0.5f32.to_le_bytes());
+
+    let imported = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap();
+    let param_id = &imported.report.id_mapping.parameter_by_index[0];
+    let parameter = imported.document.get_parameter(param_id).unwrap();
+    assert_eq!(parameter.maximum, 1.0);
+    assert!(imported.document.binding_order().iter().any(|id| {
+        imported
+            .document
+            .get_binding(id)
+            .unwrap()
+            .axes
+            .iter()
+            .any(|axis| axis.parameter_id == *param_id && axis.keys.contains(&1.0))
+    }));
+}
+
+#[test]
+fn import_document_accepts_self_mask_from_source() {
+    let bytes = fs::read(workspace_root().join("tests/fixtures/external_v50/model.moc3")).unwrap();
+    let mut document = import_from_bare_moc3(&bytes, &HashMap::new())
+        .unwrap()
+        .document;
+    let mesh_id = document.mesh_order()[0].clone();
+    let mut mesh = document.get_mesh(&mesh_id).unwrap().clone();
+    mesh.masks.push(mesh_id.clone());
+    assert!(document.replace_mesh(mesh).status.is_ok());
+    assert_eq!(document.get_mesh(&mesh_id).unwrap().masks, [mesh_id]);
+}
+
+#[test]
+fn import_document_accepts_mutual_masks_from_source() {
+    let bytes = fs::read(workspace_root().join("tests/fixtures/external_v50/model.moc3")).unwrap();
+    let mut document = import_from_bare_moc3(&bytes, &HashMap::new())
+        .unwrap()
+        .document;
+    let first = document.mesh_order()[0].clone();
+    let second = id(987);
+    let mut second_mesh = document.get_mesh(&first).unwrap().clone();
+    second_mesh.id = second.clone();
+    second_mesh.runtime_id = "MutualMaskSource".into();
+    second_mesh.name = "MutualMaskSource".into();
+    second_mesh.masks.clear();
+    assert!(document.create_mesh(second_mesh).status.is_ok());
+    let mut first_mesh = document.get_mesh(&first).unwrap().clone();
+    first_mesh.masks = vec![second.clone()];
+    assert!(document.replace_mesh(first_mesh).status.is_ok());
+    let mut second_mesh = document.get_mesh(&second).unwrap().clone();
+    second_mesh.masks = vec![first];
+    assert!(document.replace_mesh(second_mesh).status.is_ok());
+}
+
+#[test]
+fn import_normalizes_empty_drawing_group_sentinel() {
+    let mut bytes =
+        fs::read(workspace_root().join("tests/fixtures/external_v50/model.moc3")).unwrap();
+    import_cases::set_i32(&mut bytes, 82, 0, 2);
+    import_cases::set_i32(&mut bytes, 82, 1, 0);
+    import_cases::set_i32(&mut bytes, 85, 1, i32::MAX);
+    import_cases::set_i32(&mut bytes, 84, 1, -i32::MAX);
+
+    let imported = import_from_bare_moc3(&bytes, &HashMap::new()).unwrap();
+    let groups = imported.document.draw_order_groups().unwrap();
+    assert!(groups
+        .iter()
+        .any(|group| { group.items.is_empty() && group.min_order == 0 && group.max_order == 0 }));
+}
+
 fn local_mao_moc3() -> PathBuf {
     workspace_root().join("models/local/mao/runtime/mao_pro.moc3")
 }

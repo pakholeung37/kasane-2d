@@ -18,11 +18,11 @@ impl<'a> Moc3DecoderContext<'a> {
                 offsets[section::PARAM_SRC_ID] as usize + p * 64,
                 64,
             );
-            let max = read_f32(
+            let mut max = read_f32(
                 self.bytes,
                 offsets[section::PARAM_SRC_MAXIMUM_VALUE] as usize + p * 4,
             )?;
-            let min = read_f32(
+            let mut min = read_f32(
                 self.bytes,
                 offsets[section::PARAM_SRC_MINIMUM_VALUE] as usize + p * 4,
             )?;
@@ -61,6 +61,61 @@ impl<'a> Moc3DecoderContext<'a> {
                     ))
                 }
             };
+
+            // Real MOC3 files can declare a narrower slider range than their
+            // authored keyforms. Include those keys so no source keyform is
+            // clamped or discarded by the Document's range invariant.
+            for (param_off_section, param_len_section, key_off_section, key_len_section) in [
+                (
+                    section::PARAM_SRC_KEY_TABLE_OFF,
+                    section::PARAM_SRC_KEY_TABLE_LEN,
+                    section::KEY_TABLE_SRC_KEYS_OFF,
+                    section::KEY_TABLE_SRC_KEYS_LEN,
+                ),
+                (
+                    section::PARAM_SRC_BLEND_KEY_TABLE_OFF,
+                    section::PARAM_SRC_BLEND_KEY_TABLE_LEN,
+                    section::BLEND_KEY_TABLE_SRC_KEYS_OFF,
+                    section::BLEND_KEY_TABLE_SRC_KEYS_LEN,
+                ),
+            ] {
+                if offsets.len() <= key_len_section || offsets[param_off_section] == 0 {
+                    continue;
+                }
+                let table_off = read_i32(self.bytes, offsets[param_off_section] as usize + p * 4)?;
+                let table_len = read_i32(self.bytes, offsets[param_len_section] as usize + p * 4)?;
+                if table_len == 0 {
+                    continue;
+                }
+                if table_off < 0 || table_len < 0 {
+                    return Err(Status::error(
+                        "INVALID_KEY_TABLE",
+                        format!("Parameter {p}: invalid key-table range"),
+                    ));
+                }
+                for table in table_off as usize..table_off as usize + table_len as usize {
+                    let keys_off =
+                        read_i32(self.bytes, offsets[key_off_section] as usize + table * 4)?;
+                    let keys_len =
+                        read_i32(self.bytes, offsets[key_len_section] as usize + table * 4)?;
+                    if keys_off < 0 || keys_len < 0 {
+                        return Err(Status::error(
+                            "INVALID_KEYS",
+                            format!("Parameter {p}: invalid key range"),
+                        ));
+                    }
+                    for key in keys_off as usize..keys_off as usize + keys_len as usize {
+                        let value = read_f32(
+                            self.bytes,
+                            offsets[section::KEYS_SRC_KEY] as usize + key * 4,
+                        )?;
+                        if value.is_finite() {
+                            min = min.min(value);
+                            max = max.max(value);
+                        }
+                    }
+                }
+            }
 
             check_status!(
                 self.doc

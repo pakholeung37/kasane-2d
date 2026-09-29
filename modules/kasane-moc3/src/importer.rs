@@ -83,7 +83,7 @@ pub fn import_from_model3_json(
     let mut unimported = Vec::new();
     if let Some(obj) = file_refs.as_object() {
         for (key, val) in obj {
-            if key != "Moc" && key != "Textures" {
+            if key != "Moc" && key != "Textures" && !val.is_null() {
                 if let Some(s) = val.as_str() {
                     unimported.push(format!("{key}: {s}"));
                 } else if let Some(arr) = val.as_array() {

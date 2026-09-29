@@ -98,17 +98,24 @@ impl<'a> Moc3DecoderContext<'a> {
                 })?;
                 items.push(id.clone());
             }
+            let mut min_order = read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_SRC_MIN_ORDER] as usize + index * 4,
+            )?;
+            let mut max_order = read_i32(
+                bytes,
+                offsets[section::DRAW_GROUP_SRC_MAX_ORDER] as usize + index * 4,
+            )?;
+            // Cubism uses an inverted sentinel range for groups with no items.
+            if items.is_empty() && min_order > max_order {
+                min_order = 0;
+                max_order = 0;
+            }
             groups.push(kasane_core::draw_order::DrawOrderGroup {
                 owner,
                 items,
-                min_order: read_i32(
-                    bytes,
-                    offsets[section::DRAW_GROUP_SRC_MIN_ORDER] as usize + index * 4,
-                )?,
-                max_order: read_i32(
-                    bytes,
-                    offsets[section::DRAW_GROUP_SRC_MAX_ORDER] as usize + index * 4,
-                )?,
+                min_order,
+                max_order,
             });
         }
         check_status!(self.doc.replace_draw_order_groups(groups).status);

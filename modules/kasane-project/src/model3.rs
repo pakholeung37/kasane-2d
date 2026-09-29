@@ -121,6 +121,7 @@ fn import_with_namespace(
     let user_data = model3
         .get("FileReferences")
         .and_then(|refs| refs.get("UserData"))
+        .filter(|value| !value.is_null())
         .map(|value| {
             value
                 .as_str()
