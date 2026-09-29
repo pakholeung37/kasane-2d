@@ -30,6 +30,11 @@
       "id": "purism-core",
       "core": "purism",
       "host": "core-only"
+    },
+    {
+      "id": "kasane-metal",
+      "core": "kasane",
+      "host": "kasane-render-metal"
     }
   ]
 }

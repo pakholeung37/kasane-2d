@@ -44,11 +44,12 @@ def load_configuration() -> tuple[dict, dict]:
     providers = {"cubism", "purism"}
     hosts = {"cubism-framework-native", "gd-cubism", "core-only"}
     expected = {(provider, host) for provider in providers for host in hosts}
+    expected.add(("kasane", "kasane-render-metal"))
     cases = matrix.get("cases", [])
     actual = {(case.get("core"), case.get("host")) for case in cases}
     ids = [case.get("id") for case in cases]
     if actual != expected or len(ids) != len(expected) or len(set(ids)) != len(expected):
-        raise ValueError("matrix.json must contain each Core/host combination exactly once")
+        raise ValueError("matrix.json must contain six Core/host combinations and kasane-metal exactly once")
     if workload.get("instances") != workload["layout"]["columns"] * workload["layout"]["rows"]:
         raise ValueError("workload layout must have exactly one grid cell per instance")
     if len(workload.get("viewport", [])) != 2:
@@ -289,8 +290,27 @@ def build_godot(case_id: str, jobs: int, platform: str, arch: str) -> Path:
     return artifact
 
 
+def build_kasane(case_id: str) -> Path:
+    case, _ = find_case(case_id)
+    if case["host"] != "kasane-render-metal":
+        raise ValueError(f"{case_id} is not a Kasane Metal case")
+    if sys.platform != "darwin":
+        raise ValueError("kasane-render-metal requires macOS")
+    run(["cargo", "build", "--release", "--locked", "-p", "cubism-matrix-kasane"])
+    executable = REPO_ROOT / "target/release/cubism-matrix-kasane"
+    if not executable.is_file():
+        raise FileNotFoundError(f"Cargo did not produce {executable}")
+    return executable
+
+
 def run_case(case_id: str, godot_bin: str) -> None:
     case, _ = find_case(case_id)
+    if case["host"] == "kasane-render-metal":
+        executable = REPO_ROOT / "target/release/cubism-matrix-kasane"
+        if not executable.is_file():
+            raise FileNotFoundError(f"build {case_id} before running it")
+        run([str(executable), str(WORKLOAD_PATH), str(MAO_SOURCE / "runtime/mao_pro.model3.json")])
+        return
     if case["host"] == "core-only":
         executable = BUILD_ROOT / case_id / "core/cubism-core-benchmark"
         if not executable.is_file():
@@ -384,6 +404,70 @@ def benchmark_core(repeats: int, jobs: int) -> Path:
     return output_path
 
 
+def benchmark_render(repeats: int, jobs: int) -> Path:
+    """Compare Kasane/Metal with the official Core/Framework Native runner."""
+    if repeats < 1:
+        raise ValueError("repeats must be at least 1")
+    native = build_native("cubism-native", jobs)
+    kasane = build_kasane("kasane-metal")
+    commands = {
+        "cubism-native": ([str(native)], native.parent),
+        "kasane-metal": (
+            [str(kasane), str(WORKLOAD_PATH), str(MAO_SOURCE / "runtime/mao_pro.model3.json")],
+            REPO_ROOT,
+        ),
+    }
+    trials: dict[str, list[dict]] = {case_id: [] for case_id in commands}
+    case_ids = list(commands)
+    for repeat in range(repeats):
+        order = case_ids if repeat % 2 == 0 else list(reversed(case_ids))
+        for case_id in order:
+            command, cwd = commands[case_id]
+            result = parse_benchmark_result(run_capture(command, cwd=cwd))
+            if result["workload_id"] != read_json(WORKLOAD_PATH)["id"]:
+                raise ValueError(f"{case_id} reported a different workload")
+            trials[case_id].append(result)
+
+    comparable = ("model_hash", "instances", "viewport", "texture_mipmaps")
+    baseline = trials["cubism-native"][0]
+    for case_id, case_trials in trials.items():
+        for trial in case_trials:
+            if any(trial[key] != baseline[key] for key in comparable):
+                raise ValueError(f"{case_id} reported a different model or rendering workload")
+    metrics = ("average_fps", "p50_frame_ms", "p95_frame_ms", "p99_frame_ms")
+    medians = {
+        case_id: {
+            metric: statistics.median(trial[metric] for trial in case_trials)
+            for metric in metrics
+        }
+        for case_id, case_trials in trials.items()
+    }
+    fps_ratio = medians["kasane-metal"]["average_fps"] / medians["cubism-native"]["average_fps"]
+    report = {
+        "schema_version": 1,
+        "benchmark": "cubism-render-comparison",
+        "repeats": repeats,
+        "trials": trials,
+        "medians": medians,
+        "kasane_to_cubism_fps_ratio": fps_ratio,
+        "comparison_note": (
+            "Kasane evaluates an imported editable model and waits for offscreen Metal GPU completion; "
+            "Cubism Native updates the official runtime and presents through an OpenGL window. "
+            "The ratio is an end-to-end stack comparison, not an isolated renderer ratio."
+        ),
+    }
+    output_path = MATRIX_ROOT / "artifacts/results/latest-render-comparison.json"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print("\nRendering median summary:")
+    for case_id in case_ids:
+        median = medians[case_id]
+        print(f"  {case_id:13} {median['average_fps']:8.2f} FPS  p50={median['p50_frame_ms']:.2f} ms")
+    print(f"  Kasane/Cubism FPS: {fps_ratio:.2f}x")
+    print(f"saved {output_path}")
+    return output_path
+
+
 def validate(local: bool) -> None:
     matrix, workload = load_configuration()
     print(f"configuration valid: {len(matrix['cases'])} cases, workload={workload['id']}")
@@ -409,7 +493,7 @@ def main() -> int:
     prepare_parser = subparsers.add_parser("prepare-godot")
     prepare_parser.add_argument("--addon-source", type=Path)
     prepare_parser.add_argument("--model-source", type=Path)
-    for name in ("build-native", "build-godot", "build-core"):
+    for name in ("build-native", "build-godot", "build-core", "build-kasane"):
         build_parser = subparsers.add_parser(name)
         build_parser.add_argument("case")
         build_parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -425,6 +509,9 @@ def main() -> int:
     benchmark_core_parser = subparsers.add_parser("benchmark-core")
     benchmark_core_parser.add_argument("--repeats", type=int, default=3)
     benchmark_core_parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
+    benchmark_render_parser = subparsers.add_parser("benchmark-render")
+    benchmark_render_parser.add_argument("--repeats", type=int, default=3)
+    benchmark_render_parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
     args = parser.parse_args()
     try:
         if args.command == "validate":
@@ -437,10 +524,14 @@ def main() -> int:
             build_godot(args.case, args.jobs, args.platform, args.arch)
         elif args.command == "build-core":
             build_core(args.case, args.jobs)
+        elif args.command == "build-kasane":
+            build_kasane(args.case)
         elif args.command == "run":
             run_case(args.case, args.godot_bin)
         elif args.command == "benchmark-core":
             benchmark_core(args.repeats, args.jobs)
+        elif args.command == "benchmark-render":
+            benchmark_render(args.repeats, args.jobs)
     except (FileNotFoundError, ValueError, subprocess.CalledProcessError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1

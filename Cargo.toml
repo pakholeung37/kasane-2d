@@ -14,6 +14,7 @@ members = [
     "modules/kasane-sdk",
     "modules/kasane-sdk-observe",
     "modules/kasane-python",
+    "benchmarks/cubism-matrix/runners/kasane",
 ]
 
 [workspace.package]

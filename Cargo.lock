@@ -252,6 +252,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "cubism-matrix-kasane"
+version = "0.1.0"
+dependencies = [
+ "kasane-core",
+ "kasane-render",
+ "kasane-render-metal",
+ "kasane-sdk",
+ "kasane-sdk-observe",
+ "png",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
