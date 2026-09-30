@@ -21,6 +21,20 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 const DOCUMENT_ID: &str = "00000000-0000-4000-8000-000000000001";
+const GEOMETRY_PHASES: [&str; 12] = [
+    "workspace_setup",
+    "preflight",
+    "parameters",
+    "selections",
+    "parts",
+    "transforms",
+    "meshes",
+    "glue",
+    "render_plan",
+    "part_opacity",
+    "model_opacity",
+    "unattributed",
+];
 
 #[derive(Deserialize)]
 struct Workload {
@@ -279,6 +293,8 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     let mut evaluation_ms = Vec::new();
     let mut animation_update_ms = Vec::new();
     let mut geometry_evaluation_ms = Vec::new();
+    let mut geometry_phase_ms: [Vec<f64>; GEOMETRY_PHASES.len()] =
+        std::array::from_fn(|_| Vec::new());
     let mut assembly_ms = Vec::new();
     let mut sync_ms = Vec::new();
     let mut encode_ms = Vec::new();
@@ -290,6 +306,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
         let mut frames = Vec::with_capacity(workload.instances);
         let mut animation_time = 0.0;
         let mut geometry_time = 0.0;
+        let mut phases = [0.0f64; GEOMETRY_PHASES.len()];
         for preview in &mut previews {
             let animation_start = Instant::now();
             preview.advance(dt)?;
@@ -302,14 +319,28 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             }
             let geometry_start = Instant::now();
             animation_time += geometry_start.duration_since(animation_start).as_secs_f64() * 1000.0;
-            let mut frame = preview.evaluate_drawables()?;
+            let (mut frame, timings) = preview.evaluate_drawables_timed()?;
+            let ms = |duration: std::time::Duration| duration.as_secs_f64() * 1000.0;
+            phases[0] += ms(timings.workspace_setup);
+            phases[1] += ms(timings.core.preflight);
+            phases[2] += ms(timings.core.parameters);
+            phases[3] += ms(timings.core.selections);
+            phases[4] += ms(timings.core.parts);
+            phases[5] += ms(timings.core.transforms);
+            phases[6] += ms(timings.core.meshes);
+            phases[7] += ms(timings.core.glue);
+            phases[8] += ms(timings.core.render);
+            phases[9] += ms(timings.part_opacity);
             let opacity = preview.snapshot().model_opacity;
+            let opacity_start = Instant::now();
             for drawable in &mut frame.drawables {
                 drawable.opacity *= opacity;
             }
+            phases[10] += opacity_start.elapsed().as_secs_f64() * 1000.0;
             frames.push(frame);
             geometry_time += geometry_start.elapsed().as_secs_f64() * 1000.0;
         }
+        phases[11] = geometry_time - phases[..11].iter().sum::<f64>();
         let evaluated_at = Instant::now();
         let scene = assemble(frames, &workload);
         let assembled_at = Instant::now();
@@ -338,6 +369,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
             evaluation_ms.push(evaluated_at.duration_since(frame_start).as_secs_f64() * 1000.0);
             animation_update_ms.push(animation_time);
             geometry_evaluation_ms.push(geometry_time);
+            for (samples, value) in geometry_phase_ms.iter_mut().zip(phases) {
+                samples.push(value);
+            }
             assembly_ms.push(assembled_at.duration_since(evaluated_at).as_secs_f64() * 1000.0);
             sync_ms.push(synced_at.duration_since(assembled_at).as_secs_f64() * 1000.0);
             encode_ms.push(encoded_at.duration_since(synced_at).as_secs_f64() * 1000.0);
@@ -348,6 +382,9 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 evaluation_ms.sort_by(f64::total_cmp);
                 animation_update_ms.sort_by(f64::total_cmp);
                 geometry_evaluation_ms.sort_by(f64::total_cmp);
+                for samples in &mut geometry_phase_ms {
+                    samples.sort_by(f64::total_cmp);
+                }
                 assembly_ms.sort_by(f64::total_cmp);
                 sync_ms.sort_by(f64::total_cmp);
                 encode_ms.sort_by(f64::total_cmp);
@@ -362,6 +399,11 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                 if visible_pixels == 0 {
                     return Err("Kasane produced an empty frame".into());
                 }
+                let geometry_breakdown = GEOMETRY_PHASES
+                    .into_iter()
+                    .zip(&geometry_phase_ms)
+                    .map(|(name, samples)| (name.to_owned(), json!(percentile(samples, 0.50))))
+                    .collect::<serde_json::Map<_, _>>();
                 let result = json!({
                     "schema_version": 1,
                     "workload_id": workload.id,
@@ -385,6 +427,7 @@ pub fn main() -> Result<(), Box<dyn Error>> {
                     "p50_animation_evaluation_ms": percentile(&evaluation_ms, 0.50),
                     "p50_animation_update_ms": percentile(&animation_update_ms, 0.50),
                     "p50_geometry_evaluation_ms": percentile(&geometry_evaluation_ms, 0.50),
+                    "p50_geometry_breakdown_ms": geometry_breakdown,
                     "p50_scene_assembly_ms": percentile(&assembly_ms, 0.50),
                     "p50_metal_sync_ms": percentile(&sync_ms, 0.50),
                     "p50_metal_encode_ms": percentile(&encode_ms, 0.50),

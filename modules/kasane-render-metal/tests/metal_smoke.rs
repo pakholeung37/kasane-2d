@@ -570,6 +570,19 @@ fn view_changes_reuse_buffers_and_masks_but_source_changes_invalidate_them() {
     }
     renderer.sync_model(&frame, &catalog).unwrap();
     let _ = draw(&mut renderer, &catalog, 0., 1.);
+    // A new Arc with the same indices keeps the packed index buffer. A real
+    // topology edit uploads just that buffer and invalidates dependent masks.
+    frame.drawables[0].indices = Arc::from([0, 1, 2, 0, 2, 3]);
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let (_, stats) = draw(&mut renderer, &catalog, 0., 1.);
+    assert_eq!(stats.buffer_uploads, 0);
+    frame.drawables[0].indices = Arc::from([0, 1, 2]);
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let (_, stats) = draw(&mut renderer, &catalog, 0., 1.);
+    assert_eq!((stats.buffer_uploads, stats.masks), (1, 1));
+    frame.drawables[0].indices = Arc::from([0, 1, 2, 0, 2, 3]);
+    renderer.sync_model(&frame, &catalog).unwrap();
+    let _ = draw(&mut renderer, &catalog, 0., 1.);
     source.replace_region(
         kasane_render_metal::metal::MTLRegion::new_2d(0, 0, 1, 1),
         0,

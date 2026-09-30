@@ -208,6 +208,15 @@ geometry, Part opacity and model opacity). The combined
 `p50_animation_evaluation_ms` remains the enclosing end-to-end phase. Each
 preview still evaluates independently and serially.
 
+`p50_geometry_breakdown_ms` reports the per-frame sum across all previews for
+workspace setup, core preflight, parameters, keyform selections, Parts,
+transforms, meshes, Glue, render-plan construction, Part opacity, and model
+opacity. `unattributed` is the remaining time in the enclosing geometry phase,
+including frame handoff and timer overhead. Each field is independently reduced
+to p50, so the reported p50 fields need not add up exactly to
+`p50_geometry_evaluation_ms`. The ordinary `evaluate_drawables` path does not
+read these timers; the matrix runner calls `evaluate_drawables_timed`.
+
 For deterministic CPU output comparison across code revisions:
 
 ```sh

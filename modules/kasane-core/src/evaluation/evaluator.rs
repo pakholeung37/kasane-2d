@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use crate::document::Document;
 use crate::types::Status;
@@ -39,6 +40,20 @@ pub struct FrameEvaluator {
     active_offscreens: Vec<usize>,
 }
 
+/// Wall-clock stages of one successful core frame evaluation. Durations are
+/// measured only when `evaluate_timed` is called.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EvaluationTimings {
+    pub preflight: Duration,
+    pub parameters: Duration,
+    pub selections: Duration,
+    pub parts: Duration,
+    pub transforms: Duration,
+    pub meshes: Duration,
+    pub glue: Duration,
+    pub render: Duration,
+}
+
 impl FrameEvaluator {
     pub fn evaluate(
         &mut self,
@@ -46,7 +61,18 @@ impl FrameEvaluator {
         preview: &PreviewValues,
         out: &mut DrawableFrame,
     ) -> Status {
-        self.evaluate_with_hidden_geometry(doc, preview, out, false)
+        self.evaluate_with_hidden_geometry(doc, preview, out, false, None)
+    }
+
+    pub fn evaluate_timed(
+        &mut self,
+        doc: &Document,
+        preview: &PreviewValues,
+        out: &mut DrawableFrame,
+        timings: &mut EvaluationTimings,
+    ) -> Status {
+        *timings = EvaluationTimings::default();
+        self.evaluate_with_hidden_geometry(doc, preview, out, false, Some(timings))
     }
 
     fn evaluate_with_hidden_geometry(
@@ -55,8 +81,9 @@ impl FrameEvaluator {
         preview: &PreviewValues,
         out: &mut DrawableFrame,
         include_hidden_geometry: bool,
+        timings: Option<&mut EvaluationTimings>,
     ) -> Status {
-        let status = evaluate_into(doc, preview, self, include_hidden_geometry);
+        let status = evaluate_into(doc, preview, self, include_hidden_geometry, timings);
         if status.is_ok() {
             std::mem::swap(out, &mut self.scratch);
         }
@@ -79,7 +106,7 @@ pub fn evaluate_frame_including_hidden(
 ) -> Status {
     let mut evaluator = FrameEvaluator::default();
     let mut captured = DrawableFrame::default();
-    let status = evaluator.evaluate_with_hidden_geometry(doc, preview, &mut captured, true);
+    let status = evaluator.evaluate_with_hidden_geometry(doc, preview, &mut captured, true, None);
     if !status.is_ok() {
         return status;
     }
@@ -115,7 +142,17 @@ fn evaluate_into(
     preview: &PreviewValues,
     workspace: &mut FrameEvaluator,
     include_hidden_geometry: bool,
+    mut timings: Option<&mut EvaluationTimings>,
 ) -> Status {
+    let mut stage_start = timings.as_ref().map(|_| Instant::now());
+    macro_rules! record_stage {
+        ($field:ident) => {
+            if let Some(timings) = timings.as_deref_mut() {
+                let now = Instant::now();
+                timings.$field = now.duration_since(stage_start.replace(now).unwrap());
+            }
+        };
+    }
     let FrameEvaluator {
         scratch: frame,
         values,
@@ -162,29 +199,38 @@ fn evaluate_into(
         active_offscreens,
         include_hidden_geometry,
     };
+    record_stage!(preflight);
 
     let status = super::parameters::evaluate(doc, preview, &mut state);
     if !status.is_ok() {
         return status;
     }
+    record_stage!(parameters);
     state
         .selections
         .resize_with(prepared.selections.len(), Selection::default);
     for (axes, selection) in prepared.selections.iter().zip(state.selections.iter_mut()) {
         super::selection::select_prepared(&state.frame.parameters, axes, selection);
     }
+    record_stage!(selections);
     super::parts::evaluate(doc, prepared, &mut state);
+    record_stage!(parts);
     let status = super::transforms::evaluate(doc, prepared, &mut state);
     if !status.is_ok() {
         return status;
     }
+    record_stage!(transforms);
     let status = super::meshes::evaluate(doc, prepared, &mut state);
     if !status.is_ok() {
         return status;
     }
+    record_stage!(meshes);
     let status = super::glue::evaluate(doc, prepared, &mut state);
     if !status.is_ok() {
         return status;
     }
-    super::render::evaluate(doc, prepared, &mut state)
+    record_stage!(glue);
+    let status = super::render::evaluate(doc, prepared, &mut state);
+    record_stage!(render);
+    status
 }

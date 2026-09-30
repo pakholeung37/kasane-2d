@@ -2,11 +2,12 @@
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex},
+    time::{Duration, Instant},
 };
 
 use kasane_core::{
-    evaluation::evaluate_frame_including_hidden, Document, DrawableFrame, FrameEvaluator,
-    PreviewValues,
+    evaluation::{evaluate_frame_including_hidden, EvaluationTimings},
+    Document, DrawableFrame, FrameEvaluator, PreviewValues,
 };
 
 use crate::expression::ExpressionRuntime;
@@ -101,6 +102,14 @@ pub enum MotionOperationKind {
 struct GeometryWorkspace {
     values: PreviewValues,
     evaluator: FrameEvaluator,
+}
+
+/// Additional work around the core evaluator during a timed preview query.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct PreviewGeometryTimings {
+    pub workspace_setup: Duration,
+    pub core: EvaluationTimings,
+    pub part_opacity: Duration,
 }
 
 /// Detached combined preview with immutable assets and bounded canonical seek checkpoints.
@@ -544,18 +553,29 @@ impl MotionPreview {
     /// Model opacity remains separate in [`MotionSnapshot::model_opacity`].
     /// Does not advance playback. Returns [`AnimationError::Evaluation`] on failure.
     pub fn evaluate_drawables(&self) -> Result<DrawableFrame, AnimationError> {
-        self.evaluate_drawables_with_hidden_geometry(false)
+        self.evaluate_drawables_with_hidden_geometry(false, None)
+    }
+
+    /// Evaluate the same frame while measuring its CPU stages.
+    pub fn evaluate_drawables_timed(
+        &self,
+    ) -> Result<(DrawableFrame, PreviewGeometryTimings), AnimationError> {
+        let mut timings = PreviewGeometryTimings::default();
+        let frame = self.evaluate_drawables_with_hidden_geometry(false, Some(&mut timings))?;
+        Ok((frame, timings))
     }
 
     /// Preserve hidden mesh positions for frozen observation queries.
     pub fn evaluate_drawables_including_hidden(&self) -> Result<DrawableFrame, AnimationError> {
-        self.evaluate_drawables_with_hidden_geometry(true)
+        self.evaluate_drawables_with_hidden_geometry(true, None)
     }
 
     fn evaluate_drawables_with_hidden_geometry(
         &self,
         include_hidden: bool,
+        mut timings: Option<&mut PreviewGeometryTimings>,
     ) -> Result<DrawableFrame, AnimationError> {
+        let setup_start = timings.as_ref().map(|_| Instant::now());
         let mut workspace = self
             .geometry
             .lock()
@@ -571,14 +591,20 @@ impl MotionPreview {
             }
         }
         let mut frame = DrawableFrame::default();
+        if let Some(timings) = timings.as_deref_mut() {
+            timings.workspace_setup = setup_start.unwrap().elapsed();
+        }
         let status = if include_hidden {
             evaluate_frame_including_hidden(&self.document, values, &mut frame)
+        } else if let Some(timings) = timings.as_deref_mut() {
+            evaluator.evaluate_timed(&self.document, values, &mut frame, &mut timings.core)
         } else {
             evaluator.evaluate(&self.document, values, &mut frame)
         };
         if status.is_ok() {
             // Core evaluation does not carry runtime Part opacity. Apply it to
             // each drawable once; Offscreen opacity is an independent factor.
+            let opacity_start = timings.as_ref().map(|_| Instant::now());
             for drawable in &mut frame.drawables {
                 let mut part_id = drawable.part_id.as_str();
                 let mut opacity = 1.0;
@@ -595,6 +621,9 @@ impl MotionPreview {
                         .map_or("", |part| part.parent_id.as_str());
                 }
                 drawable.opacity *= opacity;
+            }
+            if let Some(timings) = timings {
+                timings.part_opacity = opacity_start.unwrap().elapsed();
             }
             Ok(frame)
         } else {

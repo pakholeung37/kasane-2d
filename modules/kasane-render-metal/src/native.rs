@@ -5,8 +5,8 @@ use bytemuck::{Pod, Zeroable};
 use kasane_core::evaluation::{DrawableFrame, OffscreenFrame};
 use kasane_core::types::{BlendMode, Status, Vec2};
 use kasane_render::gpu::{
-    compose_affine, inverse_affine, mask_layout_from_bounds, quad_indices, quad_vertices,
-    triangle_indices, vertices_for, MaskLayout, Vertex,
+    append_vertices_for, compose_affine, inverse_affine, mask_layout_from_bounds, quad_indices,
+    quad_vertices, MaskLayout, Vertex,
 };
 use kasane_render::{
     surface_layout, Affine2, MaskId, ScenePlan, TargetId, TargetItem, TextureCatalog,
@@ -484,12 +484,11 @@ pub struct MetalRenderer {
 /// An edit replaces only changed buffers; it never overwrites in-flight data.
 #[derive(Clone)]
 struct MeshBuffers {
-    vertices: Arc<[Vertex]>,
-    indices: Arc<[u32]>,
     vertex: Buffer,
     index: Buffer,
     vertex_offset: u64,
     index_offset: u64,
+    index_count: u64,
     revision: u64,
 }
 
@@ -512,8 +511,7 @@ impl MeshBuffers {
             index: upload_buffer(device, &indices),
             vertex_offset: 0,
             index_offset: 0,
-            vertices: vertices.into(),
-            indices: indices.into(),
+            index_count: indices.len() as u64,
             revision,
         }
     }
@@ -524,7 +522,9 @@ impl MeshBuffers {
 /// arbitrarily large allocation after subsequent partial edits.
 fn pack_buffers<T: Copy>(
     device: &DeviceRef,
-    updates: &[(usize, &[T])],
+    updates: &[usize],
+    length: impl Fn(usize) -> usize,
+    mut append: impl FnMut(usize, &mut Vec<T>),
 ) -> (Vec<(usize, Buffer, u64)>, usize) {
     let limit = device.max_buffer_length().min(4 * 1024 * 1024) as usize;
     let mut data = Vec::<T>::new();
@@ -542,12 +542,12 @@ fn pack_buffers<T: Copy>(
         }
         data.clear();
     };
-    for &(index, values) in updates {
-        if (data.len() + values.len()) * std::mem::size_of::<T>() > limit {
+    for &index in updates {
+        if (data.len() + length(index)) * std::mem::size_of::<T>() > limit {
             flush(&mut data, &mut offsets);
         }
         offsets.push((index, (data.len() * std::mem::size_of::<T>()) as u64));
-        data.extend_from_slice(values);
+        append(index, &mut data);
     }
     flush(&mut data, &mut offsets);
     (packed, uploads)
@@ -628,50 +628,51 @@ impl MetalRenderer {
                 ));
             }
         }
-        let mut candidate = self.scene.clone();
-        candidate.update(&frame, textures)?;
+        // ScenePlan finishes all fallible validation before changing its
+        // published scene, so a successful update can reuse its allocations.
+        self.scene.update(&frame, textures)?;
         let mut meshes = Vec::with_capacity(frame.drawables.len());
         let mut vertex_updates = Vec::new();
         let mut index_updates = Vec::new();
+        let canvas_changed = self
+            .frame
+            .as_ref()
+            .is_none_or(|previous| previous.canvas != frame.canvas);
         for (i, drawable) in frame.drawables.iter().enumerate() {
-            if let (Some(old), Some(previous)) = (self.meshes.get(i), self.frame.as_ref()) {
-                if previous.canvas == frame.canvas
-                    && previous.drawables.get(i).is_some_and(|d| {
-                        d.positions == drawable.positions
-                            && d.uvs == drawable.uvs
-                            && d.indices == drawable.indices
-                    })
-                {
-                    meshes.push(old.clone());
-                    continue;
-                }
-            }
-            let vertices = vertices_for(drawable, &frame);
-            let indices = triangle_indices(&drawable.indices);
+            let prior = self
+                .frame
+                .as_ref()
+                .and_then(|previous| previous.drawables.get(i));
             if let Some(old) = self.meshes.get(i) {
-                let vertex_changed = old.vertices.as_ref() != vertices;
-                let index_changed = old.indices.as_ref() != indices;
+                let vertex_changed = canvas_changed
+                    || prior.is_none_or(|prior| {
+                        prior.positions != drawable.positions || prior.uvs != drawable.uvs
+                    });
+                let index_changed = prior.is_none_or(|prior| prior.indices != drawable.indices);
                 if !vertex_changed && !index_changed {
                     meshes.push(old.clone());
                     continue;
                 }
+                if vertex_changed {
+                    vertex_updates.push(i);
+                }
+                if index_changed {
+                    index_updates.push(i);
+                }
                 meshes.push(MeshBuffers {
                     vertex: if vertex_changed {
-                        vertex_updates.push(i);
                         self.quad.vertex.clone() // Replaced by the packed upload below.
                     } else {
                         old.vertex.clone()
                     },
                     index: if index_changed {
-                        index_updates.push(i);
                         self.quad.index.clone()
                     } else {
                         old.index.clone()
                     },
                     vertex_offset: old.vertex_offset,
                     index_offset: old.index_offset,
-                    vertices: vertices.into(),
-                    indices: indices.into(),
+                    index_count: drawable.indices.len() as u64,
                     revision: self.next_geometry_revision,
                 });
             } else {
@@ -682,8 +683,7 @@ impl MetalRenderer {
                     index: self.quad.index.clone(),
                     vertex_offset: 0,
                     index_offset: 0,
-                    vertices: vertices.into(),
-                    indices: indices.into(),
+                    index_count: drawable.indices.len() as u64,
                     revision: self.next_geometry_revision,
                 });
             }
@@ -691,10 +691,9 @@ impl MetalRenderer {
         }
         let (buffers, uploads) = pack_buffers(
             &self.device,
-            &vertex_updates
-                .iter()
-                .map(|&i| (i, meshes[i].vertices.as_ref()))
-                .collect::<Vec<_>>(),
+            &vertex_updates,
+            |i| frame.drawables[i].positions.len(),
+            |i, data| append_vertices_for(&frame.drawables[i], &frame, data),
         );
         self.pending_uploads += uploads;
         for (i, buffer, offset) in buffers {
@@ -703,10 +702,16 @@ impl MetalRenderer {
         }
         let (buffers, uploads) = pack_buffers(
             &self.device,
-            &index_updates
-                .iter()
-                .map(|&i| (i, meshes[i].indices.as_ref()))
-                .collect::<Vec<_>>(),
+            &index_updates,
+            |i| frame.drawables[i].indices.len(),
+            |i, data| {
+                let (triangles, _) = frame.drawables[i].indices.as_chunks::<3>();
+                data.extend(
+                    triangles
+                        .iter()
+                        .flat_map(|triangle| [triangle[0], triangle[2], triangle[1]]),
+                );
+            },
         );
         self.pending_uploads += uploads;
         for (i, buffer, offset) in buffers {
@@ -714,7 +719,6 @@ impl MetalRenderer {
             meshes[i].index_offset = offset;
         }
         self.meshes = meshes;
-        self.scene = candidate;
         self.frame = Some(frame);
         Ok(())
     }
@@ -1346,7 +1350,7 @@ impl FrameEncoder<'_, '_> {
                 -layout.origin.y * layout.scale + y as f32,
             ),
         };
-        let clear = atlas_slot.map_or(true, |(page, _, _)| self.atlas_cleared.insert(page));
+        let clear = atlas_slot.is_none_or(|(page, _, _)| self.atlas_cleared.insert(page));
         self.begin_pass(&texture, clear);
         self.pass
             .as_ref()
@@ -1718,7 +1722,7 @@ impl FrameEncoder<'_, '_> {
         encoder.set_fragment_sampler_state(2, Some(&self.renderer.clamp_sampler));
         encoder.draw_indexed_primitives(
             MTLPrimitiveType::Triangle,
-            mesh.indices.len() as u64,
+            mesh.index_count,
             MTLIndexType::UInt32,
             &mesh.index,
             mesh.index_offset,

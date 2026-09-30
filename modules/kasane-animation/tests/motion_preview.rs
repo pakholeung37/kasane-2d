@@ -751,6 +751,8 @@ fn geometry_workspace_preserves_owned_frames_and_shared_reads() {
         let mut reference = DrawableFrame::default();
         assert!(evaluate_frame(&doc, &[(PARAM.into(), value)].into(), &mut reference).is_ok());
         assert_eq!(preview.evaluate_drawables().unwrap(), reference);
+        let (timed, _) = preview.evaluate_drawables_timed().unwrap();
+        assert_eq!(timed, reference);
         assert_eq!(
             preview.evaluate_drawables_including_hidden().unwrap(),
             reference

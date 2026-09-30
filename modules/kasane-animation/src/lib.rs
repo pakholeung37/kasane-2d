@@ -14,6 +14,7 @@ pub use physics::PhysicsPreview;
 mod pose;
 pub use motion_preview::{
     MotionEventFired, MotionOperation, MotionOperationKind, MotionPreview, MotionSnapshot,
+    PreviewGeometryTimings,
 };
 
 mod expression;

@@ -15,22 +15,30 @@ pub struct Vertex {
 }
 
 pub fn vertices_for(drawable: &Drawable, frame: &DrawableFrame) -> Vec<Vertex> {
-    drawable
-        .positions
-        .iter()
-        .zip(drawable.uvs.iter())
-        .map(|(position, uv)| {
-            let pixel = Vec2::new(
-                position.x * frame.canvas.pixels_per_unit + frame.canvas.origin.x,
-                frame.canvas.origin.y - position.y * frame.canvas.pixels_per_unit,
-            );
-            Vertex {
-                position: [pixel.x, pixel.y],
-                uv: [uv.x, 1.0 - uv.y],
-                mask_point: [pixel.x, pixel.y],
-            }
-        })
-        .collect()
+    let mut vertices = Vec::with_capacity(drawable.positions.len());
+    append_vertices_for(drawable, frame, &mut vertices);
+    vertices
+}
+
+/// Append converted geometry directly into a packed GPU staging buffer.
+pub fn append_vertices_for(drawable: &Drawable, frame: &DrawableFrame, out: &mut Vec<Vertex>) {
+    out.extend(
+        drawable
+            .positions
+            .iter()
+            .zip(drawable.uvs.iter())
+            .map(|(position, uv)| {
+                let pixel = Vec2::new(
+                    position.x * frame.canvas.pixels_per_unit + frame.canvas.origin.x,
+                    frame.canvas.origin.y - position.y * frame.canvas.pixels_per_unit,
+                );
+                Vertex {
+                    position: [pixel.x, pixel.y],
+                    uv: [uv.x, 1.0 - uv.y],
+                    mask_point: [pixel.x, pixel.y],
+                }
+            }),
+    );
 }
 
 pub fn transformed_vertices_for(
