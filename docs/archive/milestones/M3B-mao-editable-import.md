@@ -94,11 +94,11 @@ Glue 的 `local_enable` 字段存在于内部结构，但当前 `psm__apply_glue
 
 ### 3.2 gd-cubism
 
-[internal_cubism_user_model.cpp](../../modules/gd-cubism/src/private/internal_cubism_user_model.cpp) 负责读取 model3、加载 MOC3、纹理、Expressions、Physics、Pose、UserData、Motions 及 EyeBlink/LipSync 分组。`pro_update` / `efx_update` / `epi_update` 在 Core `Update()` 前可修改参数。它使用 Core 完成 BlendShape/Glue，不是第二套可提取的编辑算法。
+`internal_cubism_user_model.cpp` 负责读取 model3、加载 MOC3、纹理、Expressions、Physics、Pose、UserData、Motions 及 EyeBlink/LipSync 分组。`pro_update` / `efx_update` / `epi_update` 在 Core `Update()` 前可修改参数。它使用 Core 完成 BlendShape/Glue，不是第二套可提取的编辑算法。
 
-[internal_cubism_renderer_2d.cpp](../../modules/gd-cubism/src/private/internal_cubism_renderer_2d.cpp) 消费最终 drawable 顶点、UV、render order、opacity、颜色和 mask。坐标上传乘 PPU 并反转 Y，UV 使用 `1-v`；资源复用包括位置纹理、参数纹理、共享遮罩几何、mask atlas、相邻同 shader/纹理批次。mask atlas 采样变换有上一帧配对处理。
+`internal_cubism_renderer_2d.cpp` 消费最终 drawable 顶点、UV、render order、opacity、颜色和 mask。坐标上传乘 PPU 并反转 Y，UV 使用 `1-v`；资源复用包括位置纹理、参数纹理、共享遮罩几何、mask atlas、相邻同 shader/纹理批次。mask atlas 采样变换有上一帧配对处理。
 
-[internal_cubism_renderer_resource.cpp](../../modules/gd-cubism/src/private/internal_cubism_renderer_resource.cpp) 为普通/反向遮罩与三种混合选择材质。新 BlendShape/Glue 最终仍输出同一 DrawableFrame，原则上不需要新增专用 shader；变化后的 bounds、排序、颜色和遮罩必须触发正确刷新。
+`internal_cubism_renderer_resource.cpp` 为普通/反向遮罩与三种混合选择材质。新 BlendShape/Glue 最终仍输出同一 DrawableFrame，原则上不需要新增专用 shader；变化后的 bounds、排序、颜色和遮罩必须触发正确刷新。
 
 对照时关闭 motion、expression、physics、pose、effect 等自动驱动，逐项记录配置并确认实际参数值一致，固定 Part 输入透明度和相机。只关闭 motion 不足以获得静态参数基准。截图等待 mask 与主体同步稳定后获取，并验证连续参数更新。
 

@@ -18,5 +18,5 @@
 ## Separate comparison projects
 
 - `modules/purism-core/` — Cubism Core-compatible implementation.
-- `modules/gd-cubism/` and `benchmarks/cubism-matrix/` — independent official Cubism/Purism comparison benchmark.
+- `benchmarks/cubism-matrix/` — independent official Cubism/Purism comparison benchmark.
 - `third_party/` — local, untracked SDKs and assets.

@@ -1,7 +1,3 @@
-[submodule "modules/gd-cubism/godot-cpp"]
-	path = modules/gd-cubism/godot-cpp
-	url = https://github.com/godotengine/godot-cpp
-	branch = 4.3
 [submodule "modules/purism-core"]
 	path = modules/purism-core
 	url = https://github.com/pakholeung37/PurismCore

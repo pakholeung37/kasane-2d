@@ -67,7 +67,7 @@ MOC3 + 纹理 ──导入──→ Document ←──读写──→ Kasane 工
 | [kasane-core](../modules/kasane-core/src/evaluation.rs) | Document 求值、稳定 ID、最终绘制帧 | 保持编辑模型与 Godot 绘制资源隔离 |
 | [kasane-godot](../modules/kasane-godot/src/document_preview.rs) | Rust Godot 数据绑定和 Document 预览 | M4 定型资源复用、Shader、遮罩和观察就绪状态 |
 | [PurismCore 格式实现](../modules/purism-core/src/moc3.h) | 文件结构、校验、加载与求值算法 | M6 经 C99 FFI 转换运行帧，不直接成为编辑模型 |
-| [gd-cubism renderer](../modules/gd-cubism/src/private/internal_cubism_renderer_2d.cpp) | 独立播放与官方 Core GPU 对照 | 保持独立，不强制接入 Rust renderer |
+| `gd-cubism renderer` (historical) | 独立播放与官方 Core GPU 对照 | 保持独立，不强制接入 Rust renderer |
 | [运行时对照](../benchmarks/cubism-matrix/README.md) | Purism / 官方 Core 和 Godot / Native 对照设施 | 加入导出文件、导入往返和编辑预览的一致性验证 |
 
 现有类名、目录、接口、demo 和实验工程格式均可重构。保留来源与版权说明。保留可复用代码和回归证据，不以维持旧架构为交付条件。旧工程若不提供迁移，必须明确拒绝，不能用新语义静默解释。

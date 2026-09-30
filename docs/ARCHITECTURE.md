@@ -29,4 +29,4 @@ Python wheel (kasane.Session) → kasane-sdk → kasane-core / kasane-project / 
 
 正式验收使用仓库外安装的 Python wheel、Rust 契约与 GPU 测试、官方/Purism Core 数值探针，以及仓库内固定的外部 GPU 参考图。参考图的输入哈希和来源记录在 `tests/fixtures/render_reference/`；[验证命令](VALIDATION.md)会检查输入与参考图身份。
 
-Godot 编辑器、Viewer、demo 和 Rust GDExtension 已从当前应用路径移除。`gd-cubism` 仍用于独立的 Cubism benchmark，不参与 SDK 或 GPU 渲染后端构建。旧实现方案和里程碑记录见 [archive](archive/)。
+Godot 编辑器、Viewer、demo 与 GDExtension 已从代码库移除。旧实现方案和里程碑记录见 [archive](archive/)。

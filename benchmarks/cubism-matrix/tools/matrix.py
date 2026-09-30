@@ -16,11 +16,6 @@ import sys
 
 MATRIX_ROOT = Path(__file__).resolve().parents[1]
 REPO_ROOT = MATRIX_ROOT.parents[1]
-sys.path.insert(0, str(REPO_ROOT / "tools"))
-
-from stage_godot_addon import stage_addon
-
-
 MATRIX_PATH = MATRIX_ROOT / "config" / "matrix.json"
 WORKLOAD_PATH = MATRIX_ROOT / "config" / "mao-40.json"
 BUILD_ROOT = REPO_ROOT / "target/cubism-matrix/build"
@@ -42,14 +37,14 @@ def load_configuration() -> tuple[dict, dict]:
     matrix = read_json(MATRIX_PATH)
     workload = read_json(WORKLOAD_PATH)
     providers = {"cubism", "purism"}
-    hosts = {"cubism-framework-native", "gd-cubism", "core-only"}
+    hosts = {"cubism-framework-native", "core-only"}
     expected = {(provider, host) for provider in providers for host in hosts}
     expected.add(("kasane", "kasane-render-metal"))
     cases = matrix.get("cases", [])
     actual = {(case.get("core"), case.get("host")) for case in cases}
     ids = [case.get("id") for case in cases]
     if actual != expected or len(ids) != len(expected) or len(set(ids)) != len(expected):
-        raise ValueError("matrix.json must contain six Core/host combinations and kasane-metal exactly once")
+        raise ValueError("matrix.json must contain four Core/host combinations and kasane-metal exactly once")
     if workload.get("instances") != workload["layout"]["columns"] * workload["layout"]["rows"]:
         raise ValueError("workload layout must have exactly one grid cell per instance")
     if len(workload.get("viewport", [])) != 2:
@@ -90,52 +85,6 @@ def replace_tree(source: Path, destination: Path) -> None:
     shutil.copytree(source, destination)
 
 
-def select_core_variant_for_editor(
-    addon_root: Path, core_provider: str, platform: str, arch: str
-) -> None:
-    """Point the descriptor at one coexisting Core-specific release library.
-
-    The benchmark runs through the Godot editor executable, which selects the
-    debug GDExtension entry even when the native extension was built with
-    target=template_release. Without this rewrite an old debug binary in the
-    addon can silently defeat Core-provider isolation.
-    """
-    descriptor = addon_root / "gd_cubism.gdextension"
-    text = descriptor.read_text(encoding="utf-8")
-    suffix = "" if platform == "macos" else f".{arch}"
-    debug_key = f"{platform}.debug{suffix}"
-    release_key = f"{platform}.release{suffix}"
-    lines = text.splitlines()
-    default_release_value = next(
-        (
-            line.split("=", 1)[1].strip()
-            for line in lines
-            if line.split("=", 1)[0].strip() == release_key
-        ),
-        None,
-    )
-    if default_release_value is None:
-        raise ValueError(f"missing {release_key} in {descriptor}")
-    release_value = default_release_value.replace(
-        ".cubism.", f".{core_provider}."
-    )
-    library_path = addon_root / release_value.strip('"')
-    if not library_path.exists():
-        raise FileNotFoundError(
-            f"missing {core_provider} extension library: {library_path}"
-        )
-    replaced = set()
-    for index, line in enumerate(lines):
-        key = line.split("=", 1)[0].strip()
-        if key in (debug_key, release_key):
-            lines[index] = f"{key} = {release_value}"
-            replaced.add(key)
-    missing = {debug_key, release_key} - replaced
-    if missing:
-        raise ValueError(f"missing {', '.join(sorted(missing))} in {descriptor}")
-    descriptor.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
 def prepare_model(model_source: Path | None = None) -> Path:
     destination = MATRIX_ROOT / "assets/live2d/mao"
     source = model_source or MAO_SOURCE
@@ -145,14 +94,6 @@ def prepare_model(model_source: Path | None = None) -> Path:
     if not model3.is_file():
         raise FileNotFoundError(f"Mao model is missing: {model3}")
     return model3
-
-
-def prepare_godot(addon_source: Path | None = None, model_source: Path | None = None) -> None:
-    addon_source = addon_source or REPO_ROOT / "modules/gd-cubism/addons/gd_cubism"
-    stage_addon(MATRIX_ROOT, addon_source)
-    prepare_model(model_source)
-    print(f"prepared isolated Godot project at {MATRIX_ROOT}")
-
 
 
 def build_purism_core(jobs: int) -> Path:
@@ -260,36 +201,6 @@ def build_core(case_id: str, jobs: int) -> Path:
     return executable
 
 
-def build_godot(case_id: str, jobs: int, platform: str, arch: str) -> Path:
-    case, _ = find_case(case_id)
-    if case["host"] != "gd-cubism":
-        raise ValueError(f"{case_id} is not a Godot case")
-    extension_root = REPO_ROOT / "modules/gd-cubism"
-    environment = os.environ.copy()
-    environment["CUBISM_SDK_ROOT"] = str(SDK_ROOT)
-    environment["CUBISM_CORE_PROVIDER"] = case["core"]
-    if case["core"] == "purism":
-        environment["CUBISM_CORE_LIBRARY"] = str(build_purism_core(jobs))
-    else:
-        environment.pop("CUBISM_CORE_LIBRARY", None)
-    run(
-        [
-            "uv", "run", "--locked", "--project", str(REPO_ROOT),
-            "--group", "benchmark", "python", "-m", "SCons",
-            f"platform={platform}", f"arch={arch}",
-            "target=template_release", f"-j{jobs}",
-        ],
-        cwd=extension_root,
-        env=environment,
-    )
-    addon_source = extension_root / "addons/gd_cubism"
-    artifact = BUILD_ROOT / case_id / "addons/gd_cubism"
-    replace_tree(addon_source, artifact)
-    select_core_variant_for_editor(artifact, case["core"], platform, arch)
-    prepare_godot(artifact)
-    return artifact
-
-
 def build_kasane(case_id: str) -> Path:
     case, _ = find_case(case_id)
     if case["host"] != "kasane-render-metal":
@@ -303,7 +214,7 @@ def build_kasane(case_id: str) -> Path:
     return executable
 
 
-def run_case(case_id: str, godot_bin: str) -> None:
+def run_case(case_id: str) -> None:
     case, _ = find_case(case_id)
     if case["host"] == "kasane-render-metal":
         executable = REPO_ROOT / "target/release/cubism-matrix-kasane"
@@ -323,17 +234,7 @@ def run_case(case_id: str, godot_bin: str) -> None:
             raise FileNotFoundError(f"build {case_id} before running it")
         run([str(executable)], cwd=executable.parent)
         return
-    addon_artifact = BUILD_ROOT / case_id / "addons/gd_cubism"
-    if not addon_artifact.is_dir():
-        raise FileNotFoundError(f"build {case_id} before running it")
-    prepare_godot(addon_artifact)
-    run(
-        [
-            godot_bin, "--path", str(MATRIX_ROOT),
-            "res://runners/godot/benchmark.tscn", "--",
-            f"--case={case_id}", f"--core={case['core']}", "--profile=release",
-        ]
-    )
+    raise ValueError(f"unsupported host for running: {case['host']}")
 
 
 def parse_benchmark_result(output: str) -> dict:
@@ -492,22 +393,12 @@ def main() -> int:
     subparsers = parser.add_subparsers(dest="command", required=True)
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--local", action="store_true")
-    prepare_parser = subparsers.add_parser("prepare-godot")
-    prepare_parser.add_argument("--addon-source", type=Path)
-    prepare_parser.add_argument("--model-source", type=Path)
-    for name in ("build-native", "build-godot", "build-core", "build-kasane"):
+    for name in ("build-native", "build-core", "build-kasane"):
         build_parser = subparsers.add_parser(name)
         build_parser.add_argument("case")
         build_parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
-        if name == "build-godot":
-            build_parser.add_argument("--platform", default="macos")
-            build_parser.add_argument("--arch", default="arm64")
     run_parser = subparsers.add_parser("run")
     run_parser.add_argument("case")
-    run_parser.add_argument(
-        "--godot-bin",
-        default=os.environ.get("GODOT_BIN", "/Applications/Godot_mono.app/Contents/MacOS/Godot"),
-    )
     benchmark_core_parser = subparsers.add_parser("benchmark-core")
     benchmark_core_parser.add_argument("--repeats", type=int, default=3)
     benchmark_core_parser.add_argument("--jobs", type=int, default=os.cpu_count() or 4)
@@ -518,18 +409,14 @@ def main() -> int:
     try:
         if args.command == "validate":
             validate(args.local)
-        elif args.command == "prepare-godot":
-            prepare_godot(args.addon_source, args.model_source)
         elif args.command == "build-native":
             build_native(args.case, args.jobs)
-        elif args.command == "build-godot":
-            build_godot(args.case, args.jobs, args.platform, args.arch)
         elif args.command == "build-core":
             build_core(args.case, args.jobs)
         elif args.command == "build-kasane":
             build_kasane(args.case)
         elif args.command == "run":
-            run_case(args.case, args.godot_bin)
+            run_case(args.case)
         elif args.command == "benchmark-core":
             benchmark_core(args.repeats, args.jobs)
         elif args.command == "benchmark-render":

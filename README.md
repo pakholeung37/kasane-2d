@@ -28,7 +28,6 @@ uv run --locked python tools/validate_sdk.py --wheel /absolute/path/to/kasane.wh
 
 Run Python tools with `uv run --locked ...`. Add development dependencies with
 `uv add --group dev <package>` and commit both `pyproject.toml` and `uv.lock`.
-The optional `benchmark` group provides SCons (`uv sync --locked --group benchmark`).
 Agent experiments share one uv-managed environment per experiment and allow
 participants to install dependencies; see the [experiment guide](docs/SDK-EXPERIMENTS.md).
 
@@ -42,9 +41,6 @@ An observe-enabled wheel can also run GPU and pinned image-reference checks;
 
 This project builds on upstream open-source projects:
 
-- [GDCubism](https://github.com/MizunagiKB/gd_cubism) by MizunagiKB remains in
-  the separate Cubism comparison benchmark. GDCubism-derived portions
-  remain Copyright (c) 2023 MizunagiKB under the MIT License.
 - [PurismCore](https://github.com/SakuraMotion/PurismCore) by the Sakura Motion
   Project is included through a forked Git submodule as an alternative Cubism
   Core-compatible provider under its MIT License.
@@ -57,10 +53,9 @@ and do not necessarily endorse, the changes made in this repository.
 Original code and modifications in this repository are available under the
 [MIT License](LICENSE), except where a file, directory, dependency, or
 submodule carries a different notice. Existing third-party copyright and
-license notices remain in force. In particular, the `godot-cpp` submodule and
-Live2D-derived benchmark sources are governed by their respective licenses;
-the repository MIT License does not relicense them. See
-[third-party notices](THIRD_PARTY_NOTICES.md) for their scopes.
+license notices remain in force. In particular, Live2D-derived benchmark sources
+are governed by their respective licenses; the repository MIT License does not
+relicense them. See [third-party notices](THIRD_PARTY_NOTICES.md) for their scopes.
 
 Live2D, Cubism, the Live2D Cubism SDK, Cubism Core, Cubism Native Framework,
 and associated sample data are owned by or licensed through Live2D Inc. and/or

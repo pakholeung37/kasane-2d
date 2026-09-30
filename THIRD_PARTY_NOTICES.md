@@ -5,22 +5,6 @@ dependency, or submodule does not carry a different notice. The following
 upstream works retain their original copyrights and license terms.
 
 
-## GDCubism
-
-Portions of `modules/gd-cubism` are derived from
-[GDCubism](https://github.com/MizunagiKB/gd_cubism).
-
-Copyright (c) 2023 MizunagiKB.
-
-Those portions are used under the MIT License. GDCubism's MIT license does not
-cover the Live2D libraries with which it may be built or linked.
-
-## godot-cpp
-
-`modules/gd-cubism/godot-cpp` is a Git submodule of
-[godot-cpp](https://github.com/godotengine/godot-cpp) and remains subject to
-the license distributed within that submodule.
-
 ## PurismCore
 
 `modules/purism-core` is a forked Git submodule of

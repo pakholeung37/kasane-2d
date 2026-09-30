@@ -12,16 +12,6 @@
       "host": "cubism-framework-native"
     },
     {
-      "id": "cubism-godot",
-      "core": "cubism",
-      "host": "gd-cubism"
-    },
-    {
-      "id": "purism-godot",
-      "core": "purism",
-      "host": "gd-cubism"
-    },
-    {
       "id": "cubism-core",
       "core": "cubism",
       "host": "core-only"
