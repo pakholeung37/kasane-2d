@@ -124,10 +124,15 @@ impl Document {
         if !s.is_ok() {
             return self.failed(s);
         }
+        let kind = if pose_only_change(old, &t) {
+            ChangeKind::Positions
+        } else {
+            ChangeKind::Structure
+        };
         let id = t.id.clone();
         self.transforms.insert(id.clone(), t);
         let meshes = self.mesh_order.clone();
-        self.changed(ChangeKind::Structure, meshes, vec![id])
+        self.changed(kind, meshes, vec![id])
     }
 
     pub fn sorted_transforms(&self) -> Vec<String> {
@@ -188,6 +193,11 @@ impl Document {
         if !status.is_ok() {
             return self.failed(status);
         }
+        let mut kind = if pose_only_change(&old, &t) {
+            ChangeKind::Positions
+        } else {
+            ChangeKind::Structure
+        };
         let id = t.id.clone();
         self.transforms.insert(id.clone(), t);
         let mut objects = vec![id.clone()];
@@ -197,9 +207,34 @@ impl Document {
                 self.transforms.insert(id.clone(), old);
                 return self.failed(status);
             }
+            let previous = self.get_scene_binding(&b.id).unwrap();
+            if previous.axes != b.axes
+                || !previous
+                    .track
+                    .samples()
+                    .map(|f| f.keys)
+                    .eq(b.track.samples().map(|f| f.keys))
+            {
+                kind = ChangeKind::Structure;
+            }
             objects.push(b.id.clone());
             self.scene_bindings.insert(b.id.clone(), b);
         }
-        self.changed(ChangeKind::Structure, self.mesh_order.clone(), objects)
+        self.changed(kind, self.mesh_order.clone(), objects)
     }
+}
+
+/// All pose values are read afresh by the evaluator. References and lattice
+/// structure still invalidate the prepared graph and dependent geometry.
+fn pose_only_change(old: &Transform, new: &Transform) -> bool {
+    old.id == new.id
+        && old.name == new.name
+        && old.runtime_id == new.runtime_id
+        && old.parent_id == new.parent_id
+        && old.part_id == new.part_id
+        && old.enabled == new.enabled
+        && old.appearance == new.appearance
+        && old.kind() == new.kind()
+        && old.warp().map(|w| (w.rows, w.columns, w.quad))
+            == new.warp().map(|w| (w.rows, w.columns, w.quad))
 }

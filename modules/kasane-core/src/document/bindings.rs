@@ -2,7 +2,7 @@ use super::*;
 use crate::geometry::validate_positions;
 use crate::types::{
     ChangeKind, EditResult, MeshBinding, MeshKeyform, Offscreen, ParameterKind, SceneBinding,
-    SceneKeyform, Status, TransformKind,
+    SceneKeyform, SceneTrack, Status, TransformKind,
 };
 use std::collections::HashSet;
 
@@ -486,6 +486,9 @@ impl Document {
     }
 
     pub fn set_scene_keyform(&mut self, id: &str, f: SceneKeyform) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", id));
+        }
         let mut b = match self.get_scene_binding(id) {
             Some(old) => old.clone(),
             None => return self.failed(Status::error("MISSING_BINDING", id)),
@@ -494,6 +497,19 @@ impl Document {
         if !status.is_ok() {
             return self.failed(status);
         }
-        self.replace_scene_binding(b)
+        let status = self.canonicalize_scene_binding(&mut b);
+        if !status.is_ok() {
+            return self.failed(status);
+        }
+        // Replacing an existing pose preserves target, axes and key coordinates.
+        // Part keyforms can change render order and still require preparation.
+        let kind = if matches!(b.track, SceneTrack::Part { .. }) {
+            ChangeKind::Structure
+        } else {
+            ChangeKind::Positions
+        };
+        let target = b.target_id().to_owned();
+        self.scene_bindings.insert(id.to_owned(), b);
+        self.changed(kind, self.mesh_order.clone(), vec![id.to_owned(), target])
     }
 }

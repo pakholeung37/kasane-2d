@@ -2,8 +2,8 @@ use kasane_core::{RotationTransform, TransformData, WarpTransform};
 use std::collections::HashMap;
 
 use kasane_core::{
-    evaluate_frame, evaluation::evaluate_frame_including_hidden, Appearance, Canvas, Document,
-    DrawableFrame, ImageAsset, Mesh, Part, RotationPose, Transform, Vec2,
+    evaluate_frame, evaluation::evaluate_frame_including_hidden, Appearance, Canvas, ChangeKind,
+    Document, DrawableFrame, ImageAsset, Mesh, Part, RotationPose, Transform, Vec2,
 };
 
 fn id(n: i32) -> String {
@@ -151,7 +151,10 @@ fn hierarchical_transforms_and_warp(flag: u8) {
 
     // Rotate root transform 90 degrees
     root.rotation_mut().unwrap().pose.angle = 90.0;
-    assert!(doc.replace_transform(root).status.is_ok());
+    assert_eq!(
+        doc.replace_transform(root).changes.kind,
+        ChangeKind::Positions
+    );
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
     let d2 = &frame.drawables[0];
     assert!(d2.visible);
@@ -173,7 +176,10 @@ fn hierarchical_transforms_and_warp(flag: u8) {
     let visible_positions = d2.positions.clone();
     let mut disabled_root = doc.get_transform(&id(4)).unwrap().clone();
     disabled_root.enabled = false;
-    assert!(doc.replace_transform(disabled_root).status.is_ok());
+    assert_eq!(
+        doc.replace_transform(disabled_root).changes.kind,
+        ChangeKind::Structure
+    );
     assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
     assert!(!frame.drawables[0].visible);
     assert!(frame.drawables[0]
