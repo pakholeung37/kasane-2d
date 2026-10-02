@@ -98,6 +98,20 @@ pub struct DrawableFrame {
     pub drawables: Vec<Drawable>,
     pub offscreens: Vec<OffscreenFrame>,
     pub render_plan: Vec<RenderCommand>,
+    /// Editor controls evaluated in the same pose as the drawables. Transient,
+    /// deliberately excluded from the serialized rendering contract.
+    #[serde(skip)]
+    pub deformers: Vec<EvaluatedDeformer>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EvaluatedDeformer {
+    pub id: String,
+    pub enabled: bool,
+    /// Final runtime coordinates, including the canvas Y reversal, matching
+    /// Drawable::positions. Warp points are row-major; rotation points are the
+    /// transformed origin and unit X/Y axes.
+    pub points: Vec<Vec2>,
 }
 
 pub fn to_parent_positions(

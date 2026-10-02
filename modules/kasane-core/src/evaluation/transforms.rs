@@ -110,6 +110,7 @@ pub(super) fn evaluate(
     prepared: &PreparedEvaluation,
     state: &mut EvalContext<'_>,
 ) -> crate::types::Status {
+    state.frame.deformers.clear();
     state
         .transforms
         .resize_with(prepared.transforms.len(), TransformState::default);
@@ -347,6 +348,22 @@ pub(super) fn evaluate(
                 return Status::error(s.code, format!("{}.evaluated_points", id));
             }
         }
+        let points = if t.kind() == TransformKind::Warp {
+            transform_state
+                .points
+                .chunks_exact(2)
+                .map(|p| Vec2::new(p[0], p[1]))
+                .collect()
+        } else {
+            let mut points = vec![Vec2::new(0., 0.), Vec2::new(1., 0.), Vec2::new(0., 1.)];
+            transform_state.apply(&mut points);
+            points
+        };
+        state.frame.deformers.push(super::types::EvaluatedDeformer {
+            id: id.clone(),
+            enabled: transform_state.enabled,
+            points,
+        });
         state.transforms[transform_slot] = transform_state;
     }
     Status::ok()

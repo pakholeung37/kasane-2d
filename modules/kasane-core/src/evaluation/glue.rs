@@ -116,5 +116,15 @@ pub(super) fn evaluate(
             }
         }
     }
+    // Published editor controls share the drawables' final coordinate space.
+    // Keep TransformState itself unchanged: deformation was evaluated before
+    // the canvas reversal and uses that space for parent composition.
+    if doc.canvas().flag & 1 == 0 {
+        for deformer in &mut state.frame.deformers {
+            for point in &mut deformer.points {
+                point.y = -point.y;
+            }
+        }
+    }
     Status::ok()
 }
