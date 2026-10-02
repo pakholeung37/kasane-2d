@@ -217,6 +217,8 @@ impl Default for TransformData {
 }
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WarpTransform {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bezier: Option<crate::WarpBezier>,
     pub rows: u32,
     pub columns: u32,
     pub quad: bool,
@@ -292,6 +294,8 @@ impl Default for Part {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct WarpKeyform {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bezier: Option<crate::WarpBezier>,
     pub keys: Vec<f32>,
     pub positions: Vec<Vec2>,
     pub appearance: Appearance,

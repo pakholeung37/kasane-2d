@@ -127,6 +127,8 @@ impl From<RotationPoseWire> for RotationPose {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct TransformWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) bezier: Option<kasane_core::WarpBezier>,
     pub(super) id: String,
     pub(super) runtime_id: String,
     pub(super) name: String,
@@ -155,6 +157,8 @@ pub(super) struct MeshKeyformWire {
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct SceneKeyformWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) bezier: Option<kasane_core::WarpBezier>,
     pub(super) keys: Vec<f32>,
     pub(super) positions: Vec<[f32; 2]>,
     pub(super) rotation: RotationPoseWire,

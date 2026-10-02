@@ -302,6 +302,7 @@ fn create_m1_fixture_doc() -> Document {
         runtime_id: "WarpRoot".to_string(),
         name: "WarpRoot".to_string(),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 2,
             columns: 2,
             quad: true,

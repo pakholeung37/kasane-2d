@@ -42,6 +42,7 @@ fn warp() -> Transform {
         part_id: Some(id(4).into()),
         parent_id: Some(id(5).into()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 1,
             columns: 1,
             quad: true,
@@ -241,6 +242,7 @@ fn scene_tracks_require_complete_typed_forms_and_support_replacement() {
                 keyforms: vec![0.0, 1.0]
                     .into_iter()
                     .map(|key| WarpKeyform {
+                        bezier: None,
                         keys: vec![key],
                         positions: base.iter().map(|p| Vec2::new(p.x + key, p.y)).collect(),
                         ..Default::default()
@@ -401,4 +403,62 @@ fn session_preview_caches_frames_and_rejects_bad_requests_without_state_change()
     assert_eq!(sdk.preview_values()[&id(7)], 0.5);
     assert!(sdk.reset_preview_values().unwrap());
     assert!(sdk.preview_values().is_empty());
+}
+
+#[test]
+fn bezier_authoring_rejects_invalid_metadata_and_incomplete_grid_migration_atomically() {
+    let mut sdk = session();
+    let mut transform = warp();
+    transform.parent_id = None;
+    transform.part_id = None;
+    sdk.edit("warp", None, |e| {
+        e.create_transform(transform)?;
+        e.create_parameter(Parameter {
+            id: id(7),
+            minimum: 0.,
+            maximum: 1.,
+            ..Default::default()
+        })?;
+        e.create_scene_binding(SceneBinding {
+            id: id(10),
+            axes: vec![BindingAxis {
+                parameter_id: id(7),
+                keys: vec![0., 1.],
+            }],
+            track: SceneTrack::Warp {
+                target_id: id(6).into(),
+                keyforms: vec![0., 1.]
+                    .into_iter()
+                    .map(|key| WarpKeyform {
+                        keys: vec![key],
+                        positions: warp().warp().unwrap().points.clone(),
+                        ..Default::default()
+                    })
+                    .collect(),
+            },
+        })
+    })
+    .unwrap();
+    let original = sdk.transform(&id(6)).unwrap();
+    let binding = sdk.scene_binding(&id(10)).unwrap();
+    let version = sdk.version();
+    for invalid_grid in [false, true] {
+        let mut changed = original.clone();
+        let w = changed.warp_mut().unwrap();
+        if invalid_grid {
+            w.rows = 2;
+            w.points = vec![Vec2::new(0., 0.); 6];
+        } else {
+            let mut b = kasane_core::WarpBezier::from_lattice(w.rows, w.columns, w.quad, &w.points);
+            b.nodes[0].handles[0].x = f32::NAN;
+            w.bezier = Some(b);
+        }
+        assert!(sdk
+            .edit("invalid", None, |e| e
+                .replace_warp_authoring(changed, Some(binding.clone())))
+            .is_err());
+        assert_eq!(sdk.version(), version);
+        assert_eq!(sdk.transform(&id(6)), Some(original.clone()));
+        assert_eq!(sdk.scene_binding(&id(10)), Some(binding.clone()));
+    }
 }

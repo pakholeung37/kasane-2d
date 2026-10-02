@@ -64,6 +64,12 @@ impl Document {
                 {
                     return Status::error("INVALID_WARP_GRID", &t.id);
                 }
+                if let Some(b) = &w.bezier {
+                    let status = b.validate();
+                    if !status.is_ok() {
+                        return status;
+                    }
+                }
                 let status = validate_positions(&w.points);
                 if !status.is_ok() {
                     return status;
@@ -147,5 +153,53 @@ impl Document {
             visit(id, &self.transforms, &mut seen, &mut result);
         }
         result
+    }
+}
+
+impl Document {
+    /// Atomically replace a Warp lattice and its existing ordinary keyforms.
+    /// Used when authoring Bezier edits require denser conversion geometry.
+    pub fn replace_warp_authoring(
+        &mut self,
+        t: Transform,
+        binding: Option<crate::SceneBinding>,
+    ) -> EditResult {
+        if self.mutation_blocked() {
+            return self.failed(Status::error("TRANSACTION_ACTIVE", &t.id));
+        }
+        let Some(old) = self.get_transform(&t.id).cloned() else {
+            return self.failed(Status::error("MISSING_TRANSFORM", &t.id));
+        };
+        if old.warp().is_none()
+            || t.warp().is_none()
+            || !self.blend_bindings_for_target(&t.id).is_empty()
+        {
+            return self.failed(Status::error("INVALID_WARP_AUTHORING", &t.id));
+        }
+        let existing = self.binding_for_scene(&t.id);
+        if existing.map(|b| b.id.as_str()) != binding.as_ref().map(|b| b.id.as_str())
+            || binding.as_ref().is_some_and(|b| {
+                b.target_id() != t.id || !matches!(b.track, crate::SceneTrack::Warp { .. })
+            })
+        {
+            return self.failed(Status::error("INVALID_BINDING_TARGET", &t.id));
+        }
+        let status = self.validate_transform(&t);
+        if !status.is_ok() {
+            return self.failed(status);
+        }
+        let id = t.id.clone();
+        self.transforms.insert(id.clone(), t);
+        let mut objects = vec![id.clone()];
+        if let Some(mut b) = binding {
+            let status = self.canonicalize_scene_binding(&mut b);
+            if !status.is_ok() {
+                self.transforms.insert(id.clone(), old);
+                return self.failed(status);
+            }
+            objects.push(b.id.clone());
+            self.scene_bindings.insert(b.id.clone(), b);
+        }
+        self.changed(ChangeKind::Structure, self.mesh_order.clone(), objects)
     }
 }

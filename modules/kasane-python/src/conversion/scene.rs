@@ -5,6 +5,7 @@ pub(crate) fn scene_form_from_tuple(kind: &str, value: SceneFormTuple) -> PyResu
     match kind {
         "warp" if pose.is_none() && draw_order.is_none() && appearance.is_some() => {
             Ok(SceneKeyform::Warp(WarpKeyform {
+                bezier: None,
                 keys,
                 positions: positions
                     .into_iter()

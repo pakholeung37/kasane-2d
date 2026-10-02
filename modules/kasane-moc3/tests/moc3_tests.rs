@@ -505,6 +505,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             TransformKind::Rotation
         } {
             TransformKind::Warp => TransformData::Warp(WarpTransform {
+                bezier: None,
                 rows: 2,
                 columns: 2,
                 quad,
@@ -552,6 +553,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
             TransformKind::Warp
         } {
             TransformKind::Warp => TransformData::Warp(WarpTransform {
+                bezier: None,
                 rows: 2,
                 columns: 2,
                 quad,
@@ -601,6 +603,7 @@ fn scene_fixture(warp_root: bool, quad: bool) -> Document {
                         let mut appearance = t.appearance;
                         appearance.opacity += key * 0.05;
                         WarpKeyform {
+                            bezier: None,
                             keys: vec![key],
                             positions,
                             appearance,

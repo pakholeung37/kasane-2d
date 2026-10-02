@@ -38,6 +38,7 @@ fn transform_from_wire(
     let kind = decode_transform_kind(transform.kind)?;
     let data = match kind {
         TransformKind::Warp => TransformData::Warp(WarpTransform {
+            bezier: transform.bezier.clone(),
             rows: transform.rows,
             columns: transform.columns,
             quad: transform.quad,
@@ -346,6 +347,7 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
                     .keyforms
                     .into_iter()
                     .map(|f| WarpKeyform {
+                        bezier: f.bezier.clone(),
                         keys: f.keys,
                         positions: f
                             .positions

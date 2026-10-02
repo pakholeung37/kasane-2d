@@ -111,6 +111,7 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
         part_id: kasane_core::PartId::optional(root_part.clone()),
         parent_id: kasane_core::TransformId::optional(rot_l1.clone()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 3,
             columns: 3,
             quad: true,
@@ -159,6 +160,7 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
         part_id: kasane_core::PartId::optional(root_part.clone()),
         parent_id: kasane_core::TransformId::optional(rot_l3.clone()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 3,
             columns: 3,
             quad: true,
@@ -185,6 +187,7 @@ fn build_production_model(out_params: &mut Vec<String>) -> Document {
         part_id: kasane_core::PartId::optional(root_part.clone()),
         parent_id: kasane_core::TransformId::optional(warp_l4.clone()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 3,
             columns: 3,
             quad: true,

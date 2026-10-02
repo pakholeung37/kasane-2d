@@ -19,3 +19,6 @@ pub use geometry::{
     is_renderable_mesh, to_runtime_positions, validate_positions, validate_render_mesh,
 };
 pub use types::*;
+
+pub mod warp_bezier;
+pub use warp_bezier::{WarpBezier, WarpBezierNode};

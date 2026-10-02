@@ -89,6 +89,7 @@ fn hierarchical_transforms_and_warp(flag: u8) {
             screen: [0.1, 0.0, 0.0],
         },
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 2,
             columns: 2,
             quad: true,

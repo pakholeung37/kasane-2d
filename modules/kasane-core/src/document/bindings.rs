@@ -316,6 +316,12 @@ impl Document {
                     if f.positions.len() != point_count {
                         return Status::error("INVALID_LENGTH", &b.id);
                     }
+                    if let Some(b) = &f.bezier {
+                        let status = b.validate();
+                        if !status.is_ok() {
+                            return status;
+                        }
+                    }
                     let status = validate_positions(&f.positions);
                     if !status.is_ok() {
                         return status;

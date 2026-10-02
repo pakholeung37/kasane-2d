@@ -168,6 +168,17 @@ impl EditSession<'_> {
         let result = self.document().create_transform(transform);
         self.record(result, "create_transform", &id)
     }
+    /// Replace a Warp and its ordinary keyforms in one validated operation.
+    pub fn replace_warp_authoring(
+        &mut self,
+        transform: Transform,
+        binding: Option<SceneBinding>,
+    ) -> Result<(), SdkError> {
+        self.ensure_active("replace_warp_authoring")?;
+        let id = transform.id.clone();
+        let result = self.document().replace_warp_authoring(transform, binding);
+        self.record(result, "replace_warp_authoring", &id)
+    }
     pub fn replace_transform(&mut self, transform: Transform) -> Result<(), SdkError> {
         self.ensure_active("replace_transform")?;
         let id = transform.id.clone();
@@ -253,6 +264,9 @@ impl EditSession<'_> {
                 vec![transform_id.into()],
             )));
         };
+        if warp.points != points {
+            warp.bezier = None;
+        }
         warp.points = points;
         let result = self.document().replace_transform(transform);
         self.record(result, "update_warp_points", transform_id)

@@ -142,7 +142,12 @@ impl ExtraBytes for Transform {
             + self.part_id.as_ref().map_or(0, |id| id.capacity())
             + self.parent_id.as_ref().map_or(0, |id| id.capacity())
             + match &self.data {
-                TransformData::Warp(w) => w.points.extra_bytes(),
+                TransformData::Warp(w) => {
+                    w.points.extra_bytes()
+                        + w.bezier.as_ref().map_or(0, |b| {
+                            b.nodes.capacity() * std::mem::size_of::<crate::WarpBezierNode>()
+                        })
+                }
                 TransformData::Rotation(_) => 0,
             }
     }
@@ -404,7 +409,11 @@ impl ExtraBytes for MeshBinding {
 }
 impl ExtraBytes for WarpKeyform {
     fn extra_bytes(&self) -> usize {
-        self.keys.extra_bytes() + self.positions.extra_bytes()
+        self.keys.extra_bytes()
+            + self.positions.extra_bytes()
+            + self.bezier.as_ref().map_or(0, |b| {
+                b.nodes.capacity() * std::mem::size_of::<crate::WarpBezierNode>()
+            })
     }
 }
 impl ExtraBytes for RotationKeyform {

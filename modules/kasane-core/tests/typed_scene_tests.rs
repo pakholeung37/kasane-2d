@@ -19,6 +19,7 @@ fn document() -> Document {
         .create_transform(Transform {
             id: id(3),
             data: TransformData::Warp(WarpTransform {
+                bezier: None,
                 rows: 1,
                 columns: 1,
                 quad: true,
@@ -84,6 +85,7 @@ fn wrong_track_and_single_form_types_fail_without_mutation() {
                 keyforms: [1., -1.]
                     .into_iter()
                     .map(|key| WarpKeyform {
+                        bezier: None,
                         keys: vec![key],
                         positions: positions.clone(),
                         ..Default::default()

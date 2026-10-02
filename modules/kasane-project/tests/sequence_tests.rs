@@ -155,6 +155,7 @@ fn build_initial_document() -> (Document, Vec<String>) {
         part_id: kasane_core::PartId::optional(root_part.clone()),
         parent_id: kasane_core::TransformId::optional(rot_id.clone()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 2,
             columns: 2,
             quad: true,

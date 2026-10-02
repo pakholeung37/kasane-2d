@@ -437,6 +437,7 @@ fn build_nested_deformers_case() -> (Document, Vec<Vec<f32>>) {
         part_id: kasane_core::PartId::optional(part_id.clone()),
         parent_id: kasane_core::TransformId::optional(rot_id.clone()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 2,
             columns: 2,
             quad: true,

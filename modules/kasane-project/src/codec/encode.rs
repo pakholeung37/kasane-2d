@@ -69,6 +69,7 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
     for id in document.transform_order() {
         let t = document.get_transform(id).unwrap();
         transforms_wire.push(TransformWire {
+            bezier: t.warp().and_then(|w| w.bezier.clone()),
             id: t.id.clone(),
             runtime_id: t.runtime_id.clone(),
             name: t.name.clone(),
@@ -126,7 +127,12 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
         let keyforms_wire = sb
             .track
             .samples()
-            .map(|f| SceneKeyformWire {
+            .enumerate()
+            .map(|(i, f)| SceneKeyformWire {
+                bezier: match &sb.track {
+                    kasane_core::SceneTrack::Warp { keyforms, .. } => keyforms[i].bezier.clone(),
+                    _ => None,
+                },
                 keys: f.keys.to_vec(),
                 positions: f.positions.iter().map(|p| [p.x, p.y]).collect(),
                 rotation: RotationPoseWire::from(&f.rotation),

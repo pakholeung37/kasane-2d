@@ -613,6 +613,7 @@ fn published_format_preserves_cpp_transform_tags_and_omits_legacy_fields() {
             name: "Warp".into(),
             part_id: kasane_core::PartId::optional(sid(1)),
             data: TransformData::Warp(WarpTransform {
+                bezier: None,
                 rows: 1,
                 columns: 1,
                 quad: true,
@@ -669,6 +670,7 @@ fn scene_binding(doc: &mut Document) {
             keyforms: [-1., 1.]
                 .into_iter()
                 .map(|key| WarpKeyform {
+                    bezier: None,
                     keys: vec![key],
                     positions: w.points.clone(),
                     appearance: transform.appearance,
@@ -706,6 +708,7 @@ fn bound_transform_type_and_grid_changes_are_atomic_failures() {
     let before = doc.clone();
     let mut transform = doc.get_transform(&sid(2)).unwrap().clone();
     transform.data = TransformData::Warp(WarpTransform {
+        bezier: None,
         rows: 1,
         columns: 1,
         quad: true,

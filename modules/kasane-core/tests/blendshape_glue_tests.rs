@@ -506,6 +506,7 @@ fn warp_grid_edits_validate_blend_dependents_atomically() {
             id: warp_id.into(),
             runtime_id: "Warp".into(),
             data: TransformData::Warp(WarpTransform {
+                bezier: None,
                 rows: 1,
                 columns: 1,
                 quad: true,

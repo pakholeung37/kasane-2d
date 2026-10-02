@@ -124,6 +124,7 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
         part_id: kasane_core::PartId::optional(part_child.clone()),
         parent_id: kasane_core::TransformId::optional(rot_root.clone()),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 3,
             columns: 3,
             quad: true,
@@ -177,6 +178,7 @@ fn build_benchmark_document(out_params: &mut Vec<String>) -> Document {
                             pt.x += key * 15.;
                         }
                         kasane_core::WarpKeyform {
+                            bezier: None,
                             keys: vec![key],
                             positions,
                             ..Default::default()

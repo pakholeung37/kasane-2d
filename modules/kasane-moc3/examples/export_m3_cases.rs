@@ -56,6 +56,7 @@ fn create_m1_fixture_doc() -> Document {
         name: "HeadWarp".to_string(),
         runtime_id: "WarpHead".to_string(),
         data: TransformData::Warp(WarpTransform {
+            bezier: None,
             rows: 2,
             columns: 2,
             quad: true,

@@ -46,6 +46,7 @@ impl NativeEdit {
                 part_id: part_id.map(Into::into),
                 parent_id: parent_id.map(Into::into),
                 data: TransformData::Warp(WarpTransform {
+                    bezier: None,
                     rows,
                     columns,
                     quad,
@@ -89,6 +90,7 @@ impl NativeEdit {
             ("rotation", Some(rotation), None) => TransformData::Rotation(rotation_data(rotation)),
             ("warp", None, Some((rows, columns, quad, points))) => {
                 TransformData::Warp(WarpTransform {
+                    bezier: None,
                     rows,
                     columns,
                     quad,
