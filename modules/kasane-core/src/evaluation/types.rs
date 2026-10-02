@@ -98,13 +98,11 @@ pub struct DrawableFrame {
     pub drawables: Vec<Drawable>,
     pub offscreens: Vec<OffscreenFrame>,
     pub render_plan: Vec<RenderCommand>,
-    /// Editor controls evaluated in the same pose as the drawables. Transient,
-    /// deliberately excluded from the serialized rendering contract.
-    #[serde(skip)]
+    /// Editor controls evaluated in the same pose as the drawables.
     pub deformers: Vec<EvaluatedDeformer>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EvaluatedDeformer {
     pub id: String,
     pub enabled: bool,

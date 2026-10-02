@@ -155,6 +155,18 @@ fn hierarchical_transforms_and_warp(flag: u8) {
     let d2 = &frame.drawables[0];
     assert!(d2.visible);
 
+    // Both kinds of evaluated controls must survive a frame round trip,
+    // including their final coordinates for either canvas Y convention.
+    assert_eq!(frame.deformers.len(), 2);
+    let rotation = frame.deformers.iter().find(|d| d.id == id(4)).unwrap();
+    let warp = frame.deformers.iter().find(|d| d.id == id(5)).unwrap();
+    assert!(rotation.enabled && warp.enabled);
+    assert_eq!(rotation.points.len(), 3);
+    assert_eq!(warp.points.len(), 9);
+    let json = serde_json::to_string(&frame).unwrap();
+    let restored: DrawableFrame = serde_json::from_str(&json).unwrap();
+    assert_eq!(restored, frame);
+
     // A PSD still needs the mesh's transformed pixels when its parent is
     // disabled. The normal preview continues to leave that geometry empty.
     let visible_positions = d2.positions.clone();

@@ -450,6 +450,32 @@ mod tests {
     }
 
     #[test]
+    fn scene_hash_accepts_evaluated_deformers() {
+        let mut doc = kasane_core::Document::new();
+        assert!(doc
+            .initialize(
+                "00000000-0000-4000-8000-000000000001",
+                kasane_core::Canvas::new(100.0, 100.0, kasane_core::Vec2::new(50.0, 50.0), 10.0),
+            )
+            .is_ok());
+        assert!(doc
+            .create_transform(kasane_core::Transform {
+                id: "00000000-0000-4000-8000-000000000002".into(),
+                ..Default::default()
+            })
+            .status
+            .is_ok());
+        let mut bundle = empty_bundle();
+        assert!(kasane_core::evaluate_frame(&doc, &Default::default(), &mut bundle.frame).is_ok());
+        assert_eq!(bundle.frame.deformers.len(), 1);
+        let digest = scene_hash(&bundle).unwrap();
+        let restored: SceneBundle =
+            serde_json::from_str(&serde_json::to_string(&bundle).unwrap()).unwrap();
+        assert_eq!(restored.frame, bundle.frame);
+        assert_eq!(scene_hash(&restored).unwrap(), digest);
+    }
+
+    #[test]
     fn scene_hash_rejects_nonfinite_values() {
         let mut bundle = empty_bundle();
         bundle.requested.insert("parameter".into(), f32::NAN);
