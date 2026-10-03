@@ -783,9 +783,6 @@ impl MetalRenderer {
         output_mode: MetalOutputMode,
         textures: &MetalTextureCatalog<'_>,
     ) -> Result<MetalRenderStats, Status> {
-        let mask_cache = std::mem::take(&mut self.mask_cache);
-        let atlas_pages = std::mem::take(&mut self.mask_atlas_pages);
-        let buffer_uploads = std::mem::take(&mut self.pending_uploads);
         let frame = self
             .frame
             .as_ref()
@@ -862,6 +859,11 @@ impl MetalRenderer {
                 self.target.format,
             )
         };
+        // Preflight failures must preserve cached coverage and upload accounting.
+        // Transfer ownership only once the command is ready to encode passes.
+        let mask_cache = std::mem::take(&mut self.mask_cache);
+        let atlas_pages = std::mem::take(&mut self.mask_atlas_pages);
+        let buffer_uploads = std::mem::take(&mut self.pending_uploads);
         let mut state = FrameEncoder {
             renderer: self,
             frame,

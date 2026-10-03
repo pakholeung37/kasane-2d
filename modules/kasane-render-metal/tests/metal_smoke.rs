@@ -726,6 +726,91 @@ fn mask_atlas_matches_individual_masks_without_neighbor_bleed() {
 }
 
 #[test]
+fn rejected_encoding_preserves_mask_cache_and_pending_upload_stats() {
+    for count in [1, 40] {
+        let context = MetalContext::new().unwrap();
+        let texture = context.upload_rgba8(1, 1, &[255, 0, 0, 128], &[]).unwrap();
+        let mut catalog = MetalTextureCatalog::new(HashMap::from([(
+            "red".into(),
+            MetalTexture {
+                view: &texture,
+                width: 1,
+                height: 1,
+            },
+        )]));
+        catalog.set_revision("red", 1);
+        let target = MetalTargetConfig {
+            width: 64,
+            height: 64,
+            format: MTLPixelFormat::RGBA8Unorm,
+        };
+        let mut renderer = MetalRenderer::new(&context, target).unwrap();
+        let mut frame = DrawableFrame {
+            canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+            ..Default::default()
+        };
+        for i in 0..count {
+            let mut source = quad(&format!("mask-{i}"), "red");
+            source.visible = false;
+            let mut consumer = quad(&format!("consumer-{i}"), "red");
+            consumer.masks = vec![source.id.clone()];
+            frame.drawables.extend([source, consumer]);
+        }
+        renderer.sync_model(&frame, &catalog).unwrap();
+        renderer
+            .update_view(ViewportConfig {
+                transform: Affine2::IDENTITY,
+                target_extent: Vec2::new(64., 64.),
+                mask_scale: 1.,
+            })
+            .unwrap();
+        let output = context.output_texture(target).unwrap();
+        let invalid_output = context
+            .output_texture(MetalTargetConfig {
+                width: 32,
+                ..target
+            })
+            .unwrap();
+        let encode = |renderer: &mut MetalRenderer| {
+            let command = context.queue().new_command_buffer();
+            let stats = renderer
+                .encode(command, &output, MetalOutputMode::Replace, &catalog)
+                .unwrap();
+            command.commit();
+            command.wait_until_completed();
+            stats
+        };
+        let command = context.queue().new_command_buffer();
+        assert_eq!(
+            renderer
+                .encode(command, &invalid_output, MetalOutputMode::Replace, &catalog)
+                .unwrap_err()
+                .code,
+            "INVALID_TARGET"
+        );
+        let stats = encode(&mut renderer);
+        assert_eq!(stats.buffer_uploads, 2);
+        assert_eq!(stats.masks, count);
+        let expected = read_rgba8(&output).unwrap();
+
+        let missing = MetalTextureCatalog::new(HashMap::new());
+        let command = context.queue().new_command_buffer();
+        assert_eq!(
+            renderer
+                .encode(command, &output, MetalOutputMode::Replace, &missing)
+                .unwrap_err()
+                .code,
+            "MISSING_TEXTURE"
+        );
+        let stats = encode(&mut renderer);
+        assert_eq!(stats.masks, 0);
+        assert_eq!(stats.mask_cache_hits, count);
+        assert_eq!(stats.buffer_uploads, 0);
+        assert_eq!(read_rgba8(&output).unwrap(), expected);
+    }
+}
+
+#[test]
 fn atlas_cache_edits_and_transition_preserve_submitted_frames() {
     let context = MetalContext::new().unwrap();
     let texture = context.upload_rgba8(1, 1, &[255, 0, 0, 128], &[]).unwrap();
