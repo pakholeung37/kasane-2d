@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::filesystem::{self as io, FileSystem, NativeFileSystem, Publication};
 
@@ -9,7 +9,7 @@ use kasane_core::document::{valid_attachment_path, PackageAttachment};
 use kasane_core::types::{ImageAsset, Status};
 use kasane_core::Document;
 use kasane_moc3::{import_from_bare_moc3, import_from_model3_json, ImportReport};
-use kasane_psd::{import_psd, ImportReport as PsdImportReport};
+use kasane_psd::{import_psd, import_psd_pixels, ImportReport as PsdImportReport};
 use sha2::{Digest, Sha256};
 
 use crate::codec::{decode_project, encode_project};
@@ -18,7 +18,7 @@ use crate::codec::{decode_project_cbor, encode_project_cbor};
 use crate::package::{
     publish_with_filesystem, PackageOptions, PackageValidation, RuntimeValidation,
 };
-use crate::resources::{content_sha256, decode_png, AssetData};
+use crate::resources::{content_sha256, decode_png, AssetData, TextureData};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResourceDiagnostic {
@@ -178,7 +178,53 @@ pub fn read_project_asset_if_changed(
 pub struct DocumentStore {
     filesystem: Arc<dyn FileSystem>,
     verified_pngs: Mutex<HashMap<String, (u32, u32)>>,
-    memory_assets: Mutex<HashMap<String, Arc<[u8]>>>,
+    memory_assets: Mutex<HashMap<String, Arc<MemoryAsset>>>,
+}
+
+struct MemoryAsset {
+    texture: TextureData,
+    png: OnceLock<Result<VerifiedAsset, Status>>,
+}
+
+impl MemoryAsset {
+    fn encoded_png(&self) -> Result<&VerifiedAsset, Status> {
+        self.png
+            .get_or_init(|| {
+                let mut bytes = Vec::new();
+                {
+                    let mut encoder =
+                        png::Encoder::new(&mut bytes, self.texture.width, self.texture.height);
+                    encoder.set_color(png::ColorType::Rgba);
+                    encoder.set_depth(png::BitDepth::Eight);
+                    let mut writer = encoder
+                        .write_header()
+                        .map_err(|error| Status::error("PNG_ENCODE", error.to_string()))?;
+                    writer
+                        .write_image_data(&self.texture.rgba)
+                        .map_err(|error| Status::error("PNG_ENCODE", error.to_string()))?;
+                }
+                let sha256 = content_sha256(&bytes);
+                Ok(VerifiedAsset { bytes, sha256 })
+            })
+            .as_ref()
+            .map_err(Clone::clone)
+    }
+
+    fn validate_metadata(&self, asset: &ImageAsset) -> Result<(), Status> {
+        if self.texture.width != asset.width || self.texture.height != asset.height {
+            return Err(Status::error(
+                "RESOURCE_DIMENSIONS",
+                format!("{}: PNG dimensions differ from metadata", asset.id),
+            ));
+        }
+        if !asset.sha256.is_empty() && self.encoded_png()?.sha256 != asset.sha256 {
+            return Err(Status::error(
+                "RESOURCE_HASH",
+                format!("{}: PNG differs from saved SHA-256", asset.id),
+            ));
+        }
+        Ok(())
+    }
 }
 
 struct VerifiedAsset {
@@ -213,33 +259,35 @@ impl DocumentStore {
     }
 
     fn has_memory_asset(&self, asset: &ImageAsset) -> bool {
+        self.memory_asset(asset).is_some()
+    }
+
+    fn memory_asset(&self, asset: &ImageAsset) -> Option<Arc<MemoryAsset>> {
         self.memory_assets
             .lock()
             .unwrap_or_else(|p| p.into_inner())
-            .contains_key(&asset.source)
+            .get(&asset.source)
+            .cloned()
     }
 
-    /// A cached entry proves that these exact PNG bytes decoded successfully.
-    /// Every call still reads and hashes current bytes, so external edits are detected.
+    /// Immutable draft pixels are encoded and hashed once. Disk bytes are read
+    /// and hashed on every call, so external edits are detected.
     fn read_verified_asset(
         &self,
         root: &Path,
         asset: &ImageAsset,
     ) -> Result<VerifiedAsset, Status> {
-        let memory = self
-            .memory_assets
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .get(&asset.source)
-            .cloned();
-        let bytes = match memory {
-            Some(bytes) => bytes.to_vec(),
-            None => {
-                let source_path = asset_path(root, asset)?;
-                fs::read(&source_path)
-                    .map_err(|e| Status::error("PROJECT_IO", format!("{}: {}", asset.id, e)))?
-            }
-        };
+        if let Some(memory) = self.memory_asset(asset) {
+            memory.validate_metadata(asset)?;
+            let png = memory.encoded_png()?;
+            return Ok(VerifiedAsset {
+                bytes: png.bytes.clone(),
+                sha256: png.sha256.clone(),
+            });
+        }
+        let source_path = asset_path(root, asset)?;
+        let bytes = fs::read(&source_path)
+            .map_err(|e| Status::error("PROJECT_IO", format!("{}: {}", asset.id, e)))?;
         let sha256 = content_sha256(&bytes);
         let cached_dimensions = self
             .verified_pngs
@@ -295,7 +343,11 @@ impl DocumentStore {
         let mut result = Vec::new();
         for id in document.asset_order() {
             let asset = document.get_asset(id).unwrap();
-            if let Err(s) = self.read_verified_asset(root, asset) {
+            let validation = match self.memory_asset(asset) {
+                Some(memory) => memory.validate_metadata(asset),
+                None => self.read_verified_asset(root, asset).map(|_| ()),
+            };
+            if let Err(s) = validation {
                 result.push(ResourceDiagnostic {
                     asset_id: id.clone(),
                     code: s.code,
@@ -1303,12 +1355,16 @@ impl DocumentStore {
 }
 
 fn read_psd_bundle(source: &Path) -> Result<kasane_psd::ImportBundle, Status> {
+    let bytes = read_psd_bytes(source)?;
+    import_psd(&bytes).map_err(|error| Status::error(error.code, error.message))
+}
+
+fn read_psd_bytes(source: &Path) -> Result<Vec<u8>, Status> {
     let size = fs::metadata(source).map_err(io::io_error)?.len();
     if size > 512 * 1024 * 1024 {
         return Err(Status::error("PSD_LIMIT", "PSD exceeds 512 MiB"));
     }
-    let bytes = fs::read(source).map_err(io::io_error)?;
-    import_psd(&bytes).map_err(|error| Status::error(error.code, error.message))
+    fs::read(source).map_err(io::io_error)
 }
 
 pub struct DocumentSession {
@@ -1644,7 +1700,7 @@ impl DocumentSession {
         (result, report)
     }
 
-    /// Decode PSD artwork and retain its PNGs in memory until an explicit save.
+    /// Retain PSD pixels in memory; encode PNGs only when read or saved.
     /// Nothing is published, and failed imports preserve the current session.
     pub fn import_psd_in_memory_authoring(
         &mut self,
@@ -1656,21 +1712,34 @@ impl DocumentSession {
                 None,
             );
         }
-        let bundle = match read_psd_bundle(source) {
+        let bundle = match read_psd_bytes(source).and_then(|bytes| {
+            import_psd_pixels(&bytes).map_err(|error| Status::error(error.code, error.message))
+        }) {
             Ok(bundle) => bundle,
             Err(status) => return (ProjectResult::from_status(status), None),
         };
         let mut document = bundle.document;
         let mut assets = HashMap::new();
-        for png in bundle.assets {
+        for pixels in bundle.assets {
             let mut asset = document
-                .get_asset(&png.id)
+                .get_asset(&pixels.id)
                 .expect("PSD bundle asset exists")
                 .clone();
             // Keep draft sources distinct from the content-addressed paths
             // created by save, so saved files always get read from disk.
-            asset.source = format!("assets/.memory-psd/{}.png", png.id);
-            assets.insert(asset.source.clone(), Arc::<[u8]>::from(png.bytes));
+            asset.source = format!("assets/.memory-psd/{}.png", pixels.id);
+            assets.insert(
+                asset.source.clone(),
+                Arc::new(MemoryAsset {
+                    texture: TextureData {
+                        rgba: pixels.rgba.into(),
+                        width: pixels.width,
+                        height: pixels.height,
+                        cache_key: format!("psd:{}", pixels.id),
+                    },
+                    png: OnceLock::new(),
+                }),
+            );
             let edit = document.replace_asset(asset);
             if !edit.status.is_ok() {
                 return (ProjectResult::from_status(edit.status), None);
@@ -1708,6 +1777,20 @@ impl DocumentSession {
             .map(|data| data.unwrap())
     }
 
+    /// Read pixels without materializing a PNG for an in-memory PSD draft.
+    /// Disk assets are always read and validated against current file bytes.
+    pub fn read_texture(&self, asset_id: &str) -> Result<TextureData, Status> {
+        let asset = self
+            .document
+            .get_asset(asset_id)
+            .ok_or_else(|| Status::error("NOT_FOUND", asset_id))?;
+        if let Some(memory) = self.store.memory_asset(asset) {
+            memory.validate_metadata(asset)?;
+            return Ok(memory.texture.clone());
+        }
+        self.read_asset(asset_id).map(Into::into)
+    }
+
     pub fn read_asset_if_changed(
         &self,
         asset_id: &str,
@@ -1717,16 +1800,23 @@ impl DocumentSession {
             .document
             .get_asset(asset_id)
             .ok_or_else(|| Status::error("NOT_FOUND", asset_id))?;
-        if !self.store.has_memory_asset(asset) {
+        let Some(memory) = self.store.memory_asset(asset) else {
             return read_project_asset_if_changed(&self.root(), asset, validated_image);
-        }
-        let verified = self.store.read_verified_asset(&self.root(), asset)?;
+        };
+        memory.validate_metadata(asset)?;
+        let verified = memory.encoded_png()?;
         if validated_image.is_some_and(|(hash, width, height)| {
             hash == verified.sha256 && width == asset.width && height == asset.height
         }) {
             return Ok(None);
         }
-        decode_png(&verified.bytes).map(Some)
+        Ok(Some(AssetData {
+            bytes: verified.bytes.clone(),
+            rgba: memory.texture.rgba.to_vec(),
+            width: memory.texture.width,
+            height: memory.texture.height,
+            sha256: verified.sha256.clone(),
+        }))
     }
 
     pub fn relocate_asset(&mut self, id: &str, path: &Path) -> kasane_core::types::EditResult {
@@ -2080,5 +2170,68 @@ fn publication_result(publication: Publication) -> ProjectResult {
         durable: publication.durable(),
         warnings: publication.warnings,
         ..ProjectResult::ok()
+    }
+}
+
+#[cfg(test)]
+mod memory_psd_tests {
+    use super::*;
+
+    #[test]
+    fn texture_reads_share_pixels_and_defer_png_without_skipping_metadata_checks() {
+        let fixture = include_bytes!("../../kasane-psd/tests/fixtures/layered.psd");
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let source = std::env::temp_dir().join(format!(
+            "kasane-memory-psd-{}-{nonce}.psd",
+            std::process::id()
+        ));
+        fs::write(&source, fixture).unwrap();
+        let mut session = DocumentSession::new();
+        let (result, _) = session.import_psd_in_memory_authoring(&source);
+        fs::remove_file(source).unwrap();
+        assert!(result.status.is_ok(), "{:?}", result.status);
+        let id = session.document.asset_order()[0].clone();
+        let descriptor = session.document.get_asset(&id).unwrap().clone();
+        let memory = session.store.memory_asset(&descriptor).unwrap();
+        let first = session.read_texture(&id).unwrap();
+        let second = session.read_texture(&id).unwrap();
+        assert!(Arc::ptr_eq(&first.rgba, &second.rgba));
+        assert!(session.diagnose().is_empty());
+        assert!(memory.png.get().is_none());
+
+        let mut invalid = descriptor.clone();
+        invalid.width += 1;
+        assert!(session.document.replace_asset(invalid).status.is_ok());
+        assert_eq!(
+            session.read_texture(&id).unwrap_err().code,
+            "RESOURCE_DIMENSIONS"
+        );
+        assert!(memory.png.get().is_none());
+        assert!(session
+            .document
+            .replace_asset(descriptor.clone())
+            .status
+            .is_ok());
+
+        let eager = import_psd(fixture).unwrap();
+        let data = session.read_asset(&id).unwrap();
+        assert_eq!(data.bytes, eager.assets[0].bytes);
+        assert_eq!(data.sha256, eager.document.get_asset(&id).unwrap().sha256);
+        assert_eq!(data.rgba.as_slice(), first.rgba.as_ref());
+        assert!(memory.png.get().is_some());
+        assert!(session
+            .read_asset_if_changed(&id, Some((&data.sha256, data.width, data.height)),)
+            .unwrap()
+            .is_none());
+
+        let mut invalid = descriptor;
+        invalid.sha256 = "bad hash".into();
+        assert!(session.document.replace_asset(invalid).status.is_ok());
+        assert_eq!(session.read_texture(&id).unwrap_err().code, "RESOURCE_HASH");
+        assert_eq!(session.read_asset(&id).unwrap_err().code, "RESOURCE_HASH");
+        assert_eq!(session.diagnose()[0].code, "RESOURCE_HASH");
     }
 }

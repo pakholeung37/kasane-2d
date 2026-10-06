@@ -22,6 +22,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { version = "1", features = ["v4"] }
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+# Enable ARM SHA instructions on Apple Silicon; sha2-asm does not support Windows.
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 
 [target.'cfg(target_os = "macos")'.dependencies]

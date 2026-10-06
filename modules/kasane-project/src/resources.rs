@@ -1,5 +1,6 @@
 use kasane_core::types::Status;
 use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct AssetData {
@@ -8,6 +9,27 @@ pub struct AssetData {
     pub width: u32,
     pub height: u32,
     pub sha256: String,
+}
+
+/// Pixels for rendering. The opaque cache key identifies immutable image
+/// content; it need not be a PNG hash for an unsaved PSD draft.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextureData {
+    pub rgba: Arc<[u8]>,
+    pub width: u32,
+    pub height: u32,
+    pub cache_key: String,
+}
+
+impl From<AssetData> for TextureData {
+    fn from(data: AssetData) -> Self {
+        Self {
+            rgba: data.rgba.into(),
+            width: data.width,
+            height: data.height,
+            cache_key: format!("png:{}", data.sha256),
+        }
+    }
 }
 
 pub fn content_sha256(bytes: &[u8]) -> String {

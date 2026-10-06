@@ -33,7 +33,7 @@ pub use physics::{
     export_physics3, import_physics3, PhysicsDiagnostic, PhysicsImport, PhysicsProjectError,
 };
 pub use pose::{export_pose3, import_pose3, PoseDiagnostic, PoseImport, PoseProjectError};
-pub use resources::{content_sha256, decode_png, is_valid_asset_path, AssetData};
+pub use resources::{content_sha256, decode_png, is_valid_asset_path, AssetData, TextureData};
 pub use store::{
     project_manifest, read_project_asset, DocumentSession, DocumentSnapshot, DocumentStore,
     ProjectResult, ResourceDiagnostic,

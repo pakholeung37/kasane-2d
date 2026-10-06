@@ -109,6 +109,13 @@ impl AuthoringSession {
             .read_asset(asset_id)
             .map_err(|status| SdkError::from_status(status, "read_asset", vec![asset_id.into()]))
     }
+
+    /// Read shared pixels without PNG encoding for an unsaved PSD draft.
+    pub fn read_texture(&self, asset_id: &str) -> Result<kasane_project::TextureData, SdkError> {
+        self.project
+            .read_texture(asset_id)
+            .map_err(|status| SdkError::from_status(status, "read_texture", vec![asset_id.into()]))
+    }
     /// Save through the project's publication path and retain SDK undo/redo.
     /// Project paths must be absolute; unsaved relative asset sources require an
     /// explicit base and are rejected instead of being interpreted from cwd.
@@ -149,7 +156,7 @@ impl AuthoringSession {
                 if !self.project.has_memory_asset(&asset) {
                     validate_asset_root(&entry.root, &asset, "save_project")?;
                 }
-                if asset.sha256.is_empty() {
+                if asset.sha256.is_empty() && !self.project.has_memory_asset(&asset) {
                     unverified_history_ids.insert(asset.id);
                 }
             }

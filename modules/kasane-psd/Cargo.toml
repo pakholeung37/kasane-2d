@@ -13,6 +13,10 @@ kasane-core = { path = "../kasane-core" }
 png.workspace = true
 sha2.workspace = true
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+# Enable ARM SHA instructions on Apple Silicon; sha2-asm does not support Windows.
+sha2 = { workspace = true, features = ["asm"] }
+
 [dev-dependencies]
 kasane-moc3-psd = { path = "../kasane-moc3-psd" }
 

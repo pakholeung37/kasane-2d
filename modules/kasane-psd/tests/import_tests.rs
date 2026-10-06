@@ -1,7 +1,7 @@
 use ag_psd::psd::{BlendMode, ColorMode, Layer, PixelData, Psd, WriteOptions};
 use ag_psd::write_psd;
 use kasane_core::image::decode_png;
-use kasane_psd::import_psd;
+use kasane_psd::{import_psd, import_psd_pixels};
 
 fn raster(name: &str, left: f64, top: f64, color: [u8; 4]) -> Layer {
     let mut layer = Layer::default();
@@ -77,6 +77,50 @@ fn imports_cropped_layers_as_a_valid_document_and_pngs() {
         import_psd(&bytes).unwrap().assets[0].id,
         bundle.assets[0].id
     );
+}
+
+#[test]
+fn pixel_import_preserves_png_pixels_ids_and_clipping_structure() {
+    let base = raster("base", 1.0, 2.0, [255, 20, 30, 128]);
+    let mut clipped = raster("clip", 3.0, 4.0, [0, 0, 255, 64]);
+    clipped.clipping = Some(true);
+    clipped.hidden = Some(true);
+    clipped.blend_mode = Some(BlendMode::Multiply);
+    let bytes = psd(vec![base, clipped]);
+    let pngs = import_psd(&bytes).unwrap();
+    let pixels = import_psd_pixels(&bytes).unwrap();
+    assert_eq!(pixels.report, pngs.report);
+    assert!(pixels.document.validate_structure().is_empty());
+    assert_eq!(pixels.document.mesh_order(), pngs.document.mesh_order());
+    for id in pixels.document.mesh_order() {
+        assert_eq!(pixels.document.get_mesh(id), pngs.document.get_mesh(id));
+    }
+    assert_eq!(pixels.document.part_order(), pngs.document.part_order());
+    for id in pixels.document.part_order() {
+        assert_eq!(pixels.document.get_part(id), pngs.document.get_part(id));
+    }
+    assert_eq!(
+        pixels.document.offscreen_order(),
+        pngs.document.offscreen_order()
+    );
+    for id in pixels.document.offscreen_order() {
+        assert_eq!(
+            pixels.document.get_offscreen(id),
+            pngs.document.get_offscreen(id)
+        );
+    }
+    for (pixel, png) in pixels.assets.iter().zip(&pngs.assets) {
+        assert_eq!(pixel.id, png.id);
+        let decoded = decode_png(&png.bytes).unwrap();
+        assert_eq!((pixel.width, pixel.height), (decoded.width, decoded.height));
+        assert_eq!(pixel.rgba, decoded.rgba);
+        assert!(pixels
+            .document
+            .get_asset(&pixel.id)
+            .unwrap()
+            .sha256
+            .is_empty());
+    }
 }
 
 #[test]

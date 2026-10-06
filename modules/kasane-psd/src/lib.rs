@@ -1,7 +1,8 @@
-//! Convert layered PSD artwork into an in-memory Kasane document and PNG assets.
+//! Convert layered PSD artwork into a Kasane document and PNG or RGBA assets.
 //!
-//! This crate does no filesystem writes. The caller must publish every
-//! [`PngAsset::source`] with its bytes before opening or saving the document.
+//! This crate does no filesystem writes. For [`import_psd`], the caller must
+//! publish every [`PngAsset::source`] with its bytes. [`import_psd_pixels`] leaves
+//! PNG encoding and publication to the project store.
 
 use ag_psd::psd::{BlendMode as PsdBlendMode, ColorMode, Layer, ReadOptions};
 use ag_psd::{read_psd, PixelData};
@@ -63,9 +64,43 @@ pub struct ImportBundle {
     pub report: ImportReport,
 }
 
+/// Raster pixels owned by an unsaved draft. PNG encoding is left to the caller.
+pub struct PixelAsset {
+    pub id: String,
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+}
+
+pub struct PixelImportBundle {
+    pub document: Document,
+    pub assets: Vec<PixelAsset>,
+    pub report: ImportReport,
+}
+
 /// Parse an 8-bit RGB PSD. Raster layers become cropped PNGs and rectangular
 /// meshes; groups become Parts. Layers are ordered from back to front.
 pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
+    let builder = parse_psd(bytes, true)?;
+    Ok(ImportBundle {
+        document: builder.document,
+        assets: builder.assets,
+        report: builder.report,
+    })
+}
+
+/// Import directly into RGBA pixels without encoding PNGs. Asset SHA-256 fields
+/// remain empty until the project store encodes and publishes the PNG bytes.
+pub fn import_psd_pixels(bytes: &[u8]) -> Result<PixelImportBundle, ImportError> {
+    let builder = parse_psd(bytes, false)?;
+    Ok(PixelImportBundle {
+        document: builder.document,
+        assets: builder.pixels,
+        report: builder.report,
+    })
+}
+
+fn parse_psd(bytes: &[u8], encode_pngs: bool) -> Result<Builder, ImportError> {
     preflight(bytes)?;
     let options = ReadOptions {
         skip_composite_image_data: Some(true),
@@ -73,7 +108,7 @@ pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
         total_memory_limit: Some(MAX_DECODED_BYTES),
         ..ReadOptions::default()
     };
-    let psd = read_psd(bytes, &options)
+    let mut psd = read_psd(bytes, &options)
         .map_err(|error| ImportError::new("INVALID_PSD", error.to_string()))?;
     if psd.color_mode != Some(ColorMode::Rgb) || psd.bits_per_channel != Some(8.0) {
         return Err(ImportError::new(
@@ -105,6 +140,8 @@ pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
     let mut builder = Builder {
         document,
         assets: Vec::new(),
+        pixels: Vec::new(),
+        encode_pngs,
         report: ImportReport {
             width,
             height,
@@ -117,7 +154,7 @@ pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
         seen_layers: 0,
         used_mesh_runtime_ids: HashSet::new(),
     };
-    builder.visit_layers(psd.children.as_deref().unwrap_or_default(), "")?;
+    builder.visit_layers(psd.children.as_deref_mut().unwrap_or_default(), "")?;
     if builder.report.raster_layers == 0 {
         return Err(ImportError::new(
             "EMPTY_PSD",
@@ -130,11 +167,7 @@ pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
             format!("{}: {}", issue.status.code, issue.status.message),
         ));
     }
-    Ok(ImportBundle {
-        document: builder.document,
-        assets: builder.assets,
-        report: builder.report,
-    })
+    Ok(builder)
 }
 
 fn preflight(bytes: &[u8]) -> Result<(), ImportError> {
@@ -218,6 +251,8 @@ fn stable_id(fingerprint: &[u8; 32], kind: &str, ordinal: usize) -> String {
 struct Builder {
     document: Document,
     assets: Vec<PngAsset>,
+    pixels: Vec<PixelAsset>,
+    encode_pngs: bool,
     report: ImportReport,
     fingerprint: [u8; 32],
     next_id: usize,
@@ -250,20 +285,20 @@ impl Builder {
         fallback
     }
 
-    fn visit_layers(&mut self, layers: &[Layer], parent_id: &str) -> Result<(), ImportError> {
+    fn visit_layers(&mut self, layers: &mut [Layer], parent_id: &str) -> Result<(), ImportError> {
         // PSD children are ordered back to front. Isolate each raster base and
         // its consecutive clipped siblings from the surrounding artwork.
         let mut next = 0;
         while next < layers.len() {
-            let base = &layers[next];
+            let (base, following) = layers[next..].split_first_mut().unwrap();
             next += 1;
-            let end = next
-                + layers[next..]
-                    .iter()
-                    .take_while(|layer| layer.clipping == Some(true))
-                    .count();
+            let count = following
+                .iter()
+                .take_while(|layer| layer.clipping == Some(true))
+                .count();
+            let end = next + count;
             if base.clipping != Some(true) && base.children.is_none() && end > next {
-                self.visit_clipping_group(base, &layers[next..end], parent_id)?;
+                self.visit_clipping_group(base, &mut following[..count], parent_id)?;
                 next = end;
             } else {
                 self.visit(base, parent_id, None)?;
@@ -274,8 +309,8 @@ impl Builder {
 
     fn visit_clipping_group(
         &mut self,
-        base: &Layer,
-        clipped: &[Layer],
+        base: &mut Layer,
+        clipped: &mut [Layer],
         parent_id: &str,
     ) -> Result<(), ImportError> {
         let name = base.additional_info.name.as_deref().unwrap_or("Untitled");
@@ -295,6 +330,7 @@ impl Builder {
             ..Part::default()
         });
         check(result.status.code, result.status.message)?;
+        let group_name = format!("{name} (Clipping)");
         let base_id = self
             .visit(base, &part_id, None)?
             .expect("raster clipping base produces a mesh");
@@ -312,7 +348,7 @@ impl Builder {
         let result = self.document.create_offscreen(Offscreen {
             runtime_id: format!("Offscreen_{}", id.replace('-', "")),
             id,
-            name: format!("{name} (Clipping)"),
+            name: group_name,
             part_id,
             blend_mode,
             ..Offscreen::default()
@@ -322,7 +358,7 @@ impl Builder {
 
     fn visit(
         &mut self,
-        layer: &Layer,
+        layer: &mut Layer,
         parent_id: &str,
         clipping_base: Option<&str>,
     ) -> Result<Option<String>, ImportError> {
@@ -348,7 +384,7 @@ impl Builder {
                 format!("{name}: masks, adjustments, and layer effects cannot be represented"),
             ));
         }
-        if let Some(children) = &layer.children {
+        if let Some(children) = &mut layer.children {
             if layer.clipping == Some(true) {
                 return Err(ImportError::new(
                     "UNSUPPORTED_LAYER",
@@ -397,7 +433,7 @@ impl Builder {
             ));
         }
 
-        let Some(image) = layer.image_data.as_ref().or(layer.canvas.as_ref()) else {
+        let Some(image) = layer.image_data.take().or_else(|| layer.canvas.take()) else {
             return Err(ImportError::new(
                 "UNSUPPORTED_LAYER",
                 format!("{name}: layer has no raster pixels"),
@@ -460,8 +496,11 @@ impl Builder {
         }
         let asset_id = self.id("asset");
         let source = format!("assets/{asset_id}.png");
-        let png = encode_png(image)?;
-        let sha256 = format!("{:x}", Sha256::digest(&png));
+        let png = self.encode_pngs.then(|| encode_png(&image)).transpose()?;
+        let sha256 = png
+            .as_ref()
+            .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            .unwrap_or_default();
         let result = self.document.add_asset(ImageAsset {
             id: asset_id.clone(),
             name: name.into(),
@@ -471,11 +510,20 @@ impl Builder {
             sha256,
         });
         check(result.status.code, result.status.message)?;
-        self.assets.push(PngAsset {
-            id: asset_id.clone(),
-            source,
-            bytes: png,
-        });
+        if let Some(bytes) = png {
+            self.assets.push(PngAsset {
+                id: asset_id.clone(),
+                source,
+                bytes,
+            });
+        } else {
+            self.pixels.push(PixelAsset {
+                id: asset_id.clone(),
+                width: image.width,
+                height: image.height,
+                rgba: image.data,
+            });
+        }
 
         let mesh_id = self.id("mesh");
         let runtime_id = self.mesh_runtime_id(name, &mesh_id);

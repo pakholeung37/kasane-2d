@@ -18,6 +18,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 
+[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
+# Enable ARM SHA instructions on Apple Silicon; sha2-asm does not support Windows.
+sha2 = { workspace = true, features = ["asm"] }
+
 [build-dependencies]
 cc = "1.0"
 

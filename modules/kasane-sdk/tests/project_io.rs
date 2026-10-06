@@ -76,12 +76,25 @@ fn psd_draft_keeps_assets_in_memory_until_save_and_relocates_history() {
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
     let asset_id = sdk.asset_ids()[0].clone();
     let mesh_id = sdk.mesh_ids()[0].clone();
+    let texture = sdk.read_texture(&asset_id).unwrap();
+    let texture_again = sdk.read_texture(&asset_id).unwrap();
+    assert!(Arc::ptr_eq(&texture.rgba, &texture_again.rgba));
+    assert!(!texture.cache_key.is_empty());
+    assert!(sdk.asset(&asset_id).unwrap().sha256.is_empty());
     let original = sdk.read_asset(&asset_id).unwrap();
+    assert_eq!(&*texture.rgba, original.rgba.as_slice());
     fs::remove_file(&source).unwrap();
     assert!(sdk.diagnose_resources().is_empty());
     sdk.edit("rename", None, |edit| edit.rename_mesh(&mesh_id, "Edited"))
         .unwrap();
     let saved = sdk.save_project(&temp.path("project"), None).unwrap();
+    assert!(saved.warnings.is_empty(), "{:?}", saved.warnings);
+    assert!(
+        saved.history_warnings.is_empty(),
+        "{:?}",
+        saved.history_warnings
+    );
+    assert_eq!(sdk.asset(&asset_id).unwrap().sha256, original.sha256);
     assert!(!sdk.modified());
     assert_eq!(sdk.history_lengths(), (1, 0));
     assert_eq!(sdk.read_asset(&asset_id).unwrap().rgba, original.rgba);
@@ -102,6 +115,7 @@ fn psd_draft_keeps_assets_in_memory_until_save_and_relocates_history() {
     )
     .unwrap();
     assert!(sdk.read_asset(&asset_id).is_err()); // Saved files cannot be hidden by the memory cache.
+    assert!(sdk.read_texture(&asset_id).is_err());
 }
 
 #[test]
