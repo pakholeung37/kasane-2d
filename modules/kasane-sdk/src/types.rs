@@ -96,6 +96,7 @@ pub struct PsdImportReceipt {
     pub after: Version,
     pub project: ProjectResult,
     pub report: PsdImportReport,
+    /// Published manifest, or an empty path for an in-memory import.
     pub manifest: PathBuf,
 }
 

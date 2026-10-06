@@ -122,6 +122,119 @@ fn imports_groups_and_hidden_layers() {
 }
 
 #[test]
+fn nested_groups_keep_psd_stacking_between_raster_siblings() {
+    let mut detail = Layer::default();
+    detail.additional_info.name = Some("eyes".into());
+    detail.children = Some(vec![raster("iris", 0.0, 0.0, [255; 4])]);
+    let mut group = Layer::default();
+    group.additional_info.name = Some("face".into());
+    group.children = Some(vec![
+        raster("skin", 0.0, 0.0, [255; 4]),
+        detail,
+        raster("hair", 0.0, 0.0, [255; 4]),
+    ]);
+    let bundle = import_psd(&psd(vec![
+        raster("back", 0.0, 0.0, [255; 4]),
+        group,
+        raster("front", 0.0, 0.0, [255; 4]),
+    ]))
+    .unwrap();
+    let mut frame = kasane_core::DrawableFrame::default();
+    assert!(kasane_core::evaluate_frame(&bundle.document, &Default::default(), &mut frame).is_ok());
+    frame
+        .drawables
+        .sort_by_key(|drawable| drawable.render_order);
+    let rendered: Vec<_> = frame.drawables.iter().map(|d| d.id.clone()).collect();
+    assert_eq!(rendered, bundle.document.mesh_order());
+}
+
+#[test]
+fn clipping_layers_share_an_isolated_group_with_the_nearest_raster_base() {
+    let base = raster("眼球底色", 0.0, 0.0, [255, 255, 255, 128]);
+    let mut shadow = raster("眼球阴影", 1.0, 0.0, [0, 0, 0, 255]);
+    shadow.clipping = Some(true);
+    shadow.blend_mode = Some(BlendMode::Multiply);
+    let mut highlight = raster("眼球高光", 0.0, 1.0, [255, 255, 255, 255]);
+    highlight.clipping = Some(true);
+    let outline = raster("眼球线", 0.0, 0.0, [0, 0, 0, 255]);
+    let bundle = import_psd(&psd(vec![base, shadow, highlight, outline])).unwrap();
+    let ids = bundle.document.mesh_order();
+    assert!(bundle.document.get_mesh(&ids[0]).unwrap().masks.is_empty());
+    let base = bundle.document.get_mesh(&ids[0]).unwrap();
+    let offscreen = bundle.document.offscreen_for_part(&base.part_id).unwrap();
+    assert_eq!(offscreen.blend_mode, 0);
+    for (id, mode) in ids[1..3].iter().zip([262, 256]) {
+        let clipped = bundle.document.get_mesh(id).unwrap();
+        assert_eq!(clipped.part_id, base.part_id);
+        assert_eq!(clipped.raw_blend_mode, Some(mode));
+        assert!(clipped.masks.is_empty());
+    }
+    assert_ne!(
+        bundle.document.get_mesh(&ids[3]).unwrap().part_id,
+        base.part_id
+    );
+    assert!(bundle.document.get_mesh(&ids[3]).unwrap().masks.is_empty());
+    assert!(bundle.document.validate_structure().is_empty());
+    assert_eq!(decode_png(&bundle.assets[0].bytes).unwrap().rgba[3], 128);
+}
+
+#[test]
+fn clipping_groups_preserve_raster_order_inside_nested_psd_groups() {
+    let mut shadow = raster("shadow", 0.0, 0.0, [255; 4]);
+    shadow.clipping = Some(true);
+    let mut group = Layer::default();
+    group.children = Some(vec![
+        raster("base", 0.0, 0.0, [255; 4]),
+        shadow.clone(),
+        raster("next base", 0.0, 0.0, [255; 4]),
+        shadow,
+    ]);
+    let bundle = import_psd(&psd(vec![
+        raster("back", 0.0, 0.0, [255; 4]),
+        group,
+        raster("front", 0.0, 0.0, [255; 4]),
+    ]))
+    .unwrap();
+    assert_eq!(bundle.report.groups, 1); // Synthetic clipping Parts aren't PSD groups.
+    assert_eq!(bundle.document.offscreen_count(), 2);
+    let mut frame = kasane_core::DrawableFrame::default();
+    assert!(kasane_core::evaluate_frame(&bundle.document, &Default::default(), &mut frame).is_ok());
+    let drawn: Vec<_> = frame
+        .render_plan
+        .iter()
+        .filter_map(|command| match command {
+            kasane_core::evaluation::RenderCommand::DrawMesh { mesh_id } => Some(mesh_id.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(drawn, bundle.document.mesh_order());
+}
+
+#[test]
+fn rejects_clipping_blends_that_are_not_grouped() {
+    let mut base = raster("base", 0.0, 0.0, [255; 4]);
+    base.additional_info.blend_clippend_elements = Some(false);
+    let mut clipped = raster("clipped", 0.0, 0.0, [255; 4]);
+    clipped.clipping = Some(true);
+    let error = import_psd(&psd(vec![base, clipped])).err().unwrap();
+    assert_eq!(error.code, "UNSUPPORTED_LAYER");
+    assert!(error.message.contains("Blend Clipped Layers As Group"));
+}
+
+#[test]
+fn clipping_bases_do_not_leak_across_groups() {
+    let mut clipped = raster("orphan", 0.0, 0.0, [0, 0, 0, 255]);
+    clipped.clipping = Some(true);
+    let mut group = Layer::default();
+    group.children = Some(vec![clipped]);
+    let error = import_psd(&psd(vec![raster("outside", 0.0, 0.0, [255; 4]), group]))
+        .err()
+        .unwrap();
+    assert_eq!(error.code, "UNSUPPORTED_LAYER");
+    assert!(error.message.contains("same group"));
+}
+
+#[test]
 fn rejects_unsupported_layer_effect_without_partial_output() {
     let mut layer = raster("光效", 0.0, 0.0, [255, 255, 255, 255]);
     layer.blend_mode = Some(BlendMode::Overlay);

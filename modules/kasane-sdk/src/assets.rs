@@ -46,6 +46,7 @@ pub(crate) fn relocate_history_assets(
     old_assets: &HashMap<String, ImageAsset>,
     new_root: &Path,
     new_assets: &HashMap<String, ImageAsset>,
+    is_memory_asset: impl Fn(&ImageAsset) -> bool,
 ) {
     for asset in entry.checkpoint.assets() {
         if let (Some(old), Some(new)) = (old_assets.get(&asset.id), new_assets.get(&asset.id)) {
@@ -64,7 +65,7 @@ pub(crate) fn relocate_history_assets(
                 continue;
             }
         }
-        if !Path::new(&asset.source).is_absolute() {
+        if !Path::new(&asset.source).is_absolute() && !is_memory_asset(&asset) {
             let absolute = entry.root.join(&asset.source);
             let absolute = absolute.to_str().expect("preflight checked path");
             let relocated = entry.checkpoint.relocate_asset_storage(

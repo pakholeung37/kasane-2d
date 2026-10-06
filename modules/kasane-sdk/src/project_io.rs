@@ -102,6 +102,13 @@ impl AuthoringSession {
     pub fn diagnose_resources(&self) -> Vec<ResourceDiagnostic> {
         self.project.diagnose()
     }
+
+    /// Read a texture from the draft's memory or its project files.
+    pub fn read_asset(&self, asset_id: &str) -> Result<kasane_project::AssetData, SdkError> {
+        self.project
+            .read_asset(asset_id)
+            .map_err(|status| SdkError::from_status(status, "read_asset", vec![asset_id.into()]))
+    }
     /// Save through the project's publication path and retain SDK undo/redo.
     /// Project paths must be absolute; unsaved relative asset sources require an
     /// explicit base and are rejected instead of being interpreted from cwd.
@@ -132,12 +139,16 @@ impl AuthoringSession {
             .filter_map(|id| self.asset(id).map(|asset| (id.clone(), asset)))
             .collect();
         for asset in old_assets.values() {
-            validate_asset_root(&old_root, asset, "save_project")?;
+            if !self.project.has_memory_asset(asset) {
+                validate_asset_root(&old_root, asset, "save_project")?;
+            }
         }
         let mut unverified_history_ids = HashSet::new();
         for entry in self.done.iter().chain(&self.redo) {
             for asset in entry.checkpoint.assets() {
-                validate_asset_root(&entry.root, &asset, "save_project")?;
+                if !self.project.has_memory_asset(&asset) {
+                    validate_asset_root(&entry.root, &asset, "save_project")?;
+                }
                 if asset.sha256.is_empty() {
                     unverified_history_ids.insert(asset.id);
                 }
@@ -158,7 +169,14 @@ impl AuthoringSession {
             .filter_map(|id| self.asset(id).map(|asset| (id.clone(), asset)))
             .collect();
         for entry in self.done.iter_mut().chain(&mut self.redo) {
-            relocate_history_assets(entry, &old_root, &old_assets, &new_root, &new_assets);
+            relocate_history_assets(
+                entry,
+                &old_root,
+                &old_assets,
+                &new_root,
+                &new_assets,
+                |asset| self.project.has_memory_asset(asset),
+            );
         }
         let mut history_warnings: Vec<_> = unverified_history_ids
             .into_iter()
@@ -267,6 +285,56 @@ impl AuthoringSession {
             after: self.version(),
             project,
             report: report.expect("successful import has a report"),
+        })
+    }
+
+    /// Import layered PSD artwork as an unsaved document with PNGs in memory.
+    /// A failed import leaves document content, history and handles intact.
+    pub fn import_psd_in_memory(
+        &mut self,
+        source: &Path,
+        expected: Option<Version>,
+    ) -> Result<PsdImportReceipt, SdkError> {
+        if !source.is_absolute() {
+            return Err(SdkError::new(
+                "INVALID_PATH",
+                "PSD path must be absolute",
+                "import_psd_in_memory",
+            ));
+        }
+        let before = self.version();
+        if let Some(value) = expected.filter(|value| *value != before) {
+            let mut error = SdkError::new(
+                "STALE_VERSION",
+                "Document version changed",
+                "import_psd_in_memory",
+            );
+            error.expected_version = Some(Box::new(value));
+            error.actual_version = Some(Box::new(before));
+            return Err(error);
+        }
+        let generation = self.generation.checked_add(1).ok_or_else(|| {
+            SdkError::new(
+                "GENERATION_EXHAUSTED",
+                "Document generation exhausted",
+                "import_psd_in_memory",
+            )
+        })?;
+        let (project, report) = self.project.import_psd_in_memory_authoring(source);
+        if !project.status.is_ok() {
+            return Err(SdkError::from_status(
+                project.status,
+                "import_psd_in_memory",
+                vec![source.display().to_string()],
+            ));
+        }
+        self.reset_after_open(generation);
+        Ok(PsdImportReceipt {
+            before,
+            after: self.version(),
+            project,
+            report: report.expect("successful PSD import has a report"),
+            manifest: PathBuf::new(),
         })
     }
 

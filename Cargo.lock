@@ -678,6 +678,8 @@ dependencies = [
  "ag-psd",
  "kasane-core",
  "kasane-moc3-psd",
+ "kasane-render",
+ "kasane-render-metal",
  "png",
  "sha2",
 ]

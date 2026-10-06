@@ -62,6 +62,117 @@ impl Drop for TempDir {
 }
 
 #[test]
+fn psd_draft_keeps_assets_in_memory_until_save_and_relocates_history() {
+    let temp = TempDir::new();
+    let source = temp.path("art.psd");
+    fs::write(&source, LAYERED_PSD).unwrap();
+    let mut sdk =
+        AuthoringSession::new(DOCUMENT, Canvas::new(8.0, 8.0, Vec2::default(), 1.0)).unwrap();
+    let receipt = sdk.import_psd_in_memory(&source, None).unwrap();
+    assert!(!receipt.project.published);
+    assert!(receipt.manifest.as_os_str().is_empty());
+    assert!(sdk.project_path().is_none());
+    assert!(sdk.modified());
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 1);
+    let asset_id = sdk.asset_ids()[0].clone();
+    let mesh_id = sdk.mesh_ids()[0].clone();
+    let original = sdk.read_asset(&asset_id).unwrap();
+    fs::remove_file(&source).unwrap();
+    assert!(sdk.diagnose_resources().is_empty());
+    sdk.edit("rename", None, |edit| edit.rename_mesh(&mesh_id, "Edited"))
+        .unwrap();
+    let saved = sdk.save_project(&temp.path("project"), None).unwrap();
+    assert!(!sdk.modified());
+    assert_eq!(sdk.history_lengths(), (1, 0));
+    assert_eq!(sdk.read_asset(&asset_id).unwrap().rgba, original.rgba);
+    sdk.undo().unwrap();
+    assert_eq!(sdk.mesh(&mesh_id).unwrap().name, "face");
+    assert!(sdk.modified());
+    assert!(sdk.diagnose_resources().is_empty());
+    sdk.redo().unwrap();
+    assert!(!sdk.modified());
+    let mut reopened =
+        AuthoringSession::new(DOCUMENT, Canvas::new(8.0, 8.0, Vec2::default(), 1.0)).unwrap();
+    reopened.open_project(&saved.manifest, None).unwrap();
+    assert_eq!(reopened.read_asset(&asset_id).unwrap().rgba, original.rgba);
+    let asset = sdk.asset(&asset_id).unwrap();
+    fs::write(
+        saved.manifest.parent().unwrap().join(asset.source),
+        b"changed",
+    )
+    .unwrap();
+    assert!(sdk.read_asset(&asset_id).is_err()); // Saved files cannot be hidden by the memory cache.
+}
+
+#[test]
+fn failed_psd_draft_import_and_save_preserve_memory_assets_and_history() {
+    let temp = TempDir::new();
+    let source = temp.path("art.psd");
+    fs::write(&source, LAYERED_PSD).unwrap();
+    let mut sdk =
+        AuthoringSession::new(DOCUMENT, Canvas::new(8.0, 8.0, Vec2::default(), 1.0)).unwrap();
+    sdk.import_psd_in_memory(&source, None).unwrap();
+    let mesh_id = sdk.mesh_ids()[0].clone();
+    let asset_id = sdk.asset_ids()[0].clone();
+    sdk.edit("rename", None, |edit| edit.rename_mesh(&mesh_id, "Keep me"))
+        .unwrap();
+    let version = sdk.version();
+    let handle = sdk.handle(ObjectKind::Mesh, &mesh_id).unwrap();
+    let stale = kasane_sdk::Version {
+        revision: version.revision + 1,
+        ..version
+    };
+    assert_eq!(
+        sdk.import_psd_in_memory(&source, Some(stale))
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "STALE_VERSION"
+    );
+    fs::write(&source, b"bad").unwrap();
+    assert_eq!(
+        sdk.import_psd_in_memory(&source, None)
+            .unwrap_err()
+            .code
+            .as_ref(),
+        "INVALID_PSD"
+    );
+    assert_eq!(sdk.version(), version);
+    sdk.resolve_handle(&handle).unwrap();
+    let blocked = temp.path("blocked");
+    fs::write(&blocked, b"file").unwrap();
+    assert!(sdk.save_project(&blocked.join("project"), None).is_err());
+    assert!(sdk.project_path().is_none());
+    assert_eq!(sdk.history_lengths(), (1, 0));
+    assert_eq!(sdk.mesh(&mesh_id).unwrap().name, "Keep me");
+    assert!(sdk.read_asset(&asset_id).is_ok());
+    sdk.save_project(&temp.path("retry"), None).unwrap();
+}
+
+#[test]
+fn psd_draft_retains_replaced_texture_for_undo_after_first_save() {
+    let temp = TempDir::new();
+    let source = temp.path("art.psd");
+    fs::write(&source, LAYERED_PSD).unwrap();
+    let mut sdk =
+        AuthoringSession::new(DOCUMENT, Canvas::new(8.0, 8.0, Vec2::default(), 1.0)).unwrap();
+    sdk.import_psd_in_memory(&source, None).unwrap();
+    let id = sdk.asset_ids()[0].clone();
+    let original = sdk.read_asset(&id).unwrap();
+    let replacement =
+        prepare_png_asset(&id, "replacement", &temp.png("replacement.png", 200)).unwrap();
+    sdk.edit("replace", None, |edit| edit.replace_asset(replacement))
+        .unwrap();
+    sdk.save_project(&temp.path("project"), None).unwrap();
+    sdk.undo().unwrap();
+    assert_eq!(sdk.read_asset(&id).unwrap().rgba, original.rgba);
+    assert!(sdk.diagnose_resources().is_empty());
+    sdk.save_project(&temp.path("restored"), None).unwrap();
+    sdk.redo().unwrap();
+    assert_ne!(sdk.read_asset(&id).unwrap().rgba, original.rgba);
+}
+
+#[test]
 fn psd_import_publishes_assets_and_replaces_session_only_on_success() {
     let temp = TempDir::new();
     let mut sdk = session(&temp.png("old.png", 10), true);

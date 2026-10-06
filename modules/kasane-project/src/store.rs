@@ -178,6 +178,7 @@ pub fn read_project_asset_if_changed(
 pub struct DocumentStore {
     filesystem: Arc<dyn FileSystem>,
     verified_pngs: Mutex<HashMap<String, (u32, u32)>>,
+    memory_assets: Mutex<HashMap<String, Arc<[u8]>>>,
 }
 
 struct VerifiedAsset {
@@ -200,7 +201,22 @@ impl DocumentStore {
         Self {
             filesystem,
             verified_pngs: Mutex::new(HashMap::new()),
+            memory_assets: Mutex::new(HashMap::new()),
         }
+    }
+
+    fn clear_memory_assets(&self) {
+        self.memory_assets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+    }
+
+    fn has_memory_asset(&self, asset: &ImageAsset) -> bool {
+        self.memory_assets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .contains_key(&asset.source)
     }
 
     /// A cached entry proves that these exact PNG bytes decoded successfully.
@@ -210,9 +226,20 @@ impl DocumentStore {
         root: &Path,
         asset: &ImageAsset,
     ) -> Result<VerifiedAsset, Status> {
-        let source_path = asset_path(root, asset)?;
-        let bytes = fs::read(&source_path)
-            .map_err(|e| Status::error("PROJECT_IO", format!("{}: {}", asset.id, e)))?;
+        let memory = self
+            .memory_assets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .get(&asset.source)
+            .cloned();
+        let bytes = match memory {
+            Some(bytes) => bytes.to_vec(),
+            None => {
+                let source_path = asset_path(root, asset)?;
+                fs::read(&source_path)
+                    .map_err(|e| Status::error("PROJECT_IO", format!("{}: {}", asset.id, e)))?
+            }
+        };
         let sha256 = content_sha256(&bytes);
         let cached_dimensions = self
             .verified_pngs
@@ -1209,13 +1236,7 @@ impl DocumentStore {
         source: &Path,
         destination: &Path,
     ) -> Result<(ProjectResult, DocumentSnapshot, PsdImportReport), Status> {
-        let size = fs::metadata(source).map_err(io::io_error)?.len();
-        if size > 512 * 1024 * 1024 {
-            return Err(Status::error("PSD_LIMIT", "PSD exceeds 512 MiB"));
-        }
-        let bytes = fs::read(source).map_err(io::io_error)?;
-        let bundle =
-            import_psd(&bytes).map_err(|error| Status::error(error.code, error.message))?;
+        let bundle = read_psd_bundle(source)?;
         if let Some(issue) = bundle.document.validate_structure().into_iter().next() {
             return Err(issue.status);
         }
@@ -1281,6 +1302,15 @@ impl DocumentStore {
     }
 }
 
+fn read_psd_bundle(source: &Path) -> Result<kasane_psd::ImportBundle, Status> {
+    let size = fs::metadata(source).map_err(io::io_error)?.len();
+    if size > 512 * 1024 * 1024 {
+        return Err(Status::error("PSD_LIMIT", "PSD exceeds 512 MiB"));
+    }
+    let bytes = fs::read(source).map_err(io::io_error)?;
+    import_psd(&bytes).map_err(|error| Status::error(error.code, error.message))
+}
+
 pub struct DocumentSession {
     history: kasane_core::history::History,
     store: DocumentStore,
@@ -1313,6 +1343,7 @@ impl DocumentSession {
 
     /// Replace an SDK document while retaining the configured publication backend.
     pub fn reset_authoring_document(&mut self, document: Document) {
+        self.store.clear_memory_assets();
         self.history.clear(document.revision(), None);
         self.document = document;
         self.manifest = PathBuf::new();
@@ -1423,6 +1454,7 @@ impl DocumentSession {
         let (result, snapshot) = self.store.open(path);
         if result.status.is_ok() {
             let s = snapshot.unwrap();
+            self.store.clear_memory_assets();
             self.document = s.document;
             self.history.clear(self.document.revision(), None);
             self.manifest = s.manifest;
@@ -1445,6 +1477,7 @@ impl DocumentSession {
         if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
             return ProjectResult::from_status(issue.status);
         }
+        self.store.clear_memory_assets();
         self.document = snapshot.document;
         self.history.clear(self.document.revision(), None);
         self.manifest = snapshot.manifest;
@@ -1497,6 +1530,7 @@ impl DocumentSession {
         let (result, snapshot, report) = self.store.import_model3(path);
         if result.status.is_ok() {
             let s = snapshot.unwrap();
+            self.store.clear_memory_assets();
             self.document = s.document;
             self.history.clear(self.document.revision(), None);
             self.manifest = s.manifest;
@@ -1525,6 +1559,7 @@ impl DocumentSession {
         if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
             return (ProjectResult::from_status(issue.status), None);
         }
+        self.store.clear_memory_assets();
         self.document = snapshot.document;
         self.history.clear(self.document.revision(), None);
         self.manifest = snapshot.manifest;
@@ -1546,6 +1581,7 @@ impl DocumentSession {
         let (result, snapshot, report) = self.store.import_bare_moc3(moc3_path, texture_map);
         if result.status.is_ok() {
             let s = snapshot.unwrap();
+            self.store.clear_memory_assets();
             self.document = s.document;
             self.history.clear(self.document.revision(), None);
             self.manifest = s.manifest;
@@ -1574,6 +1610,7 @@ impl DocumentSession {
         if let Some(issue) = snapshot.document.validate_structure().into_iter().next() {
             return (ProjectResult::from_status(issue.status), None);
         }
+        self.store.clear_memory_assets();
         self.document = snapshot.document;
         self.history.clear(self.document.revision(), None);
         self.manifest = snapshot.manifest;
@@ -1599,6 +1636,7 @@ impl DocumentSession {
             return (result, None);
         }
         let snapshot = snapshot.expect("successful PSD import has a snapshot");
+        self.store.clear_memory_assets();
         self.document = snapshot.document;
         self.history.clear(self.document.revision(), None);
         self.manifest = snapshot.manifest;
@@ -1606,16 +1644,68 @@ impl DocumentSession {
         (result, report)
     }
 
+    /// Decode PSD artwork and retain its PNGs in memory until an explicit save.
+    /// Nothing is published, and failed imports preserve the current session.
+    pub fn import_psd_in_memory_authoring(
+        &mut self,
+        source: &Path,
+    ) -> (ProjectResult, Option<PsdImportReport>) {
+        if self.history.active() || self.document.transaction_active() {
+            return (
+                ProjectResult::failed("EDIT_ACTIVE", "Finish the active edit first"),
+                None,
+            );
+        }
+        let bundle = match read_psd_bundle(source) {
+            Ok(bundle) => bundle,
+            Err(status) => return (ProjectResult::from_status(status), None),
+        };
+        let mut document = bundle.document;
+        let mut assets = HashMap::new();
+        for png in bundle.assets {
+            let mut asset = document
+                .get_asset(&png.id)
+                .expect("PSD bundle asset exists")
+                .clone();
+            // Keep draft sources distinct from the content-addressed paths
+            // created by save, so saved files always get read from disk.
+            asset.source = format!("assets/.memory-psd/{}.png", png.id);
+            assets.insert(asset.source.clone(), Arc::<[u8]>::from(png.bytes));
+            let edit = document.replace_asset(asset);
+            if !edit.status.is_ok() {
+                return (ProjectResult::from_status(edit.status), None);
+            }
+        }
+        self.store.remember_imported_assets(&document);
+        *self
+            .store
+            .memory_assets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = assets;
+        self.document = document;
+        self.history.clear(self.document.revision(), None);
+        self.manifest = PathBuf::new();
+        self.manifest_sha256.clear();
+        let result = ProjectResult {
+            status: Status::ok(),
+            warnings: bundle.report.warnings.clone(),
+            ..Default::default()
+        };
+        (result, Some(bundle.report))
+    }
+
+    /// Whether this source is owned by the current draft rather than a file.
+    pub fn has_memory_asset(&self, asset: &ImageAsset) -> bool {
+        self.store.has_memory_asset(asset)
+    }
+
     pub fn diagnose(&self) -> Vec<ResourceDiagnostic> {
         self.store.diagnose(&self.document, &self.root())
     }
 
     pub fn read_asset(&self, asset_id: &str) -> Result<AssetData, Status> {
-        let asset = self
-            .document
-            .get_asset(asset_id)
-            .ok_or_else(|| Status::error("NOT_FOUND", asset_id))?;
-        read_project_asset(&self.root(), asset)
+        self.read_asset_if_changed(asset_id, None)
+            .map(|data| data.unwrap())
     }
 
     pub fn read_asset_if_changed(
@@ -1627,7 +1717,16 @@ impl DocumentSession {
             .document
             .get_asset(asset_id)
             .ok_or_else(|| Status::error("NOT_FOUND", asset_id))?;
-        read_project_asset_if_changed(&self.root(), asset, validated_image)
+        if !self.store.has_memory_asset(asset) {
+            return read_project_asset_if_changed(&self.root(), asset, validated_image);
+        }
+        let verified = self.store.read_verified_asset(&self.root(), asset)?;
+        if validated_image.is_some_and(|(hash, width, height)| {
+            hash == verified.sha256 && width == asset.width && height == asset.height
+        }) {
+            return Ok(None);
+        }
+        decode_png(&verified.bytes).map(Some)
     }
 
     pub fn relocate_asset(&mut self, id: &str, path: &Path) -> kasane_core::types::EditResult {
