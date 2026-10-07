@@ -190,7 +190,7 @@ fn nonempty_cdi_survives_store_save_and_session_open() {
     assert!(result.status.is_ok(), "{result:?}");
     let manifest = snapshot.unwrap().manifest;
     let saved: Value = serde_json::from_slice(&std::fs::read(&manifest).unwrap()).unwrap();
-    assert_eq!(saved["format_version"], 6);
+    assert_eq!(saved["format_version"], 7);
     assert!(saved["document"]["display_info"]["extensions"]["Future"].is_object());
     let mut session = DocumentSession::new();
     let opened = session.open(&manifest);
@@ -382,10 +382,10 @@ fn invalid_or_unpersistable_cdi_fails_without_changing_source() {
 }
 
 #[test]
-fn v6_is_strict_and_legacy_versions_cannot_smuggle_display_info() {
+fn v7_is_strict_and_legacy_versions_cannot_smuggle_display_info() {
     let source = document();
     let mut wire: Value = serde_json::from_str(&encode_project(&source).unwrap()).unwrap();
-    assert_eq!(wire["format_version"], 6);
+    assert_eq!(wire["format_version"], 7);
     assert!(wire["document"]["display_info"].is_object());
     for (value, expected_code) in [
         (Value::Null, "UNSUPPORTED_VERSION"),
@@ -429,7 +429,7 @@ fn v6_is_strict_and_legacy_versions_cannot_smuggle_display_info() {
     assert_eq!(legacy.display_info(), &DisplayInfo::default());
     assert_eq!(
         serde_json::from_str::<Value>(&encode_project(&legacy).unwrap()).unwrap()["format_version"],
-        6
+        7
     );
     old["document"]["legacy_extra"] = json!({"still_accepted":true});
     assert!(decode_project(&old.to_string()).is_ok());

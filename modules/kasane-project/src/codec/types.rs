@@ -411,6 +411,8 @@ pub(super) struct DocumentWire {
     )]
     pub(super) hierarchy_order: kasane_core::document::HierarchyOrder,
     #[serde(default, skip_serializing_if = "Present::is_absent")]
+    pub(super) object_locks: Present<kasane_core::document::ObjectLocks>,
+    #[serde(default, skip_serializing_if = "Present::is_absent")]
     pub(super) animation_assets: Present<Option<AnimationAssetsWire>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) deformers: Option<serde_json::Value>,

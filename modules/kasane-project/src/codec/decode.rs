@@ -141,7 +141,7 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if !(1..=6).contains(&root.format_version) {
+    if !(1..=7).contains(&root.format_version) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -151,6 +151,12 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         ));
     }
 
+    if root.format_version < 7 && !root.document.object_locks.is_absent() {
+        return Err(Status::error(
+            "UNSUPPORTED_VERSION",
+            "Object locks require project version 7",
+        ));
+    }
     if root.format_version < 6 && !root.document.hierarchy_order.is_empty() {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
@@ -565,6 +571,12 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         }
     }
 
+    if let Present::Present(locks) = &doc.object_locks {
+        let result = candidate.replace_object_locks(locks.clone());
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
     let result = candidate.replace_hierarchy_order(doc.hierarchy_order.clone());
     if !result.status.is_ok() {
         return Err(result.status);

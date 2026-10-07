@@ -248,6 +248,7 @@ impl Document {
         swap_field!(offscreen_order);
         swap_field!(display_info);
         swap_field!(hierarchy_order);
+        swap_field!(object_locks);
         swap_field!(expressions);
         swap_field!(expression_order);
         swap_field!(motions);

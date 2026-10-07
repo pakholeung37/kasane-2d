@@ -296,7 +296,7 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
 
     let project = ProjectWire {
         format: "kasane-directory-project".to_string(),
-        format_version: 6,
+        format_version: 7,
         document: DocumentWire {
             id: document.id().to_string(),
             canvas: [c.width, c.height],
@@ -318,6 +318,11 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
             offscreens: offscreens_wire,
             display_info: Present::Present(Some(document.display_info().clone())),
             hierarchy_order: document.hierarchy_order().clone(),
+            object_locks: if document.object_locks().is_empty() {
+                Present::Absent
+            } else {
+                Present::Present(document.object_locks().clone())
+            },
             animation_assets: Present::Present(Some(AnimationAssetsWire {
                 expressions: document
                     .expression_order()

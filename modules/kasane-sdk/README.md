@@ -21,3 +21,10 @@ Parameter and parameter group display order use the ordered CDI collections in
 order and uses the normal validated metadata transaction.
 The editor materializes missing resolved CDI entries when sorting its complete
 visible parameter list, while retaining unresolved entries and extensions.
+
+Editor protection metadata uses `ObjectLocks` and `EditSession::replace_object_locks`.
+Only explicit Mesh, Transform, Part and Offscreen IDs are stored; the editor derives
+inheritance independently along organization and deformation chains. SDK model
+writes intentionally ignore editor locks. Lock changes participate in modified
+state, history budgets, deletion cleanup and undo/redo without invalidating visual
+previews. Current writers save project v7; v1–v6 projects load without locks.

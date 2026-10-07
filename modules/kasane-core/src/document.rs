@@ -11,6 +11,7 @@ mod hierarchy_order;
 mod meshes;
 mod model3;
 mod motions;
+mod object_locks;
 mod offscreen;
 mod parameters;
 mod parts;
@@ -36,6 +37,7 @@ pub use motions::{
     MotionClip, MotionEvent, MotionGroup, MotionPoint, MotionRegistration, MotionSegment,
     MotionTrack, MotionTrackTarget,
 };
+pub use object_locks::ObjectLocks;
 pub use physics::PhysicsAsset;
 pub use pose::{PoseAsset, PoseEntry, PosePartRef};
 pub use structure::StructureIssue;
@@ -111,6 +113,7 @@ pub struct Document {
     offscreen_order: Vec<String>,
     display_info: DisplayInfo,
     hierarchy_order: HierarchyOrder,
+    object_locks: ObjectLocks,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -168,6 +171,7 @@ struct DocumentContent {
     offscreen_order: Vec<String>,
     display_info: DisplayInfo,
     hierarchy_order: HierarchyOrder,
+    object_locks: ObjectLocks,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -211,6 +215,7 @@ struct ContentRef<'a> {
     offscreen_order: &'a Vec<String>,
     display_info: &'a DisplayInfo,
     hierarchy_order: &'a HierarchyOrder,
+    object_locks: &'a ObjectLocks,
     expressions: &'a HashMap<String, ExpressionAsset>,
     expression_order: &'a Vec<String>,
     motions: &'a HashMap<String, std::sync::Arc<MotionClip>>,
@@ -255,6 +260,7 @@ impl DocumentContent {
             offscreen_order: &self.offscreen_order,
             display_info: &self.display_info,
             hierarchy_order: &self.hierarchy_order,
+            object_locks: &self.object_locks,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -387,6 +393,7 @@ impl Document {
             offscreen_order: &self.offscreen_order,
             display_info: &self.display_info,
             hierarchy_order: &self.hierarchy_order,
+            object_locks: &self.object_locks,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -431,6 +438,7 @@ impl Document {
             offscreen_order: self.offscreen_order.clone(),
             display_info: self.display_info.clone(),
             hierarchy_order: self.hierarchy_order.clone(),
+            object_locks: self.object_locks.clone(),
             expressions: self.expressions.clone(),
             expression_order: self.expression_order.clone(),
             motions: self.motions.clone(),

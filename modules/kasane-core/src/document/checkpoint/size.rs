@@ -555,6 +555,7 @@ pub(super) fn estimated_content_bytes(content: ContentRef<'_>) -> usize {
         + content.offscreens.extra_bytes()
         + content.offscreen_order.extra_bytes()
         + content.display_info.extra_bytes()
+        + content.object_locks.objects.extra_bytes()
         + content.hierarchy_order.organization.extra_bytes()
         + content.hierarchy_order.deformation.extra_bytes()
         + content.expressions.extra_bytes()

@@ -84,6 +84,16 @@ impl EditSession<'_> {
         let result = self.document().replace_canvas(canvas);
         self.record(result, "replace_canvas", &id)
     }
+    /// Store editor protection metadata; low-level authoring operations remain unrestricted.
+    pub fn replace_object_locks(
+        &mut self,
+        locks: kasane_core::document::ObjectLocks,
+    ) -> Result<(), SdkError> {
+        self.ensure_active("replace_object_locks")?;
+        let id = self.document().id().to_owned();
+        let result = self.document().replace_object_locks(locks);
+        self.record(result, "replace_object_locks", &id)
+    }
     pub fn replace_hierarchy_order(
         &mut self,
         order: kasane_core::document::HierarchyOrder,

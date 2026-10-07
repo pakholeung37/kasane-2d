@@ -537,11 +537,14 @@ impl AuthoringSession {
             .done
             .back_mut()
             .ok_or_else(|| SdkError::new("NOTHING_TO_UNDO", "History is empty", "undo"))?;
+        let evaluation_before = self.project.document().evaluation_revision();
         self.project
             .swap_authoring_checkpoint(&mut entry.checkpoint)
             .map_err(|status| SdkError::from_status(status, "undo", Vec::new()))?;
         self.preview.retain_parameters(self.project.document());
-        self.preview.invalidate();
+        if self.project.document().evaluation_revision() != evaluation_before {
+            self.preview.invalidate();
+        }
         let entry = self.done.pop_back().expect("history entry still exists");
         self.refresh_incarnations(&before_keys, &entry.identity_keys);
         let receipt = EditReceipt {
@@ -564,11 +567,14 @@ impl AuthoringSession {
             .redo
             .last_mut()
             .ok_or_else(|| SdkError::new("NOTHING_TO_REDO", "History is empty", "redo"))?;
+        let evaluation_before = self.project.document().evaluation_revision();
         self.project
             .swap_authoring_checkpoint(&mut entry.checkpoint)
             .map_err(|status| SdkError::from_status(status, "redo", Vec::new()))?;
         self.preview.retain_parameters(self.project.document());
-        self.preview.invalidate();
+        if self.project.document().evaluation_revision() != evaluation_before {
+            self.preview.invalidate();
+        }
         let entry = self.redo.pop().expect("history entry still exists");
         self.refresh_incarnations(&before_keys, &entry.identity_keys);
         let receipt = EditReceipt {
