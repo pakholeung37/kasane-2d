@@ -7,6 +7,7 @@ mod checkpoint;
 mod display_info;
 mod expressions;
 mod glue;
+mod hierarchy_order;
 mod meshes;
 mod model3;
 mod motions;
@@ -29,6 +30,7 @@ pub use display_info::{
     CdiPartEntry, DisplayInfo, DisplayInfoOrigin,
 };
 pub use expressions::{ExpressionAsset, ExpressionBlend, ExpressionEntry, ExpressionTarget};
+pub use hierarchy_order::HierarchyOrder;
 pub use model3::{Model3Settings, ModelHitArea, ModelParameterGroup, ModelTargetRef};
 pub use motions::{
     MotionClip, MotionEvent, MotionGroup, MotionPoint, MotionRegistration, MotionSegment,
@@ -108,6 +110,7 @@ pub struct Document {
     offscreens: HashMap<String, Offscreen>,
     offscreen_order: Vec<String>,
     display_info: DisplayInfo,
+    hierarchy_order: HierarchyOrder,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -164,6 +167,7 @@ struct DocumentContent {
     offscreens: HashMap<String, Offscreen>,
     offscreen_order: Vec<String>,
     display_info: DisplayInfo,
+    hierarchy_order: HierarchyOrder,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -206,6 +210,7 @@ struct ContentRef<'a> {
     offscreens: &'a HashMap<String, Offscreen>,
     offscreen_order: &'a Vec<String>,
     display_info: &'a DisplayInfo,
+    hierarchy_order: &'a HierarchyOrder,
     expressions: &'a HashMap<String, ExpressionAsset>,
     expression_order: &'a Vec<String>,
     motions: &'a HashMap<String, std::sync::Arc<MotionClip>>,
@@ -249,6 +254,7 @@ impl DocumentContent {
             offscreens: &self.offscreens,
             offscreen_order: &self.offscreen_order,
             display_info: &self.display_info,
+            hierarchy_order: &self.hierarchy_order,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -380,6 +386,7 @@ impl Document {
             offscreens: &self.offscreens,
             offscreen_order: &self.offscreen_order,
             display_info: &self.display_info,
+            hierarchy_order: &self.hierarchy_order,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -423,6 +430,7 @@ impl Document {
             offscreens: self.offscreens.clone(),
             offscreen_order: self.offscreen_order.clone(),
             display_info: self.display_info.clone(),
+            hierarchy_order: self.hierarchy_order.clone(),
             expressions: self.expressions.clone(),
             expression_order: self.expression_order.clone(),
             motions: self.motions.clone(),

@@ -84,6 +84,15 @@ impl EditSession<'_> {
         let result = self.document().replace_canvas(canvas);
         self.record(result, "replace_canvas", &id)
     }
+    pub fn replace_hierarchy_order(
+        &mut self,
+        order: kasane_core::document::HierarchyOrder,
+    ) -> Result<(), SdkError> {
+        self.ensure_active("replace_hierarchy_order")?;
+        let id = self.document().id().to_owned();
+        let result = self.document().replace_hierarchy_order(order);
+        self.record(result, "replace_hierarchy_order", &id)
+    }
     pub fn replace_draw_order_groups(
         &mut self,
         groups: Vec<DrawOrderGroup>,

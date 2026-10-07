@@ -405,6 +405,11 @@ pub(super) struct DocumentWire {
     pub(super) offscreens: Vec<OffscreenWire>,
     #[serde(default, skip_serializing_if = "Present::is_absent")]
     pub(super) display_info: Present<Option<kasane_core::document::DisplayInfo>>,
+    #[serde(
+        default,
+        skip_serializing_if = "kasane_core::document::HierarchyOrder::is_empty"
+    )]
+    pub(super) hierarchy_order: kasane_core::document::HierarchyOrder,
     #[serde(default, skip_serializing_if = "Present::is_absent")]
     pub(super) animation_assets: Present<Option<AnimationAssetsWire>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -151,6 +151,12 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         ));
     }
 
+    if root.format_version < 6 && !root.document.hierarchy_order.is_empty() {
+        return Err(Status::error(
+            "UNSUPPORTED_VERSION",
+            "Hierarchy order requires project version 6",
+        ));
+    }
     let display_info = if root.format_version >= 5 {
         if !root.extra.is_empty() || !root.document.extra.is_empty() {
             return Err(Status::error(
@@ -559,6 +565,10 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         }
     }
 
+    let result = candidate.replace_hierarchy_order(doc.hierarchy_order.clone());
+    if !result.status.is_ok() {
+        return Err(result.status);
+    }
     if let Some(info) = display_info {
         let result = candidate.replace_display_info(info);
         if !result.status.is_ok() {

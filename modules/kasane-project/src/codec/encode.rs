@@ -317,6 +317,7 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
             glues: glues_wire,
             offscreens: offscreens_wire,
             display_info: Present::Present(Some(document.display_info().clone())),
+            hierarchy_order: document.hierarchy_order().clone(),
             animation_assets: Present::Present(Some(AnimationAssetsWire {
                 expressions: document
                     .expression_order()

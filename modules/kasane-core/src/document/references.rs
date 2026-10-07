@@ -229,6 +229,8 @@ impl Document {
                 group.items.retain(|item| item != id);
             }
         }
+        self.hierarchy_order.organization.retain(|item| item != id);
+        self.hierarchy_order.deformation.retain(|item| item != id);
         self.transforms.remove(id);
         self.parts.remove(id);
         self.scene_bindings.remove(id);

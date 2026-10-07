@@ -140,6 +140,7 @@ impl Document {
             }
         }
         issues.extend(self.validate_display_info());
+        issues.extend(self.hierarchy_order_issues(&self.hierarchy_order));
         issues.extend(self.validate_expressions());
         issues.extend(self.validate_model3());
         issues.extend(self.validate_motions());
