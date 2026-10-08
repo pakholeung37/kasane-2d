@@ -437,7 +437,11 @@ impl Observer {
         if cfg!(feature = "framework-texture-filtering") {
             digest.update(b"source-texture:linear-mipmap-linear-repeat-area-v2");
         }
-        let input_sha256 = format!("{:x}", digest.finalize());
+        let mut input_sha256 = String::with_capacity(64);
+        for byte in digest.finalize() {
+            use std::fmt::Write;
+            write!(&mut input_sha256, "{byte:02x}").unwrap();
+        }
         self.upload_textures(resolved)?;
         let target = BackendTargetConfig {
             width,

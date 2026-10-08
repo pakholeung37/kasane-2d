@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, HashMap};
 use kasane_core::document::{PoseAsset, PoseEntry, PosePartRef};
 use kasane_core::Document;
 use kasane_live2d::pose3::{decode_pose3, encode_pose3, Pose3, Pose3Part};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,7 +71,7 @@ fn content_hash(pose: &PoseAsset) -> String {
         &pose.extensions,
     ))
     .expect("validated pose content serializes");
-    format!("{:x}", Sha256::digest(bytes))
+    crate::content_sha256(&bytes)
 }
 
 pub fn import_pose3(

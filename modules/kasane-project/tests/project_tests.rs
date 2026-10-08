@@ -272,6 +272,26 @@ fn fixture_doc(sha1: &str, sha2: &str) -> Document {
 }
 
 #[test]
+fn test_sha256_known_vectors() {
+    for (input, expected) in [
+        (
+            "",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            "abc",
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+        (
+            "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq",
+            "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
+        ),
+    ] {
+        assert_eq!(content_sha256(input.as_bytes()), expected);
+    }
+}
+
+#[test]
 fn test_png_decode_and_sha256() {
     let temp_dir = std::env::temp_dir().join(format!("kasane-test-png-{}", std::process::id()));
     let png_path = temp_dir.join("test.png");

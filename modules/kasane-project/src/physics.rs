@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 use kasane_core::document::PhysicsAsset;
 use kasane_core::Document;
 use kasane_live2d::physics3::{decode_physics3, encode_physics3};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,7 +53,7 @@ fn namespace(document: &Document, asset: &PhysicsAsset) -> BTreeMap<String, Stri
 fn content_hash(asset: &PhysicsAsset) -> String {
     let bytes = serde_json::to_vec(&(&asset.data, &asset.parameter_bindings))
         .expect("physics content serializes");
-    format!("{:x}", Sha256::digest(bytes))
+    crate::content_sha256(&bytes)
 }
 
 pub fn import_physics3(

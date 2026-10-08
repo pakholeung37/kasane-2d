@@ -205,7 +205,11 @@ pub fn main() -> Result<(), Box<dyn Error>> {
     {
         return Err("invalid benchmark workload".into());
     }
-    let model_hash = format!("{:x}", Sha256::digest(fs::read(&model_path)?));
+    let mut model_hash = String::with_capacity(64);
+    for byte in Sha256::digest(fs::read(&model_path)?) {
+        use std::fmt::Write;
+        write!(&mut model_hash, "{byte:02x}").unwrap();
+    }
     let mut session =
         AuthoringSession::new(DOCUMENT_ID, Canvas::new(1.0, 1.0, Vec2::new(0.0, 0.0), 1.0))?;
     let receipt = session.import_model3(&model_path, None)?;

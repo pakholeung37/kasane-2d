@@ -173,7 +173,7 @@ fn content_hash(clip: &MotionClip) -> String {
         &clip.meta_extensions,
     ))
     .expect("validated motion content serializes");
-    format!("{:x}", Sha256::digest(bytes))
+    crate::content_sha256(&bytes)
 }
 
 pub fn import_motion3(

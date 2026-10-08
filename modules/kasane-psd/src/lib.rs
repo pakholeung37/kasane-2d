@@ -499,7 +499,14 @@ impl Builder {
         let png = self.encode_pngs.then(|| encode_png(&image)).transpose()?;
         let sha256 = png
             .as_ref()
-            .map(|bytes| format!("{:x}", Sha256::digest(bytes)))
+            .map(|bytes| {
+                use std::fmt::Write;
+                let mut hex = String::with_capacity(64);
+                for byte in Sha256::digest(bytes) {
+                    write!(&mut hex, "{byte:02x}").unwrap();
+                }
+                hex
+            })
             .unwrap_or_default();
         let result = self.document.add_asset(ImageAsset {
             id: asset_id.clone(),

@@ -9,7 +9,6 @@ use kasane_project::{decode_png, AssetData};
 use kasane_sdk::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::{
     CapturedAuthoring, ObservationError, ObservationInput, ObservationSource, RenderRequest,
@@ -149,7 +148,7 @@ fn scene_hash(bundle: &SceneBundle) -> Result<String, ObservationError> {
     }
     let mut bytes = b"kasane-observe-scene-digest-v1\0".to_vec();
     canonical_json(&value, &mut bytes)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
+    Ok(kasane_project::content_sha256(&bytes))
 }
 
 impl ResolvedObservation {
@@ -214,7 +213,7 @@ impl ResolvedObservation {
             request["mipmap_generation"] = "area_box_v2".into();
         }
         canonical_json(&request, &mut bytes)?;
-        Ok(format!("{:x}", Sha256::digest(bytes)))
+        Ok(kasane_project::content_sha256(&bytes))
     }
 
     /// Save an evaluated scene and its exact source PNG bytes to a new absolute

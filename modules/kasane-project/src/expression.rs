@@ -6,7 +6,6 @@ use kasane_core::Document;
 use kasane_live2d::exp3::{
     decode_exp3, encode_exp3, Expression3, Expression3Parameter, ExpressionError,
 };
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -78,7 +77,7 @@ fn content_hash(asset: &ExpressionAsset) -> String {
         &asset.extensions,
     ))
     .expect("validated expression content serializes");
-    format!("{:x}", Sha256::digest(payload))
+    crate::content_sha256(&payload)
 }
 
 /// Build an isolated candidate. Absent parameter targets remain repairable in

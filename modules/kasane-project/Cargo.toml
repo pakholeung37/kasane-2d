@@ -22,10 +22,6 @@ sha2 = { workspace = true }
 png = { workspace = true }
 ciborium = { version = "0.2.2", optional = true }
 
-[target.'cfg(all(target_os = "macos", target_arch = "aarch64"))'.dependencies]
-# Enable ARM SHA instructions on Apple Silicon; sha2-asm does not support Windows.
-sha2 = { workspace = true, features = ["asm"] }
-
 [[example]]
 name = "project_binary_prototype"
 required-features = ["binary-prototype"]
