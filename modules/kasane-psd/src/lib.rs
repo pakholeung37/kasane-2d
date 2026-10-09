@@ -14,7 +14,9 @@ use std::fmt;
 use std::io::Cursor;
 
 const MAX_FILE_BYTES: usize = 512 * 1024 * 1024;
-const MAX_DECODED_BYTES: usize = 256 * 1024 * 1024;
+// Layer pixels accumulate across the document, independently of canvas size.
+// This is an advisory threshold, not a rejection limit for layered artwork.
+const DECODED_WARNING_BYTES: usize = 512 * 1024 * 1024;
 const MAX_PIXELS: u64 = 64_000_000;
 const MAX_LAYERS: usize = 8192;
 
@@ -81,7 +83,7 @@ pub struct PixelImportBundle {
 /// Parse an 8-bit RGB PSD. Raster layers become cropped PNGs and rectangular
 /// meshes; groups become Parts. Layers are ordered from back to front.
 pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
-    let builder = parse_psd(bytes, true)?;
+    let builder = parse_psd(bytes, true, DECODED_WARNING_BYTES)?;
     Ok(ImportBundle {
         document: builder.document,
         assets: builder.assets,
@@ -92,7 +94,7 @@ pub fn import_psd(bytes: &[u8]) -> Result<ImportBundle, ImportError> {
 /// Import directly into RGBA pixels without encoding PNGs. Asset SHA-256 fields
 /// remain empty until the project store encodes and publishes the PNG bytes.
 pub fn import_psd_pixels(bytes: &[u8]) -> Result<PixelImportBundle, ImportError> {
-    let builder = parse_psd(bytes, false)?;
+    let builder = parse_psd(bytes, false, DECODED_WARNING_BYTES)?;
     Ok(PixelImportBundle {
         document: builder.document,
         assets: builder.pixels,
@@ -100,12 +102,18 @@ pub fn import_psd_pixels(bytes: &[u8]) -> Result<PixelImportBundle, ImportError>
     })
 }
 
-fn parse_psd(bytes: &[u8], encode_pngs: bool) -> Result<Builder, ImportError> {
+fn parse_psd(
+    bytes: &[u8],
+    encode_pngs: bool,
+    decoded_warning_bytes: usize,
+) -> Result<Builder, ImportError> {
     preflight(bytes)?;
     let options = ReadOptions {
         skip_composite_image_data: Some(true),
         use_image_data: Some(true),
-        total_memory_limit: Some(MAX_DECODED_BYTES),
+        // Explicitly disable the reader's cumulative budget (including its
+        // default 2 GiB limit); report large imports after decoding instead.
+        total_memory_limit: None,
         ..ReadOptions::default()
     };
     let mut psd = read_psd(bytes, &options)
@@ -152,6 +160,7 @@ fn parse_psd(bytes: &[u8], encode_pngs: bool) -> Result<Builder, ImportError> {
         fingerprint,
         next_id: 0,
         seen_layers: 0,
+        decoded_bytes: 0,
         used_mesh_runtime_ids: HashSet::new(),
     };
     builder.visit_layers(psd.children.as_deref_mut().unwrap_or_default(), "")?;
@@ -165,6 +174,13 @@ fn parse_psd(bytes: &[u8], encode_pngs: bool) -> Result<Builder, ImportError> {
         return Err(ImportError::new(
             "INVALID_DOCUMENT",
             format!("{}: {}", issue.status.code, issue.status.message),
+        ));
+    }
+    if builder.decoded_bytes > decoded_warning_bytes {
+        builder.report.warnings.push(format!(
+            "PSD layer pixels use {:.1} MiB, exceeding the {:.1} MiB recommended budget; import continued",
+            builder.decoded_bytes as f64 / (1024.0 * 1024.0),
+            decoded_warning_bytes as f64 / (1024.0 * 1024.0),
         ));
     }
     Ok(builder)
@@ -257,6 +273,7 @@ struct Builder {
     fingerprint: [u8; 32],
     next_id: usize,
     seen_layers: usize,
+    decoded_bytes: usize,
     used_mesh_runtime_ids: HashSet<String>,
 }
 
@@ -286,7 +303,7 @@ impl Builder {
     }
 
     fn visit_layers(&mut self, layers: &mut [Layer], parent_id: &str) -> Result<(), ImportError> {
-        // PSD children are ordered back to front. Isolate each raster base and
+        // PSD children are ordered back to front. Isolate each base and
         // its consecutive clipped siblings from the surrounding artwork.
         let mut next = 0;
         while next < layers.len() {
@@ -297,7 +314,7 @@ impl Builder {
                 .take_while(|layer| layer.clipping == Some(true))
                 .count();
             let end = next + count;
-            if base.clipping != Some(true) && base.children.is_none() && end > next {
+            if base.clipping != Some(true) && end > next {
                 self.visit_clipping_group(base, &mut following[..count], parent_id)?;
                 next = end;
             } else {
@@ -331,16 +348,31 @@ impl Builder {
         });
         check(result.status.code, result.status.message)?;
         let group_name = format!("{name} (Clipping)");
-        let base_id = self
-            .visit(base, &part_id, None)?
-            .expect("raster clipping base produces a mesh");
-        let mut mesh = self.document.get_mesh(&base_id).unwrap().clone();
-        // The base's alpha and opacity seed the group. Its color blend applies
-        // once, when the entire clipping group is composited onto its parent.
-        let blend_mode = extended_color_mode(mesh.blend_mode);
-        mesh.blend_mode = BlendMode::Normal;
-        let result = self.document.replace_mesh(mesh);
-        check(result.status.code, result.status.message)?;
+        let base_is_group = base.children.is_some();
+        let base_id = self.visit(base, &part_id, None)?;
+        let blend_mode = if base_is_group {
+            // Composite the group's children before using their combined alpha
+            // as the clipping base. Child blend modes stay inside this surface.
+            let id = self.id("offscreen");
+            let result = self.document.create_offscreen(Offscreen {
+                runtime_id: format!("Offscreen_{}", id.replace('-', "")),
+                id,
+                name: self.document.get_part(&base_id).unwrap().name.clone(),
+                part_id: base_id.clone(),
+                ..Offscreen::default()
+            });
+            check(result.status.code, result.status.message)?;
+            0
+        } else {
+            let mut mesh = self.document.get_mesh(&base_id).unwrap().clone();
+            // The base's alpha and opacity seed the group. Its color blend applies
+            // once, when the entire clipping group is composited onto its parent.
+            let mode = extended_color_mode(mesh.blend_mode);
+            mesh.blend_mode = BlendMode::Normal;
+            let result = self.document.replace_mesh(mesh);
+            check(result.status.code, result.status.message)?;
+            mode
+        };
         for layer in clipped {
             self.visit(layer, &part_id, Some(&base_id))?;
         }
@@ -361,7 +393,7 @@ impl Builder {
         layer: &mut Layer,
         parent_id: &str,
         clipping_base: Option<&str>,
-    ) -> Result<Option<String>, ImportError> {
+    ) -> Result<String, ImportError> {
         self.seen_layers += 1;
         if self.seen_layers > MAX_LAYERS {
             return Err(ImportError::new("PSD_LIMIT", "PSD exceeds 8192 layers"));
@@ -423,13 +455,13 @@ impl Builder {
             check(result.status.code, result.status.message)?;
             self.report.groups += 1;
             self.visit_layers(children, &id)?;
-            return Ok(None);
+            return Ok(id);
         }
 
         if layer.clipping == Some(true) && clipping_base.is_none() {
             return Err(ImportError::new(
                 "UNSUPPORTED_LAYER",
-                format!("{name}: clipping requires a raster base in the same group"),
+                format!("{name}: clipping requires a base in the same group"),
             ));
         }
 
@@ -569,7 +601,8 @@ impl Builder {
         let result = self.document.create_mesh(mesh);
         check(result.status.code, result.status.message)?;
         self.report.raster_layers += 1;
-        Ok(Some(mesh_id))
+        self.decoded_bytes = self.decoded_bytes.saturating_add(expected);
+        Ok(mesh_id)
     }
 }
 
@@ -595,4 +628,34 @@ fn encode_png(image: &PixelData) -> Result<Vec<u8>, ImportError> {
             .map_err(|error| ImportError::new("PNG_ENCODE", error.to_string()))?;
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decoded_budget_is_advisory_for_both_import_formats() {
+        // Use a small threshold to exercise the full parser without allocating
+        // hundreds of MiB in a unit test. The fixture has 16 RGBA bytes.
+        let bytes = include_bytes!("../tests/fixtures/layered.psd");
+        for encode_pngs in [false, true] {
+            let at_budget = parse_psd(bytes, encode_pngs, 16).unwrap();
+            assert!(at_budget.report.warnings.is_empty());
+            let over_budget = parse_psd(bytes, encode_pngs, 15).unwrap();
+            assert_eq!(over_budget.report.warnings.len(), 1);
+            assert!(over_budget.report.warnings[0].contains("import continued"));
+            assert_eq!(over_budget.report.raster_layers, 1);
+            assert_eq!(
+                over_budget.document.mesh_order(),
+                at_budget.document.mesh_order()
+            );
+            if encode_pngs {
+                assert_eq!(over_budget.assets, at_budget.assets);
+            } else {
+                assert_eq!(over_budget.pixels.len(), 1);
+                assert_eq!(over_budget.pixels[0].rgba, at_budget.pixels[0].rgba);
+            }
+        }
+    }
 }
