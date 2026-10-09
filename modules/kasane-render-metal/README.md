@@ -11,6 +11,10 @@ Upload source images with `upload_rgba8`, build a `MetalTextureCatalog`, then
 call `MetalRenderer::sync_model` (or `sync_model_shared` for an `Arc<DrawableFrame>`),
 `update_view` and `encode`. The output may be
 an offscreen `MTLTexture` or a `CAMetalDrawable` texture from the same device.
+`upload_rgba8` accepts straight RGBA pixels and mip levels, converting each to
+premultiplied GPU storage before filtering. Externally supplied catalog textures
+must also contain premultiplied RGBA. Authored PNG/RGBA assets remain straight;
+use `kasane_render::texture::straight_rgba_mipmaps` for alpha-weighted mip levels.
 The host commits the command buffer after encoding and uses the **same command
 queue for each renderer's lifetime**. Cached mask writes and subsequent reads
 depend on queue ordering. `render` is a convenience method that commits one frame.

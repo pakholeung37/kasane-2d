@@ -67,11 +67,12 @@ fragment float4 fs_draw(Varying in [[stage_in]],
                         sampler mask_sampler [[sampler(1)]]) {
     float4 sampled = source.sample(source_sampler, in.uv);
     float3 multiplied = sampled.rgb * u.multiply_color.rgb;
-    float3 rgb = multiplied + u.screen_color.rgb - multiplied * u.screen_color.rgb;
-    float alpha = sampled.a * u.opacity.x * mask_alpha(in, u, mask, mask_sampler);
-    if (u.flags.z == 1) return float4(rgb * alpha, 0.0);
-    if (u.flags.z == 2) return float4(rgb * alpha + float3(1.0 - alpha), 1.0);
-    return float4(rgb * alpha, alpha);
+    float3 rgb = multiplied + u.screen_color.rgb * sampled.a - multiplied * u.screen_color.rgb;
+    float factor = u.opacity.x * mask_alpha(in, u, mask, mask_sampler);
+    float alpha = sampled.a * factor;
+    if (u.flags.z == 1) return float4(rgb * factor, 0.0);
+    if (u.flags.z == 2) return float4(rgb * factor + float3(1.0 - alpha), 1.0);
+    return float4(rgb * factor, alpha);
 }
 
 fragment float4 fs_composite(Varying in [[stage_in]],
@@ -193,7 +194,7 @@ fragment float4 fs_extended_draw(Varying in [[stage_in]],
                                  sampler source_sampler [[sampler(0)]],
                                  sampler mask_sampler [[sampler(1)]],
                                  sampler destination_sampler [[sampler(2)]]) {
-    float4 source = source_tex.sample(source_sampler, in.uv);
+    float4 source = to_straight(source_tex.sample(source_sampler, in.uv));
     source.rgb *= u.multiply_color.rgb;
     source.rgb = source.rgb + u.screen_color.rgb - source.rgb * u.screen_color.rgb;
     source.a *= u.opacity.x * mask_alpha(in, u, mask, mask_sampler);

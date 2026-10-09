@@ -95,6 +95,84 @@ fn quad(id: &str, texture: &str) -> Drawable {
     }
 }
 
+#[test]
+fn filtered_transparent_texels_do_not_tint_normal_or_clipped_edges() {
+    let context = MetalContext::new().unwrap();
+    let target = MetalTargetConfig {
+        width: 64,
+        height: 64,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let base = context.upload_rgba8(1, 1, &[255, 0, 0, 255], &[]).unwrap();
+    for transparent in [[0, 0, 0, 0], [255, 0, 255, 0]] {
+        let mut rgba = vec![255, 255, 255, 255];
+        rgba.extend(transparent);
+        let source = context.upload_rgba8(2, 1, &rgba, &[]).unwrap();
+        let catalog = MetalTextureCatalog::new(HashMap::from([
+            (
+                "edge".into(),
+                MetalTexture {
+                    view: &source,
+                    width: 2,
+                    height: 1,
+                },
+            ),
+            (
+                "base".into(),
+                MetalTexture {
+                    view: &base,
+                    width: 1,
+                    height: 1,
+                },
+            ),
+        ]));
+        for mode in [None, Some(0), Some(256)] {
+            let mut edge = quad("edge", "edge");
+            edge.raw_blend_mode = mode;
+            let mut draws = vec![];
+            if mode == Some(256) {
+                draws.push(quad("base", "base"));
+            }
+            draws.push(edge);
+            let frame = DrawableFrame {
+                canvas: Canvas::new(64., 64., Vec2::new(0., 0.), 1.),
+                drawables: draws,
+                ..Default::default()
+            };
+            let output = context.output_texture(target).unwrap();
+            let mut renderer = MetalRenderer::new(&context, target).unwrap();
+            renderer.sync_model(&frame, &catalog).unwrap();
+            renderer
+                .update_view(ViewportConfig {
+                    transform: Affine2::IDENTITY,
+                    target_extent: Vec2::new(64., 64.),
+                    mask_scale: 1.,
+                })
+                .unwrap();
+            let command = context.queue().new_command_buffer();
+            renderer
+                .encode(command, &output, MetalOutputMode::Replace, &catalog)
+                .unwrap();
+            command.commit();
+            command.wait_until_completed();
+            let pixels = read_rgba8(&output).unwrap();
+            let actual = &pixels[(32 * 64 + 32) * 4..][..4];
+            // At this UV, the opaque white texel contributes 31/64 coverage.
+            let expected: [u8; 4] = if mode == Some(256) {
+                [255, 124, 124, 255]
+            } else {
+                [124; 4]
+            };
+            for (a, e) in actual.iter().zip(expected) {
+                assert!(
+                    (i16::from(*a) - i16::from(e)).abs() <= 1,
+                    "transparent={transparent:?}, mode={mode:?}: {actual:?}, expected={expected:?}"
+                );
+            }
+        }
+    }
+}
+
 fn fixture(frame: &DrawableFrame) -> (Vec<u8>, MetalRenderStats) {
     let context = MetalContext::new().unwrap();
     let colors = [

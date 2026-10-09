@@ -7,6 +7,7 @@
 pub mod gpu;
 mod plan;
 mod scene;
+pub mod texture;
 mod validation;
 
 use std::collections::{HashMap, HashSet};

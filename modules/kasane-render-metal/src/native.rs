@@ -64,6 +64,8 @@ impl MetalContext {
         MAX_TEXTURE_DIMENSION
     }
 
+    /// Upload straight RGBA8 pixels and straight RGBA mip levels. GPU storage is
+    /// premultiplied so linear/trilinear filtering cannot bleed invisible RGB.
     pub fn upload_rgba8(
         &self,
         width: u32,
@@ -107,17 +109,19 @@ impl MetalContext {
         );
         descriptor.set_mipmap_level_count(1 + mipmaps.len() as u64);
         let texture = self.device.new_texture(&descriptor);
+        let premultiplied = kasane_render::texture::premultiply_rgba8(rgba);
         texture.replace_region(
             MTLRegion::new_2d(0, 0, width as u64, height as u64),
             0,
-            rgba.as_ptr().cast(),
+            premultiplied.as_ptr().cast(),
             (width * 4) as u64,
         );
         for (index, (w, h, bytes)) in mipmaps.iter().enumerate() {
+            let premultiplied = kasane_render::texture::premultiply_rgba8(bytes);
             texture.replace_region(
                 MTLRegion::new_2d(0, 0, *w as u64, *h as u64),
                 (index + 1) as u64,
-                bytes.as_ptr().cast(),
+                premultiplied.as_ptr().cast(),
                 (*w * 4) as u64,
             );
         }
@@ -172,6 +176,7 @@ pub struct MetalRenderStats {
 }
 
 pub struct MetalTexture<'a> {
+    /// Premultiplied RGBA, as produced by `MetalContext::upload_rgba8`.
     pub view: &'a TextureRef,
     pub width: u32,
     pub height: u32,
