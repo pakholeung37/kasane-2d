@@ -281,6 +281,7 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
             runtime_id: o.runtime_id.clone(),
             name: o.name.clone(),
             part_id: o.part_id.clone(),
+            enabled: o.enabled,
             blend_mode: o.blend_mode,
             flags: o.flags,
             masks: o.masks.clone(),
@@ -296,7 +297,14 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
 
     let project = ProjectWire {
         format: "kasane-directory-project".to_string(),
-        format_version: 7,
+        // Older readers must reject files whose hidden composites they would show.
+        format_version: if !document.deformer_display().is_empty() {
+            9
+        } else if offscreens_wire.iter().any(|o| !o.enabled) {
+            8
+        } else {
+            7
+        },
         document: DocumentWire {
             id: document.id().to_string(),
             canvas: [c.width, c.height],
@@ -322,6 +330,11 @@ pub(super) fn encode_wire(document: &Document) -> Result<ProjectWire, Status> {
                 Present::Absent
             } else {
                 Present::Present(document.object_locks().clone())
+            },
+            deformer_display: if document.deformer_display().is_empty() {
+                Present::Absent
+            } else {
+                Present::Present(document.deformer_display().clone())
             },
             animation_assets: Present::Present(Some(AnimationAssetsWire {
                 expressions: document

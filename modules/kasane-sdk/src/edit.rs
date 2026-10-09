@@ -94,6 +94,15 @@ impl EditSession<'_> {
         let result = self.document().replace_object_locks(locks);
         self.record(result, "replace_object_locks", &id)
     }
+    pub fn replace_deformer_display(
+        &mut self,
+        display: kasane_core::document::DeformerDisplay,
+    ) -> Result<(), SdkError> {
+        self.ensure_active("replace_deformer_display")?;
+        let id = self.document().id().to_owned();
+        let result = self.document().replace_deformer_display(display);
+        self.record(result, "replace_deformer_display", &id)
+    }
     pub fn replace_hierarchy_order(
         &mut self,
         order: kasane_core::document::HierarchyOrder,

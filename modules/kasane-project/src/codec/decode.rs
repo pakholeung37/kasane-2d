@@ -141,7 +141,7 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if !(1..=7).contains(&root.format_version) {
+    if !(1..=9).contains(&root.format_version) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -151,6 +151,18 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         ));
     }
 
+    if root.format_version < 9 && !root.document.deformer_display.is_absent() {
+        return Err(Status::error(
+            "UNSUPPORTED_VERSION",
+            "Deformer display requires project version 9",
+        ));
+    }
+    if root.format_version < 8 && root.document.offscreens.iter().any(|o| !o.enabled) {
+        return Err(Status::error(
+            "UNSUPPORTED_VERSION",
+            "Hidden offscreens require project version 8",
+        ));
+    }
     if root.format_version < 7 && !root.document.object_locks.is_absent() {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
@@ -474,6 +486,7 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
             runtime_id: o.runtime_id,
             name: o.name,
             part_id: o.part_id,
+            enabled: o.enabled,
             blend_mode: o.blend_mode,
             flags: o.flags,
             masks: o.masks,
@@ -571,6 +584,12 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         }
     }
 
+    if let Present::Present(display) = &doc.deformer_display {
+        let result = candidate.replace_deformer_display(display.clone());
+        if !result.status.is_ok() {
+            return Err(result.status);
+        }
+    }
     if let Present::Present(locks) = &doc.object_locks {
         let result = candidate.replace_object_locks(locks.clone());
         if !result.status.is_ok() {

@@ -61,7 +61,8 @@ pub(super) fn evaluate(
     for os_id in doc.offscreen_order() {
         if let Some(os) = doc.get_offscreen(os_id) {
             let part_id = &os.part_id;
-            let owner_enabled = state.enabled_parts.get(part_id).copied().unwrap_or(false);
+            let owner_enabled =
+                os.enabled && state.enabled_parts.get(part_id).copied().unwrap_or(false);
             let mut opacity = 0.0f32;
             let mut mul_color = [1.0f32, 1.0, 1.0, 1.0];
             let mut scr_color = [0.0f32, 0.0, 0.0, 1.0];

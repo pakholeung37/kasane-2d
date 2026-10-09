@@ -65,6 +65,7 @@ pub(crate) fn glue_tuple(value: Glue, version: Version) -> GlueTuple {
 pub(crate) fn offscreen_from_tuple(data: OffscreenDataTuple, runtime_id: String) -> Offscreen {
     let (id, name, part_id, blend_mode, flags, masks, indices, keyforms) = data;
     Offscreen {
+        enabled: true,
         id,
         runtime_id,
         name,

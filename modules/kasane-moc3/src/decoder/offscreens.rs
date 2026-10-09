@@ -182,6 +182,7 @@ impl<'a> Moc3DecoderContext<'a> {
             check_status!(
                 self.doc
                     .create_offscreen(Offscreen {
+                        enabled: true,
                         id: os_id,
                         runtime_id,
                         name,

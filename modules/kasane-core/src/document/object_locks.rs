@@ -6,7 +6,7 @@ use std::collections::HashSet;
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectLocks {
-    /// Explicit locks only; editors derive inheritance from the two independent hierarchies.
+    /// Explicit locks only; editors derive inheritance from the Part organization hierarchy.
     #[serde(default)]
     pub objects: Vec<String>,
 }

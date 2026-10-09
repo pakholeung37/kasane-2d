@@ -19,10 +19,11 @@ impl NativeEdit {
         let runtime_id = original
             .map(|value| value.runtime_id.clone())
             .unwrap_or_else(|| data.0.clone());
+        let enabled = original.is_none_or(|value| value.enabled);
+        let mut next = offscreen_from_tuple(data, runtime_id);
+        next.enabled = enabled;
         self.commands
-            .push(Command::ReplaceOffscreen(offscreen_from_tuple(
-                data, runtime_id,
-            )))
+            .push(Command::ReplaceOffscreen(next))
             .map_err(|error| sdk_failure(py, error))?;
         Ok(())
     }

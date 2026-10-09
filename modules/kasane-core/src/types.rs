@@ -586,11 +586,18 @@ pub struct Offscreen {
     pub runtime_id: String,
     pub name: String,
     pub part_id: String,
+    /// Controls visibility of the composited group without changing its contents.
+    #[serde(default = "offscreen_enabled_default")]
+    pub enabled: bool,
     pub blend_mode: u32,
     pub flags: u8,
     pub masks: Vec<String>,
     pub part_keyform_indices: Vec<i32>,
     pub keyforms: Vec<OffscreenKeyform>,
+}
+
+fn offscreen_enabled_default() -> bool {
+    true
 }
 
 impl Offscreen {
@@ -635,6 +642,7 @@ impl Default for Offscreen {
             runtime_id: String::new(),
             name: String::new(),
             part_id: String::new(),
+            enabled: true,
             blend_mode: 0,
             flags: 4,
             masks: Vec::new(),

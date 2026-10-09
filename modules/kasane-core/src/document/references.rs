@@ -230,6 +230,7 @@ impl Document {
             }
         }
         self.object_locks.objects.retain(|item| item != id);
+        self.deformer_display.hidden.retain(|item| item != id);
         self.hierarchy_order.organization.retain(|item| item != id);
         self.hierarchy_order.deformation.retain(|item| item != id);
         self.transforms.remove(id);

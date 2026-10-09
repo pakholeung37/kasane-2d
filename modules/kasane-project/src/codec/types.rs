@@ -362,6 +362,8 @@ pub(super) struct OffscreenWire {
     pub(super) runtime_id: String,
     pub(super) name: String,
     pub(super) part_id: String,
+    #[serde(default = "default_enabled", skip_serializing_if = "is_enabled")]
+    pub(super) enabled: bool,
     pub(super) blend_mode: u32,
     pub(super) flags: u8,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -370,6 +372,14 @@ pub(super) struct OffscreenWire {
     pub(super) part_keyform_indices: Vec<i32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) keyforms: Vec<OffscreenKeyformWire>,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn is_enabled(value: &bool) -> bool {
+    *value
 }
 
 fn default_canvas_flag() -> u8 {
@@ -412,6 +422,8 @@ pub(super) struct DocumentWire {
     pub(super) hierarchy_order: kasane_core::document::HierarchyOrder,
     #[serde(default, skip_serializing_if = "Present::is_absent")]
     pub(super) object_locks: Present<kasane_core::document::ObjectLocks>,
+    #[serde(default, skip_serializing_if = "Present::is_absent")]
+    pub(super) deformer_display: Present<kasane_core::document::DeformerDisplay>,
     #[serde(default, skip_serializing_if = "Present::is_absent")]
     pub(super) animation_assets: Present<Option<AnimationAssetsWire>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -73,10 +73,44 @@ fn create_base_doc() -> Document {
 }
 
 #[test]
+fn hidden_offscreen_preserves_composition_and_restores_appearance() {
+    let mut doc = create_base_doc();
+    let mut offscreen = Offscreen {
+        id: id(10),
+        part_id: id(3),
+        keyforms: vec![OffscreenKeyform {
+            opacity: 0.6,
+            multiply: None,
+            screen: None,
+        }],
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(offscreen.clone()).status.is_ok());
+    let mut frame = DrawableFrame::default();
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    let plan = frame.render_plan.clone();
+    assert!(frame.offscreens[0].enabled);
+    assert_eq!(frame.offscreens[0].opacity, 0.6);
+    offscreen.enabled = false;
+    assert!(doc.replace_offscreen(offscreen.clone()).status.is_ok());
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    assert!(!frame.offscreens[0].enabled);
+    assert_eq!(frame.offscreens[0].opacity, 0.);
+    assert_eq!(frame.render_plan, plan);
+    assert!(doc.get_part(&id(3)).unwrap().enabled);
+    offscreen.enabled = true;
+    assert!(doc.replace_offscreen(offscreen).status.is_ok());
+    assert!(evaluate_frame(&doc, &HashMap::new(), &mut frame).is_ok());
+    assert!(frame.offscreens[0].enabled);
+    assert_eq!(frame.offscreens[0].opacity, 0.6);
+}
+
+#[test]
 fn test_offscreen_crud_and_validation() {
     let mut doc = create_base_doc();
 
     let os = Offscreen {
+        enabled: true,
         id: id(10),
         runtime_id: "Offscreen0".to_string(),
         name: "Offscreen 0".to_string(),
@@ -194,6 +228,7 @@ fn test_offscreen_evaluation_and_blendshapes() {
 
     // Offscreen with 2 keyforms mapped via part_keyform_indices: [0, 1]
     let os = Offscreen {
+        enabled: true,
         id: id(40),
         runtime_id: "Offscreen0".to_string(),
         name: "Offscreen 0".to_string(),

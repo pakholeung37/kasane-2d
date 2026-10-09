@@ -4,6 +4,7 @@ mod bindings;
 mod blendshapes;
 mod canvas;
 mod checkpoint;
+mod deformer_display;
 mod display_info;
 mod expressions;
 mod glue;
@@ -26,6 +27,7 @@ mod vertices;
 
 pub use attachments::{valid_attachment_path, PackageAttachment};
 pub use checkpoint::DocumentCheckpoint;
+pub use deformer_display::DeformerDisplay;
 pub use display_info::{
     CdiCombinedSet, CdiNamespaceIds, CdiParameterEntry, CdiParameterGroup, CdiParameterRef,
     CdiPartEntry, DisplayInfo, DisplayInfoOrigin,
@@ -114,6 +116,7 @@ pub struct Document {
     display_info: DisplayInfo,
     hierarchy_order: HierarchyOrder,
     object_locks: ObjectLocks,
+    deformer_display: DeformerDisplay,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -172,6 +175,7 @@ struct DocumentContent {
     display_info: DisplayInfo,
     hierarchy_order: HierarchyOrder,
     object_locks: ObjectLocks,
+    deformer_display: DeformerDisplay,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -216,6 +220,7 @@ struct ContentRef<'a> {
     display_info: &'a DisplayInfo,
     hierarchy_order: &'a HierarchyOrder,
     object_locks: &'a ObjectLocks,
+    deformer_display: &'a DeformerDisplay,
     expressions: &'a HashMap<String, ExpressionAsset>,
     expression_order: &'a Vec<String>,
     motions: &'a HashMap<String, std::sync::Arc<MotionClip>>,
@@ -261,6 +266,7 @@ impl DocumentContent {
             display_info: &self.display_info,
             hierarchy_order: &self.hierarchy_order,
             object_locks: &self.object_locks,
+            deformer_display: &self.deformer_display,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -394,6 +400,7 @@ impl Document {
             display_info: &self.display_info,
             hierarchy_order: &self.hierarchy_order,
             object_locks: &self.object_locks,
+            deformer_display: &self.deformer_display,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -439,6 +446,7 @@ impl Document {
             display_info: self.display_info.clone(),
             hierarchy_order: self.hierarchy_order.clone(),
             object_locks: self.object_locks.clone(),
+            deformer_display: self.deformer_display.clone(),
             expressions: self.expressions.clone(),
             expression_order: self.expression_order.clone(),
             motions: self.motions.clone(),

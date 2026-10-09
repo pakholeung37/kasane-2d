@@ -1813,6 +1813,7 @@ fn test_project_v4_preserves_offscreen() {
     assert!(doc.replace_mesh(mesh).status.is_ok());
 
     let os = Offscreen {
+        enabled: true,
         id: id(10),
         runtime_id: "Offscreen0".to_string(),
         name: "Offscreen 0".to_string(),
@@ -1859,6 +1860,44 @@ fn test_project_v4_preserves_offscreen() {
 
     let decoded_mesh = decoded.get_mesh(&mesh_id).expect("mesh must exist");
     assert_eq!(decoded_mesh.raw_blend_mode, Some(262));
+}
+
+#[test]
+fn hidden_offscreen_round_trips_in_v8_and_legacy_defaults_to_visible() {
+    let mut doc = fixture_doc(&"0".repeat(64), &"1".repeat(64));
+    let mut offscreen = Offscreen {
+        id: id(10),
+        part_id: sid(1),
+        ..Default::default()
+    };
+    assert!(doc.create_offscreen(offscreen.clone()).status.is_ok());
+    let encoded = encode_project(&doc).unwrap();
+    let wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(wire["format_version"], 7);
+    assert!(wire["document"]["offscreens"][0].get("enabled").is_none());
+    assert!(
+        decode_project(&encoded)
+            .unwrap()
+            .get_offscreen(&id(10))
+            .unwrap()
+            .enabled
+    );
+
+    offscreen.enabled = false;
+    assert!(doc.replace_offscreen(offscreen.clone()).status.is_ok());
+    let encoded = encode_project(&doc).unwrap();
+    let mut wire: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(wire["format_version"], 8);
+    assert_eq!(wire["document"]["offscreens"][0]["enabled"], false);
+    assert_eq!(
+        decode_project(&encoded).unwrap().get_offscreen(&id(10)),
+        Some(&offscreen)
+    );
+    wire["format_version"] = serde_json::json!(7);
+    assert_eq!(
+        decode_project(&wire.to_string()).unwrap_err().code,
+        "UNSUPPORTED_VERSION"
+    );
 }
 
 #[test]
