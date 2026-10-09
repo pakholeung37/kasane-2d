@@ -25,6 +25,13 @@ targets, texture repeat and mipmapped sampling, resize, and Replace/Composite
 presentation. Consecutive draws to a target share a render pass; destination
 snapshots end the pass before the blit. Replace renders directly into the host
 output; Composite preserves the host background with an intermediate texture.
+Offscreen children are rendered and composited in draw order. Their color
+textures and destination snapshots reuse storage within each command buffer,
+ending the previous render pass before a texture is written again. The 512 MiB
+attachment budget covers nesting depth, snapshot scratch space, presentation
+storage and masks. Sibling count and repeated destination reads do not multiply
+the color storage. Pools are local to a command so submitted frames remain
+independent.
 
 Mesh buffers are immutable and retained across view changes. Model submissions
 replace only buffers whose geometry changed, so earlier submitted frames keep
@@ -51,7 +58,9 @@ evicted after encoding; source textures are retained while their identities are
 cached. Output and offscreen textures remain per-frame allocations.
 
 `MetalRenderStats` reports draw calls, render passes, mask redraws/cache hits and
-buffer uploads. A warm pan requires no geometry upload or mask redraw.
+buffer uploads. `color_attachment_bytes` reports the color/snapshot storage
+allocated for that command, excluding the host output and masks. A warm pan
+requires no geometry upload or mask redraw.
 
 On macOS, `kasane-sdk-observe` and the Python `observe` feature use this
 native backend. Other platforms keep `kasane-render-wgpu`. Python builds

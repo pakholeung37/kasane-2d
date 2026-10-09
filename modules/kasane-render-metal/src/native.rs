@@ -173,6 +173,8 @@ pub struct MetalRenderStats {
     pub buffer_uploads: usize,
     pub active_surfaces: usize,
     pub destination_copies: usize,
+    /// Per-command color/snapshot storage, excluding the host output and masks.
+    pub color_attachment_bytes: u64,
 }
 
 pub struct MetalTexture<'a> {
@@ -841,16 +843,17 @@ impl MetalRenderer {
             mask_scale: rounded_scale,
             ..viewport
         };
-        if rounded_scale.is_finite()
-            && rounded_scale > 0.
-            && self
-                .validate_attachment_budget(frame, rounded_view, surface_size)
-                .is_ok()
-        {
+        let rounded_budget = (rounded_scale.is_finite() && rounded_scale > 0.)
+            .then(|| {
+                self.validate_attachment_budget(frame, rounded_view, surface_size, output_mode)
+            })
+            .and_then(Result::ok);
+        let attachment_bytes = if let Some(bytes) = rounded_budget {
             viewport = rounded_view;
+            bytes
         } else {
-            self.validate_attachment_budget(frame, viewport, surface_size)?;
-        }
+            self.validate_attachment_budget(frame, viewport, surface_size, output_mode)?
+        };
         let surface_to_model = inverse_affine(surface_transform)?;
         // Replace can render directly to the host texture. Composite requires
         // an intermediate image to preserve the host's existing background.
@@ -879,6 +882,8 @@ impl MetalRenderer {
             surface_transform,
             surface_to_model,
             surfaces: HashMap::new(),
+            color_pool: Vec::new(),
+            attachment_bytes,
             masks: HashMap::new(),
             pass: None,
             mask_cache,
@@ -888,6 +893,11 @@ impl MetalRenderer {
             atlas_cleared: Default::default(),
             stats: MetalRenderStats {
                 buffer_uploads,
+                color_attachment_bytes: if output_mode == MetalOutputMode::Composite {
+                    u64::from(self.target.width) * u64::from(self.target.height) * 4
+                } else {
+                    0
+                },
                 ..Default::default()
             },
         };
@@ -965,10 +975,58 @@ impl MetalRenderer {
         frame: &DrawableFrame,
         viewport: ViewportConfig,
         surface_size: (u32, u32),
+        output_mode: MetalOutputMode,
     ) -> Result<u64, Status> {
         let bytes = |size: (u32, u32)| u64::from(size.0) * u64::from(size.1) * 4;
-        let mut total = bytes((self.target.width, self.target.height));
-        total = total.saturating_add(self.scene.active_target_count() as u64 * bytes(surface_size));
+        // Children are rendered and consumed in target order. Color storage is
+        // bounded by nesting depth; destination reads share one scratch texture
+        // per extent after the preceding render pass has ended.
+        let mut depth = 0;
+        let mut stack = vec![(TargetId::MAIN, 0)];
+        while let Some((id, level)) = stack.pop() {
+            depth = depth.max(level);
+            for item in &self.scene.targets()[id.0].items {
+                if let TargetItem::Composite(child) = item {
+                    if self.scene.targets()[child.0].active {
+                        stack.push((*child, level + 1));
+                    }
+                }
+            }
+        }
+        let mut main_snapshot = false;
+        let mut surface_snapshot = false;
+        for (index, target) in self.scene.targets().iter().enumerate() {
+            if !target.active {
+                continue;
+            }
+            for item in &target.items {
+                let reads = match item {
+                    TargetItem::Draw(id) => {
+                        let drawable = &frame.drawables[id.0];
+                        drawable.raw_blend_mode.is_some()
+                            && drawable.visible
+                            && drawable.opacity > 0.0
+                            && !drawable.indices.is_empty()
+                    }
+                    TargetItem::Composite(id) => {
+                        self.scene.targets()[id.0].reads_destination
+                            && self.scene.targets()[id.0].active
+                    }
+                };
+                if reads {
+                    if index == 0 {
+                        main_snapshot = true;
+                    } else {
+                        surface_snapshot = true;
+                    }
+                }
+            }
+        }
+        let main_count =
+            1 + u64::from(main_snapshot) + u64::from(output_mode == MetalOutputMode::Composite);
+        let surface_count = depth + u64::from(surface_snapshot);
+        let mut total = main_count * bytes((self.target.width, self.target.height));
+        total = total.saturating_add(surface_count.saturating_mul(bytes(surface_size)));
         let mut masks = std::collections::HashSet::new();
         let mut count_mask = |sources: &[String], mask: MaskId, scale: f64| -> Result<(), Status> {
             if masks.insert(MaskCacheKey::new(sources, scale)) {
@@ -998,34 +1056,6 @@ impl MetalRenderer {
                     self.scene.targets()[index + 1].mask.unwrap(),
                     viewport.mask_scale.max(1.0),
                 )?;
-            }
-        }
-        for (index, target) in self.scene.targets().iter().enumerate() {
-            if !target.active {
-                continue;
-            }
-            let target_bytes = bytes(if index == 0 {
-                (self.target.width, self.target.height)
-            } else {
-                surface_size
-            });
-            for item in &target.items {
-                let reads = match item {
-                    TargetItem::Draw(id) => {
-                        let drawable = &frame.drawables[id.0];
-                        drawable.raw_blend_mode.is_some()
-                            && drawable.visible
-                            && drawable.opacity > 0.0
-                            && !drawable.indices.is_empty()
-                    }
-                    TargetItem::Composite(id) => {
-                        self.scene.targets()[id.0].reads_destination
-                            && self.scene.targets()[id.0].active
-                    }
-                };
-                if reads {
-                    total = total.saturating_add(target_bytes);
-                }
             }
         }
         if total > kasane_render::OFFSCREEN_BUDGET_BYTES as u64 {
@@ -1106,6 +1136,9 @@ struct FrameEncoder<'a, 'tex> {
     surface_transform: Affine2,
     surface_to_model: Affine2,
     surfaces: HashMap<TargetId, Texture>,
+    // Local to this command: submitted frames never share writable attachments.
+    color_pool: Vec<Texture>,
+    attachment_bytes: u64,
     masks: HashMap<String, MaskAttachment>,
     pass: Option<(Texture, metal::RenderCommandEncoder)>,
     mask_cache: HashMap<MaskCacheKey, CachedMask>,
@@ -1173,11 +1206,7 @@ impl FrameEncoder<'_, '_> {
                 })
             })
         });
-        let logical_bytes = self.renderer.validate_attachment_budget(
-            self.frame,
-            self.viewport,
-            self.surface_size,
-        )?;
+        let logical_bytes = self.attachment_bytes;
         let cached_bytes: u64 = self
             .atlas_pages
             .iter()
@@ -1432,22 +1461,10 @@ impl FrameEncoder<'_, '_> {
             return Ok(());
         }
         let items = target.items.clone();
-        for item in &items {
-            if let TargetItem::Composite(child) = item {
-                if self.renderer.scene.targets()[child.0].active {
-                    self.encode_target(*child, main)?;
-                }
-            }
-        }
         let target_texture = if id == TargetId::MAIN {
             main.to_owned()
         } else {
-            let texture = create_texture(
-                &self.renderer.device,
-                self.surface_size.0,
-                self.surface_size.1,
-                self.renderer.target.format,
-            );
+            let texture = self.acquire_color(self.surface_size);
             self.surfaces.insert(id, texture.clone());
             self.stats.active_surfaces += 1;
             texture
@@ -1459,6 +1476,12 @@ impl FrameEncoder<'_, '_> {
         };
         let mut clear = true;
         for item in items {
+            if let TargetItem::Composite(child) = item {
+                if self.renderer.scene.targets()[child.0].active {
+                    self.finish_pass();
+                    self.encode_target(child, main)?;
+                }
+            }
             let destination_read = match item {
                 TargetItem::Draw(mesh) => {
                     self.renderer.scene.meshes()[mesh.0].reads_destination
@@ -1500,6 +1523,14 @@ impl FrameEncoder<'_, '_> {
             };
             if drawn {
                 clear = false;
+            }
+            if let Some(snapshot) = snapshot {
+                self.color_pool.push(snapshot);
+            }
+            if let TargetItem::Composite(child) = item {
+                if let Some(texture) = self.surfaces.remove(&child) {
+                    self.color_pool.push(texture);
+                }
             }
         }
         if clear {
@@ -1631,14 +1662,26 @@ impl FrameEncoder<'_, '_> {
         Ok(true)
     }
 
-    fn snapshot(&mut self, source: &TextureRef, size: (u32, u32)) -> Texture {
+    fn acquire_color(&mut self, size: (u32, u32)) -> Texture {
+        // A pooled texture may still be sampled by the current pass. End that
+        // encoder before writing it again; Metal orders the tracked resource.
         self.finish_pass();
-        let destination = create_texture(
+        if let Some(index) = self.color_pool.iter().position(|texture| {
+            texture.width() == u64::from(size.0) && texture.height() == u64::from(size.1)
+        }) {
+            return self.color_pool.swap_remove(index);
+        }
+        self.stats.color_attachment_bytes += u64::from(size.0) * u64::from(size.1) * 4;
+        create_texture(
             &self.renderer.device,
             size.0,
             size.1,
             self.renderer.target.format,
-        );
+        )
+    }
+
+    fn snapshot(&mut self, source: &TextureRef, size: (u32, u32)) -> Texture {
+        let destination = self.acquire_color(size);
         let blit = self.command.new_blit_command_encoder();
         blit.copy_from_texture(
             source,

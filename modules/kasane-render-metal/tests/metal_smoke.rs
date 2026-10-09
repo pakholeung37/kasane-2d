@@ -413,6 +413,383 @@ fn nested_offscreens_composite_into_main() {
 }
 
 #[test]
+fn zoomed_sibling_offscreens_reuse_attachments_and_preserve_draw_order() {
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        drawables: vec![quad("background", "red")],
+        offscreens: vec![OffscreenFrame {
+            id: "outer".into(),
+            enabled: true,
+            opacity: 0.5,
+            multiply_color: [1.; 4],
+            ..Default::default()
+        }],
+        render_plan: vec![
+            RenderCommand::DrawMesh {
+                mesh_id: "background".into(),
+            },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: "outer".into(),
+            },
+        ],
+        ..Default::default()
+    };
+    for i in 0..40 {
+        let id = format!("group-{i}");
+        let mut child = quad(&format!("child-{i}"), ["red", "green", "blue"][i % 3]);
+        child.raw_blend_mode = Some(0);
+        frame.offscreens.push(OffscreenFrame {
+            id: id.clone(),
+            parent_offscreen_id: Some("outer".into()),
+            enabled: true,
+            opacity: 0.5,
+            blend_mode: 1,
+            multiply_color: [1.; 4],
+            ..Default::default()
+        });
+        frame.render_plan.extend([
+            RenderCommand::BeginOffscreen {
+                offscreen_id: id.clone(),
+            },
+            RenderCommand::DrawMesh {
+                mesh_id: child.id.clone(),
+            },
+            RenderCommand::EndOffscreen { offscreen_id: id },
+        ]);
+        frame.drawables.push(child);
+        // A parent draw between children catches lost Load actions and reordering.
+        let mut parent = quad(&format!("parent-{i}"), "green");
+        parent.opacity = 0.25;
+        frame.render_plan.push(RenderCommand::DrawMesh {
+            mesh_id: parent.id.clone(),
+        });
+        frame.drawables.push(parent);
+    }
+    frame.render_plan.push(RenderCommand::EndOffscreen {
+        offscreen_id: "outer".into(),
+    });
+    let expected = center(&fixture(&frame).0);
+    let context = MetalContext::new().unwrap();
+    let sources: Vec<_> = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]
+        .iter()
+        .map(|rgba| context.upload_rgba8(1, 1, rgba, &[]).unwrap())
+        .collect();
+    let catalog = MetalTextureCatalog::new(
+        ["red", "green", "blue"]
+            .into_iter()
+            .zip(&sources)
+            .map(|(id, source)| {
+                (
+                    id.into(),
+                    MetalTexture {
+                        view: source,
+                        width: 1,
+                        height: 1,
+                    },
+                )
+            })
+            .collect(),
+    );
+    let target = MetalTargetConfig {
+        width: 2048,
+        height: 2048,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let mut renderer = MetalRenderer::new(&context, target).unwrap();
+    renderer.sync_model(&frame, &catalog).unwrap();
+    renderer
+        .update_view(ViewportConfig {
+            transform: Affine2 {
+                a: Vec2::new(32., 0.),
+                b: Vec2::new(0., 32.),
+                origin: Vec2::default(),
+            },
+            target_extent: Vec2::new(2048., 2048.),
+            mask_scale: 32.,
+        })
+        .unwrap();
+    let output = context.output_texture(target).unwrap();
+    let command = context.queue().new_command_buffer();
+    let stats = renderer
+        .encode(command, &output, MetalOutputMode::Replace, &catalog)
+        .unwrap();
+    assert_eq!(stats.color_attachment_bytes, 3 * 2048 * 2048 * 4);
+    command.commit();
+    command.wait_until_completed();
+    assert_eq!(stats.active_surfaces, 41);
+    assert_eq!(stats.destination_copies, 80);
+    let pixels = read_rgba8(&output).unwrap();
+    for (x, y) in [(16, 16), (1024, 1024), (2032, 2032)] {
+        assert_eq!(&pixels[(y * 2048 + x) * 4..][..4], &expected);
+    }
+}
+
+#[test]
+fn pooled_colors_preserve_parent_order_and_submitted_frames() {
+    let context = MetalContext::new().unwrap();
+    let sources: Vec<_> = [[255, 0, 0, 255], [0, 255, 0, 255], [0, 0, 255, 255]]
+        .iter()
+        .map(|rgba| context.upload_rgba8(1, 1, rgba, &[]).unwrap())
+        .collect();
+    let catalog = MetalTextureCatalog::new(
+        ["red", "green", "blue"]
+            .into_iter()
+            .zip(&sources)
+            .map(|(id, source)| {
+                (
+                    id.into(),
+                    MetalTexture {
+                        view: source,
+                        width: 1,
+                        height: 1,
+                    },
+                )
+            })
+            .collect(),
+    );
+    let mut draws = vec![
+        quad("background", "red"),
+        quad("first", "blue"),
+        quad("middle", "green"),
+        quad("second", "red"),
+        quad("last", "blue"),
+    ];
+    for i in [0, 1, 3] {
+        draws[i].raw_blend_mode = Some(0);
+    }
+    draws[2].opacity = 0.5;
+    draws[4].opacity = 0.5;
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        drawables: draws,
+        offscreens: [
+            ("outer", None, 0.5),
+            ("first-group", Some("outer"), 1.),
+            ("second-group", Some("outer"), 0.25),
+        ]
+        .into_iter()
+        .map(|(id, parent, opacity)| OffscreenFrame {
+            id: id.into(),
+            parent_offscreen_id: parent.map(str::to_owned),
+            enabled: true,
+            opacity,
+            multiply_color: [1.; 4],
+            ..Default::default()
+        })
+        .collect(),
+        render_plan: vec![
+            RenderCommand::DrawMesh {
+                mesh_id: "background".into(),
+            },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: "outer".into(),
+            },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: "first-group".into(),
+            },
+            RenderCommand::DrawMesh {
+                mesh_id: "first".into(),
+            },
+            RenderCommand::EndOffscreen {
+                offscreen_id: "first-group".into(),
+            },
+            RenderCommand::DrawMesh {
+                mesh_id: "middle".into(),
+            },
+            RenderCommand::BeginOffscreen {
+                offscreen_id: "second-group".into(),
+            },
+            RenderCommand::DrawMesh {
+                mesh_id: "second".into(),
+            },
+            RenderCommand::EndOffscreen {
+                offscreen_id: "second-group".into(),
+            },
+            RenderCommand::DrawMesh {
+                mesh_id: "last".into(),
+            },
+            RenderCommand::EndOffscreen {
+                offscreen_id: "outer".into(),
+            },
+        ],
+        ..Default::default()
+    };
+    let target = MetalTargetConfig {
+        width: 128,
+        height: 96,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let view = ViewportConfig {
+        transform: Affine2 {
+            origin: Vec2::new(16.25, 8.75),
+            ..Affine2::IDENTITY
+        },
+        target_extent: Vec2::new(128., 96.),
+        mask_scale: 1.,
+    };
+    let mut renderer = MetalRenderer::new(&context, target).unwrap();
+    renderer.sync_model(&frame, &catalog).unwrap();
+    renderer.update_view(view).unwrap();
+    let first_output = context.output_texture(target).unwrap();
+    let first_command = context.queue().new_command_buffer();
+    let first_stats = renderer
+        .encode(
+            first_command,
+            &first_output,
+            MetalOutputMode::Replace,
+            &catalog,
+        )
+        .unwrap();
+    assert_eq!(
+        first_stats.color_attachment_bytes,
+        (128 * 96 + 3 * 65 * 65) * 4
+    );
+    first_command.commit();
+    // Submit a changed scene before waiting. Its pool must not overwrite the
+    // previous command's attachments, even with a different presentation mode.
+    for mesh in &mut frame.drawables {
+        mesh.texture_asset_id = "red".into();
+    }
+    renderer.sync_model(&frame, &catalog).unwrap();
+    renderer.update_view(view).unwrap();
+    let second_output = context.output_texture(target).unwrap();
+    let background = vec![255u8; 128 * 96 * 4];
+    second_output.replace_region(
+        kasane_render_metal::metal::MTLRegion::new_2d(0, 0, 128, 96),
+        0,
+        background.as_ptr().cast(),
+        128 * 4,
+    );
+    let second_command = context.queue().new_command_buffer();
+    let second_stats = renderer
+        .encode(
+            second_command,
+            &second_output,
+            MetalOutputMode::Composite,
+            &catalog,
+        )
+        .unwrap();
+    assert_eq!(
+        second_stats.color_attachment_bytes,
+        first_stats.color_attachment_bytes + 128 * 96 * 4
+    );
+    second_command.commit();
+    second_command.wait_until_completed();
+    let first = read_rgba8(&first_output).unwrap();
+    let second = read_rgba8(&second_output).unwrap();
+    let offset = (40 * 128 + 48) * 4;
+    for (&actual, expected) in first[offset..][..4].iter().zip([144i16, 24, 88, 255]) {
+        assert!(
+            (i16::from(actual) - expected).abs() <= 2,
+            "First frame pixel: {:?}",
+            &first[offset..][..4]
+        );
+    }
+    assert_eq!(&second[offset..][..4], &[255, 0, 0, 255]);
+    assert_eq!(&first[..4], &[0; 4]);
+    assert_eq!(
+        &second[..4],
+        &[255; 4],
+        "Composite preserves the host background"
+    );
+}
+
+#[test]
+fn deeply_nested_offscreens_still_enforce_the_peak_attachment_budget() {
+    let context = MetalContext::new().unwrap();
+    let source = context.upload_rgba8(1, 1, &[255, 0, 0, 255], &[]).unwrap();
+    let catalog = MetalTextureCatalog::new(HashMap::from([(
+        "red".into(),
+        MetalTexture {
+            view: &source,
+            width: 1,
+            height: 1,
+        },
+    )]));
+    let mut frame = DrawableFrame {
+        canvas: Canvas::new(64., 64., Vec2::default(), 1.),
+        drawables: vec![quad("mesh", "red")],
+        ..Default::default()
+    };
+    for i in 0..9 {
+        let id = format!("nested-{i}");
+        frame.offscreens.push(OffscreenFrame {
+            id: id.clone(),
+            parent_offscreen_id: (i > 0).then(|| format!("nested-{}", i - 1)),
+            enabled: true,
+            opacity: 1.,
+            multiply_color: [1.; 4],
+            ..Default::default()
+        });
+        frame
+            .render_plan
+            .push(RenderCommand::BeginOffscreen { offscreen_id: id });
+    }
+    frame.render_plan.push(RenderCommand::DrawMesh {
+        mesh_id: "mesh".into(),
+    });
+    frame
+        .render_plan
+        .extend((0..9).rev().map(|i| RenderCommand::EndOffscreen {
+            offscreen_id: format!("nested-{i}"),
+        }));
+    let target = MetalTargetConfig {
+        width: 4096,
+        height: 4096,
+        format: MTLPixelFormat::RGBA8Unorm,
+    };
+    let mut renderer = MetalRenderer::new(&context, target).unwrap();
+    renderer.sync_model(&frame, &catalog).unwrap();
+    renderer
+        .update_view(ViewportConfig {
+            transform: Affine2 {
+                a: Vec2::new(64., 0.),
+                b: Vec2::new(0., 64.),
+                origin: Vec2::default(),
+            },
+            target_extent: Vec2::new(4096., 4096.),
+            mask_scale: 64.,
+        })
+        .unwrap();
+    let output = context.output_texture(target).unwrap();
+    let rejected = context.queue().new_command_buffer();
+    for mode in [MetalOutputMode::Replace, MetalOutputMode::Composite] {
+        assert_eq!(
+            renderer
+                .encode(rejected, &output, mode, &catalog)
+                .unwrap_err()
+                .code,
+            "OFFSCREEN_BUDGET_EXCEEDED"
+        );
+    }
+    let target = MetalTargetConfig {
+        width: 64,
+        height: 64,
+        ..target
+    };
+    renderer.resize(target).unwrap();
+    renderer
+        .update_view(ViewportConfig {
+            transform: Affine2::IDENTITY,
+            target_extent: Vec2::new(64., 64.),
+            mask_scale: 1.,
+        })
+        .unwrap();
+    let output = context.output_texture(target).unwrap();
+    let command = context.queue().new_command_buffer();
+    let stats = renderer
+        .encode(command, &output, MetalOutputMode::Replace, &catalog)
+        .unwrap();
+    assert_eq!(
+        stats.buffer_uploads, 2,
+        "Budget rejection must preserve pending uploads"
+    );
+    command.commit();
+    command.wait_until_completed();
+    assert_eq!(center(&read_rgba8(&output).unwrap()), [255, 0, 0, 255]);
+}
+
+#[test]
 fn fixed_and_destination_blends_see_prior_draws() {
     for (mode, expected) in [
         (BlendMode::Additive, [255, 255, 0, 255]),
