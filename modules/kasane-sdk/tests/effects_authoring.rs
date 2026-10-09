@@ -48,6 +48,7 @@ fn part_binding_and_offscreen_mapping_resize_together() {
             },
         })?;
         edit.create_offscreen(Offscreen {
+            enabled: true,
             id: id(105),
             runtime_id: id(105),
             name: String::new(),
@@ -184,6 +185,7 @@ fn effect_families_share_one_publish_and_failed_replacement_preserves_it() {
             binding: None,
         })?;
         edit.create_offscreen(Offscreen {
+            enabled: true,
             id: id(11),
             runtime_id: id(11),
             name: "group".into(),

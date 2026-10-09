@@ -22,9 +22,12 @@ order and uses the normal validated metadata transaction.
 The editor materializes missing resolved CDI entries when sorting its complete
 visible parameter list, while retaining unresolved entries and extensions.
 
-Editor protection metadata uses `ObjectLocks` and `EditSession::replace_object_locks`.
-Only explicit Mesh, Transform, Part and Offscreen IDs are stored; the editor derives
-inheritance independently along organization and deformation chains. SDK model
-writes intentionally ignore editor locks. Lock changes participate in modified
-state, history budgets, deletion cleanup and undo/redo without invalidating visual
-previews. Current writers save project v7; v1–v6 projects load without locks.
+Editor visibility and protection use `EditorState` and
+`EditSession::replace_editor_state`. The sparse map stores explicit
+`hidden_in_editor` and `locked` flags for Mesh, Transform, Part, Offscreen and Glue.
+Editors resolve Part inheritance and composite visibility; deformation parentage
+does not propagate editor flags. SDK model writes ignore editor locks. Metadata
+participates in modified state, history budgets, deletion cleanup and undo/redo
+without invalidating runtime previews. Writers emit project v10. The old
+`ObjectLocks` and `DeformerDisplay` APIs and wire fields are removed, with no
+migration adapters.

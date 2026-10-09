@@ -4,15 +4,14 @@ mod bindings;
 mod blendshapes;
 mod canvas;
 mod checkpoint;
-mod deformer_display;
 mod display_info;
+mod editor_state;
 mod expressions;
 mod glue;
 mod hierarchy_order;
 mod meshes;
 mod model3;
 mod motions;
-mod object_locks;
 mod offscreen;
 mod parameters;
 mod parts;
@@ -27,11 +26,11 @@ mod vertices;
 
 pub use attachments::{valid_attachment_path, PackageAttachment};
 pub use checkpoint::DocumentCheckpoint;
-pub use deformer_display::DeformerDisplay;
 pub use display_info::{
     CdiCombinedSet, CdiNamespaceIds, CdiParameterEntry, CdiParameterGroup, CdiParameterRef,
     CdiPartEntry, DisplayInfo, DisplayInfoOrigin,
 };
+pub use editor_state::{EditorState, ObjectEditorState};
 pub use expressions::{ExpressionAsset, ExpressionBlend, ExpressionEntry, ExpressionTarget};
 pub use hierarchy_order::HierarchyOrder;
 pub use model3::{Model3Settings, ModelHitArea, ModelParameterGroup, ModelTargetRef};
@@ -39,7 +38,6 @@ pub use motions::{
     MotionClip, MotionEvent, MotionGroup, MotionPoint, MotionRegistration, MotionSegment,
     MotionTrack, MotionTrackTarget,
 };
-pub use object_locks::ObjectLocks;
 pub use physics::PhysicsAsset;
 pub use pose::{PoseAsset, PoseEntry, PosePartRef};
 pub use structure::StructureIssue;
@@ -115,8 +113,7 @@ pub struct Document {
     offscreen_order: Vec<String>,
     display_info: DisplayInfo,
     hierarchy_order: HierarchyOrder,
-    object_locks: ObjectLocks,
-    deformer_display: DeformerDisplay,
+    editor_state: EditorState,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -174,8 +171,7 @@ struct DocumentContent {
     offscreen_order: Vec<String>,
     display_info: DisplayInfo,
     hierarchy_order: HierarchyOrder,
-    object_locks: ObjectLocks,
-    deformer_display: DeformerDisplay,
+    editor_state: EditorState,
     expressions: HashMap<String, ExpressionAsset>,
     expression_order: Vec<String>,
     motions: HashMap<String, std::sync::Arc<MotionClip>>,
@@ -219,8 +215,7 @@ struct ContentRef<'a> {
     offscreen_order: &'a Vec<String>,
     display_info: &'a DisplayInfo,
     hierarchy_order: &'a HierarchyOrder,
-    object_locks: &'a ObjectLocks,
-    deformer_display: &'a DeformerDisplay,
+    editor_state: &'a EditorState,
     expressions: &'a HashMap<String, ExpressionAsset>,
     expression_order: &'a Vec<String>,
     motions: &'a HashMap<String, std::sync::Arc<MotionClip>>,
@@ -265,8 +260,7 @@ impl DocumentContent {
             offscreen_order: &self.offscreen_order,
             display_info: &self.display_info,
             hierarchy_order: &self.hierarchy_order,
-            object_locks: &self.object_locks,
-            deformer_display: &self.deformer_display,
+            editor_state: &self.editor_state,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -399,8 +393,7 @@ impl Document {
             offscreen_order: &self.offscreen_order,
             display_info: &self.display_info,
             hierarchy_order: &self.hierarchy_order,
-            object_locks: &self.object_locks,
-            deformer_display: &self.deformer_display,
+            editor_state: &self.editor_state,
             expressions: &self.expressions,
             expression_order: &self.expression_order,
             motions: &self.motions,
@@ -445,8 +438,7 @@ impl Document {
             offscreen_order: self.offscreen_order.clone(),
             display_info: self.display_info.clone(),
             hierarchy_order: self.hierarchy_order.clone(),
-            object_locks: self.object_locks.clone(),
-            deformer_display: self.deformer_display.clone(),
+            editor_state: self.editor_state.clone(),
             expressions: self.expressions.clone(),
             expression_order: self.expression_order.clone(),
             motions: self.motions.clone(),

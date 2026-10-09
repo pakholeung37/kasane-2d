@@ -141,8 +141,7 @@ impl Document {
         }
         issues.extend(self.validate_display_info());
         issues.extend(self.hierarchy_order_issues(&self.hierarchy_order));
-        issues.extend(self.object_lock_issues(&self.object_locks));
-        issues.extend(self.deformer_display_issues(&self.deformer_display));
+        issues.extend(self.editor_state_issues(&self.editor_state));
         issues.extend(self.validate_expressions());
         issues.extend(self.validate_model3());
         issues.extend(self.validate_motions());

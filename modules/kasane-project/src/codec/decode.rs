@@ -141,7 +141,7 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         return Err(Status::error("INVALID_PROJECT", "Unknown project format"));
     }
 
-    if !(1..=9).contains(&root.format_version) {
+    if !(1..=10).contains(&root.format_version) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             format!(
@@ -151,22 +151,16 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         ));
     }
 
-    if root.format_version < 9 && !root.document.deformer_display.is_absent() {
+    if root.format_version < 10 && !root.document.editor_state.is_absent() {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
-            "Deformer display requires project version 9",
+            "Editor state requires project version 10",
         ));
     }
     if root.format_version < 8 && root.document.offscreens.iter().any(|o| !o.enabled) {
         return Err(Status::error(
             "UNSUPPORTED_VERSION",
             "Hidden offscreens require project version 8",
-        ));
-    }
-    if root.format_version < 7 && !root.document.object_locks.is_absent() {
-        return Err(Status::error(
-            "UNSUPPORTED_VERSION",
-            "Object locks require project version 7",
         ));
     }
     if root.format_version < 6 && !root.document.hierarchy_order.is_empty() {
@@ -584,18 +578,13 @@ pub(super) fn decode_wire(root: ProjectWire) -> Result<Document, Status> {
         }
     }
 
-    if let Present::Present(display) = &doc.deformer_display {
-        let result = candidate.replace_deformer_display(display.clone());
+    if let Present::Present(state) = &doc.editor_state {
+        let result = candidate.replace_editor_state(state.clone());
         if !result.status.is_ok() {
             return Err(result.status);
         }
     }
-    if let Present::Present(locks) = &doc.object_locks {
-        let result = candidate.replace_object_locks(locks.clone());
-        if !result.status.is_ok() {
-            return Err(result.status);
-        }
-    }
+
     let result = candidate.replace_hierarchy_order(doc.hierarchy_order.clone());
     if !result.status.is_ok() {
         return Err(result.status);

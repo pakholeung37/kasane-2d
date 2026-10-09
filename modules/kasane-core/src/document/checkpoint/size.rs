@@ -105,6 +105,7 @@ macro_rules! no_extra {
     )+};
 }
 no_extra!(
+    super::super::ObjectEditorState,
     f32,
     f64,
     i32,
@@ -555,8 +556,7 @@ pub(super) fn estimated_content_bytes(content: ContentRef<'_>) -> usize {
         + content.offscreens.extra_bytes()
         + content.offscreen_order.extra_bytes()
         + content.display_info.extra_bytes()
-        + content.object_locks.objects.extra_bytes()
-        + content.deformer_display.hidden.extra_bytes()
+        + content.editor_state.objects.extra_bytes()
         + content.hierarchy_order.organization.extra_bytes()
         + content.hierarchy_order.deformation.extra_bytes()
         + content.expressions.extra_bytes()
