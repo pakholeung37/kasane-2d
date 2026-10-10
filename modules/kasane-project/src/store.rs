@@ -1763,6 +1763,60 @@ impl DocumentSession {
         (result, Some(bundle.report))
     }
 
+    /// Stage immutable generated pixels without editing or publishing a document.
+    /// The descriptor can be installed by an authoring transaction; the backing
+    /// pixels remain available to undo/redo until this project is closed.
+    pub fn prepare_rgba_asset(
+        &self,
+        id: &str,
+        name: &str,
+        width: u32,
+        height: u32,
+        rgba: Arc<[u8]>,
+    ) -> Result<ImageAsset, Status> {
+        if width == 0
+            || height == 0
+            || width > 16384
+            || height > 16384
+            || (width as usize)
+                .checked_mul(height as usize)
+                .and_then(|n| n.checked_mul(4))
+                != Some(rgba.len())
+            || rgba.len() > 256 * 1024 * 1024
+        {
+            return Err(Status::error(
+                "INVALID_IMAGE",
+                "Invalid or excessive RGBA dimensions",
+            ));
+        }
+        let key = format!("{width}x{height}-{}", content_sha256(&rgba));
+        let source = format!("assets/.memory-generated/{key}.png");
+        self.store
+            .memory_assets
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .entry(source.clone())
+            .or_insert_with(|| {
+                Arc::new(MemoryAsset {
+                    texture: TextureData {
+                        rgba,
+                        width,
+                        height,
+                        cache_key: format!("generated:{key}"),
+                    },
+                    png: OnceLock::new(),
+                })
+            });
+        Ok(ImageAsset {
+            id: id.into(),
+            name: name.into(),
+            source,
+            width,
+            height,
+            sha256: String::new(),
+        })
+    }
+
     /// Whether this source is owned by the current draft rather than a file.
     pub fn has_memory_asset(&self, asset: &ImageAsset) -> bool {
         self.store.has_memory_asset(asset)

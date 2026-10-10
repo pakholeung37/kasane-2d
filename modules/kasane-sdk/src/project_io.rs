@@ -116,6 +116,20 @@ impl AuthoringSession {
             .read_texture(asset_id)
             .map_err(|status| SdkError::from_status(status, "read_texture", vec![asset_id.into()]))
     }
+    /// Stage immutable pixels for a later create_asset/replace_asset transaction.
+    /// This does not change the document, its revision, history, or any files.
+    pub fn prepare_rgba_asset(
+        &self,
+        id: &str,
+        name: &str,
+        width: u32,
+        height: u32,
+        rgba: std::sync::Arc<[u8]>,
+    ) -> Result<kasane_core::ImageAsset, SdkError> {
+        self.project
+            .prepare_rgba_asset(id, name, width, height, rgba)
+            .map_err(|s| SdkError::from_status(s, "prepare_rgba_asset", vec![id.into()]))
+    }
     /// Save through the project's publication path and retain SDK undo/redo.
     /// Project paths must be absolute; unsaved relative asset sources require an
     /// explicit base and are rejected instead of being interpreted from cwd.

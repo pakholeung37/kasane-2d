@@ -1,4 +1,5 @@
 //! Engine-independent Rust authoring SDK with project open/save and checkpoint history.
+mod alpha_mesh;
 mod assets;
 mod diagnostics;
 mod edit;
@@ -7,6 +8,7 @@ mod session;
 mod spatial;
 mod types;
 
+pub use alpha_mesh::{alpha_mesh_geometry, AlphaMask, AlphaMeshOptions};
 pub use assets::{
     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
 };
