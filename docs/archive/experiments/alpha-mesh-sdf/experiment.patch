@@ -1,0 +1,1325 @@
+diff --git a/modules/kasane-sdk/Cargo.toml b/modules/kasane-sdk/Cargo.toml
+--- a/modules/kasane-sdk/Cargo.toml
++++ b/modules/kasane-sdk/Cargo.toml
+@@ -5,6 +5,9 @@
+ rust-version.workspace = true
+ license.workspace = true
+ description = "Engine-independent authoring SDK for Kasane 2D"
++
++[features]
++experimental-alpha-sdf = []
+
+ [dependencies]
+ kasane-core = { path = "../kasane-core" }
+diff --git a/modules/kasane-sdk/src/lib.rs b/modules/kasane-sdk/src/lib.rs
+--- a/modules/kasane-sdk/src/lib.rs
++++ b/modules/kasane-sdk/src/lib.rs
+@@ -9,6 +9,8 @@
+ mod types;
+
+ pub use alpha_mesh::{alpha_mesh_geometry, AlphaMask, AlphaMeshOptions};
++#[cfg(feature = "experimental-alpha-sdf")]
++pub use alpha_mesh::{alpha_mesh_geometry_sdf, AlphaMeshSdfOptions};
+ pub use assets::{
+     prepare_png_asset, prepare_png_asset_from_base, prepare_relocated_asset, rectangle_mesh,
+ };
+diff --git a/modules/kasane-sdk/tests/alpha_mesh.rs b/modules/kasane-sdk/tests/alpha_mesh.rs
+--- a/modules/kasane-sdk/tests/alpha_mesh.rs
++++ b/modules/kasane-sdk/tests/alpha_mesh.rs
+@@ -1,7 +1,38 @@
+ use std::collections::{BTreeMap, BTreeSet};
+
+ use kasane_core::Vec2;
+-use kasane_sdk::{alpha_mesh_geometry, AlphaMask, AlphaMeshOptions, MeshGeometry};
++use kasane_sdk::{AlphaMask, AlphaMeshOptions, MeshGeometry};
++
++// Opt-in contract experiment, separate from the production/default test run:
++// KASANE_ALPHA_TEST_SDF_STEP=1 [KASANE_ALPHA_TEST_SDF_HYBRID=1]
++// cargo test --release -p kasane-sdk --features experimental-alpha-sdf --test alpha_mesh
++fn alpha_mesh_geometry(
++    mask: AlphaMask<'_>,
++    options: &AlphaMeshOptions,
++) -> Result<MeshGeometry, kasane_sdk::SdkError> {
++    #[cfg(feature = "experimental-alpha-sdf")]
++    if let Ok(step) = std::env::var("KASANE_ALPHA_TEST_SDF_STEP") {
++        return kasane_sdk::alpha_mesh_geometry_sdf(
++            mask,
++            options,
++            kasane_sdk::AlphaMeshSdfOptions {
++                preserve_vector_outline: std::env::var("KASANE_ALPHA_TEST_SDF_INTERIOR").as_deref()
++                    == Ok("1"),
++                grid_step: step
++                    .parse()
++                    .expect("KASANE_ALPHA_TEST_SDF_STEP must be a number"),
++                vector_ring_limit: if std::env::var("KASANE_ALPHA_TEST_SDF_HYBRID").as_deref()
++                    == Ok("1")
++                {
++                    64
++                } else {
++                    0
++                },
++            },
++        );
++    }
++    kasane_sdk::alpha_mesh_geometry(mask, options)
++}
+
+ fn pixels(width: u32, height: u32, f: impl Fn(u32, u32) -> u8) -> Vec<u8> {
+     (0..height)
+diff --git a/modules/kasane-sdk/examples/alpha_mesh_profile.rs b/modules/kasane-sdk/examples/alpha_mesh_profile.rs
+--- a/modules/kasane-sdk/examples/alpha_mesh_profile.rs
++++ b/modules/kasane-sdk/examples/alpha_mesh_profile.rs
+@@ -1,7 +1,91 @@
+ //! cargo run --release --locked -p kasane-sdk --example alpha_mesh_profile -- 9
+-//! Deterministic synthetic inputs; timing excludes mask construction and QA.
++//! Optional arguments: STEP [pure|hybrid|interior] [OUTPUT_DIRECTORY].
++//! Enable --features experimental-alpha-sdf for STEP. Use "vector" in place of
++//! STEP to export baseline meshes. Timing excludes input construction and QA.
++//! QA areas are measured against independent vector offsets, in square pixels.
++use geo::{unary_union, Area, BooleanOps, Buffer, MultiPolygon, Polygon, Rect};
+ use kasane_sdk::{alpha_mesh_geometry, AlphaMask, AlphaMeshOptions, MeshGeometry};
+ use std::{hint::black_box, time::Instant};
++
++fn reference(
++    size: u32,
++    alpha: &[u8],
++    options: &AlphaMeshOptions,
++) -> (MultiPolygon<f64>, MultiPolygon<f64>, MultiPolygon<f64>) {
++    let mut rectangles = Vec::new();
++    for y in 0..size {
++        let mut x = 0;
++        while x < size {
++            if alpha[(y * size + x) as usize] <= options.alpha_threshold {
++                x += 1;
++                continue;
++            }
++            let start = x;
++            while x < size && alpha[(y * size + x) as usize] > options.alpha_threshold {
++                x += 1;
++            }
++            rectangles.push(
++                Rect::new(
++                    (start as f64, (size - y - 1) as f64),
++                    (x as f64, (size - y) as f64),
++                )
++                .to_polygon(),
++            );
++        }
++    }
++    let source = unary_union(&rectangles);
++    let envelope = if options.preserve_holes {
++        source.clone()
++    } else {
++        unary_union(
++            &source
++                .0
++                .iter()
++                .map(|p| Polygon::new(p.exterior().clone(), vec![]))
++                .collect::<Vec<_>>(),
++        )
++    };
++    let image = MultiPolygon(vec![
++        Rect::new((0., 0.), (size as f64, size as f64)).to_polygon()
++    ]);
++    let offset = |distance| {
++        let shape = if distance == 0.0 {
++            envelope.clone()
++        } else {
++            envelope.buffer(distance)
++        };
++        if options.clip_to_image {
++            shape.intersection(&image)
++        } else {
++            shape
++        }
++    };
++    let minimum = offset(options.minimum_margin);
++    let maximum = offset(options.outside_margin);
++    (source, minimum, maximum)
++}
++
++fn domain(mesh: &MeshGeometry) -> MultiPolygon<f64> {
++    unary_union(
++        &mesh
++            .triangles
++            .iter()
++            .map(|t| {
++                let p = t.map(|i| mesh.positions[i as usize]);
++                Polygon::new(
++                    vec![
++                        (p[0].x as f64, p[0].y as f64),
++                        (p[1].x as f64, p[1].y as f64),
++                        (p[2].x as f64, p[2].y as f64),
++                        (p[0].x as f64, p[0].y as f64),
++                    ]
++                    .into(),
++                    vec![],
++                )
++            })
++            .collect::<Vec<_>>(),
++    )
++}
+
+ fn quality(mesh: &MeshGeometry) -> (f64, f64) {
+     let mut minimum = 180.0_f64;
+@@ -34,7 +118,34 @@
+         .map(|s| s.parse().unwrap())
+         .unwrap_or(9);
+     assert!(runs > 0);
+-    println!("case,median_ms,min_ms,max_ms,vertices,triangles,min_angle,under_10_deg_pct");
++    let sdf_step: Option<f64> = std::env::args()
++        .nth(2)
++        .filter(|s| s != "vector")
++        .map(|s| s.parse().unwrap());
++    let mode = std::env::args().nth(3).unwrap_or_else(|| "pure".into());
++    assert!(["pure", "hybrid", "interior"].contains(&mode.as_str()));
++    let hybrid = mode != "pure";
++    let interior = mode == "interior";
++    let backend = sdf_step.map_or_else(
++        || "vector".to_string(),
++        |step| {
++            format!(
++                "{}-{step}",
++                if interior {
++                    "interior"
++                } else if hybrid {
++                    "hybrid"
++                } else {
++                    "sdf"
++                }
++            )
++        },
++    );
++    let output = std::env::args().nth(4).map(std::path::PathBuf::from);
++    if let Some(dir) = &output {
++        std::fs::create_dir_all(dir).unwrap();
++    }
++    println!("case,backend,median_ms,min_ms,max_ms,vertices,triangles,min_angle,under_10_deg_pct,foreground_missing,min_margin_missing,beyond_max,source_area,status");
+     for name in [
+         "rectangle",
+         "circle",
+@@ -44,8 +155,18 @@
+         "holes",
+         "thin",
+         "sparse_canvas",
++        "large_circle",
++        "edge_clipped",
++        "single_pixel",
++        "diagonal_half_margin",
++        "zero_margin",
+     ] {
+-        let size = if name == "sparse_canvas" { 2048 } else { 512 };
++        let size = match name {
++            "sparse_canvas" => 2048,
++            "large_circle" => 1024,
++            "single_pixel" | "diagonal_half_margin" | "zero_margin" => 32,
++            _ => 512,
++        };
+         let alpha: Vec<_> = (0..size)
+             .flat_map(|y| {
+                 (0..size).map(move |x| {
+@@ -63,6 +184,14 @@
+                                 && (y as f64 - (256.0 + (x as f64 * 0.03).sin() * 100.0)).abs()
+                                     < 4.0
+                         }
++                        "large_circle" => {
++                            (x as f64 + 0.5 - 512.).hypot(y as f64 + 0.5 - 512.) < 440.
++                        }
++                        "edge_clipped" => {
++                            (x as f64 + 0.5 - 64.).hypot(y as f64 + 0.5 - 256.) < 230.
++                        }
++                        "single_pixel" => x == 16 && y == 16,
++                        "diagonal_half_margin" | "zero_margin" => (x + y) % 4 == 0,
+                         "sparse_canvas" => (900..1100).contains(&x) && (900..1100).contains(&y),
+                         _ => unreachable!(),
+                     };
+@@ -80,33 +209,81 @@
+         if name == "holes" {
+             options.preserve_holes = true;
+         }
++        if name == "diagonal_half_margin" || name == "zero_margin" {
++            options.outside_margin = if name == "zero_margin" { 0.0 } else { 0.5 };
++            options.minimum_margin = options.outside_margin;
++            options.inside_margin = 0.0;
++            options.preserve_holes = true;
++            options.minimum_boundary_points = 4;
++        }
+         let generate = || {
+-            alpha_mesh_geometry(
+-                AlphaMask {
+-                    width: size,
+-                    height: size,
+-                    alpha: &alpha,
+-                },
+-                &options,
+-            )
+-            .unwrap()
+-        };
+-        let mesh = generate();
++            let mask = AlphaMask {
++                width: size,
++                height: size,
++                alpha: &alpha,
++            };
++            #[cfg(feature = "experimental-alpha-sdf")]
++            if let Some(step) = sdf_step {
++                return kasane_sdk::alpha_mesh_geometry_sdf(
++                    mask,
++                    &options,
++                    kasane_sdk::AlphaMeshSdfOptions {
++                        grid_step: step,
++                        vector_ring_limit: if hybrid { 64 } else { 0 },
++                        preserve_vector_outline: interior,
++                    },
++                );
++            }
++            assert!(
++                sdf_step.is_none(),
++                "enable experimental-alpha-sdf for the SDF backend"
++            );
++            alpha_mesh_geometry(mask, &options)
++        };
++        let mesh = match generate() {
++            Ok(mesh) => mesh,
++            Err(error) => {
++                eprintln!("{backend}/{name}: {error}");
++                println!("{name},{backend},,,,,,,,,,,,{}", error.code);
++                continue;
++            }
++        };
+         let mut times = Vec::new();
+         for _ in 0..runs {
+             let start = Instant::now();
+-            black_box(generate());
++            black_box(generate().unwrap());
+             times.push(start.elapsed().as_secs_f64() * 1000.0);
+         }
+         times.sort_by(f64::total_cmp);
+         let (angle, skinny) = quality(&mesh);
++        let (source, minimum, maximum) = reference(size, &alpha, &options);
++        let generated = domain(&mesh);
++        let missing = source.difference(&generated).unsigned_area();
++        let margin_missing = minimum.difference(&generated).unsigned_area();
++        let excess = generated.difference(&maximum).unsigned_area();
+         println!(
+-            "{name},{:.3},{:.3},{:.3},{},{},{angle:.4},{skinny:.2}",
+-            times[runs / 2],
+-            times[0],
+-            times[runs - 1],
+-            mesh.positions.len(),
+-            mesh.triangles.len(),
++            "{name},{backend},{:.3},{:.3},{:.3},{},{},{angle:.4},{skinny:.2},{missing:.6},{margin_missing:.6},{excess:.6},{:.3},ok",
++            times[runs / 2], times[0], times[runs - 1], mesh.positions.len(), mesh.triangles.len(), source.unsigned_area(),
+         );
+-    }
+-}
++        if let Some(dir) = &output {
++            let rings: Vec<_> = source
++                .0
++                .iter()
++                .map(|p| {
++                    std::iter::once(p.exterior())
++                        .chain(p.interiors())
++                        .map(|r| r.0.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>())
++                        .collect::<Vec<_>>()
++                })
++                .collect();
++            let data = serde_json::json!({ "case": name, "backend": backend, "size": size,
++                "positions": mesh.positions.iter().map(|p| [p.x, p.y]).collect::<Vec<_>>(),
++                "triangles": mesh.triangles, "source": rings });
++            std::fs::write(
++                dir.join(format!("{name}-{backend}.json")),
++                serde_json::to_vec(&data).unwrap(),
++            )
++            .unwrap();
++        }
++    }
++}
+diff --git a/tools/alpha_mesh_sdf_bench.py b/tools/alpha_mesh_sdf_bench.py
+new file mode 100644
+--- /dev/null
++++ b/tools/alpha_mesh_sdf_bench.py
+@@ -0,0 +1,81 @@
++"""Compare vector, pure SDF and hybrid offsets without changing the default backend.
++
++uv run --locked python tools/alpha_mesh_sdf_bench.py --contracts
++uv run --locked --with matplotlib python tools/alpha_mesh_sdf_plot.py
++
++Contract failures are recorded as experimental results, not silently retried
++with the vector backend. Timing excludes mask construction and quality checks.
++"""
++import argparse
++import csv
++import json
++import os
++from pathlib import Path
++import platform
++import re
++import subprocess
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--runs", type=int, default=9)
++    parser.add_argument("--contracts", action="store_true")
++    parser.add_argument("--output", type=Path, default=Path("target/alpha-sdf"))
++    args = parser.parse_args()
++    if args.runs < 1:
++        parser.error("--runs must be positive")
++    root = Path(__file__).resolve().parents[1]
++    output = (root / args.output).resolve()
++    output.mkdir(parents=True, exist_ok=True)
++    build = ["cargo", "build", "--release", "--locked", "-p", "kasane-sdk",
++             "--features", "experimental-alpha-sdf", "--example", "alpha_mesh_profile"]
++    # Cargo's JSON output locates the binary even with CARGO_TARGET_DIR overrides.
++    built = subprocess.run(build + ["--message-format=json"], cwd=root, text=True, stdout=subprocess.PIPE, check=True)
++    binary = next(item["executable"] for line in built.stdout.splitlines()
++                  if (item := json.loads(line)).get("reason") == "compiler-artifact"
++                  and item.get("target", {}).get("name") == "alpha_mesh_profile" and item.get("executable"))
++    configurations = [("vector", "vector", "pure"), ("sdf-1", "1", "pure"),
++                      ("sdf-0.5", "0.5", "pure"), ("hybrid-1", "1", "hybrid"), ("interior-1", "1", "interior")]
++    for name, step, mode in configurations:
++        print(f"Benchmark: {name}, {args.runs} runs", flush=True)
++        with (output / f"{name}.csv").open("w") as stream:
++            subprocess.run([binary, str(args.runs), step, mode, str(output / "meshes")],
++                           cwd=root, stdout=stream, check=True)
++    with (output / "comparison.csv").open("w") as stream:
++        writer = None
++        for name, _, _ in configurations:
++            with (output / f"{name}.csv").open() as source:
++                reader = csv.DictReader(source)
++                if writer is None:
++                    writer = csv.DictWriter(stream, fieldnames=reader.fieldnames)
++                    writer.writeheader()
++                writer.writerows(reader)
++    metadata = {"runs": args.runs, "platform": platform.platform(), "machine": platform.machine(),
++                "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
++                "contracts": {}}
++    if args.contracts:
++        command = ["cargo", "test", "--release", "--locked", "-p", "kasane-sdk",
++                   "--features", "experimental-alpha-sdf", "--test", "alpha_mesh"]
++        for name, step, mode in configurations:
++            env = os.environ.copy()
++            env.pop("KASANE_ALPHA_TEST_SDF_STEP", None)
++            env.pop("KASANE_ALPHA_TEST_SDF_HYBRID", None)
++            env.pop("KASANE_ALPHA_TEST_SDF_INTERIOR", None)
++            if step != "vector":
++                env["KASANE_ALPHA_TEST_SDF_STEP"] = step
++                env["KASANE_ALPHA_TEST_SDF_HYBRID"] = "1" if mode != "pure" else "0"
++                env["KASANE_ALPHA_TEST_SDF_INTERIOR"] = "1" if mode == "interior" else "0"
++            result = subprocess.run(command, cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
++            (output / f"contracts-{name}.log").write_text(result.stdout)
++            summary = re.search(r"test result: \w+\. (\d+) passed; (\d+) failed", result.stdout)
++            if summary is None:
++                raise RuntimeError(f"Contract runner failed before producing results: {output / f'contracts-{name}.log'}")
++            passed, failed = map(int, summary.groups())
++            metadata["contracts"][name] = {"passed": passed, "failed": failed, "exit_code": result.returncode}
++            print(f"Contracts: {name}: {passed} passed, {failed} failed", flush=True)
++    (output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")
++    print(f"Results: {output}")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/tools/alpha_mesh_sdf_plot.py b/tools/alpha_mesh_sdf_plot.py
+new file mode 100644
+--- /dev/null
++++ b/tools/alpha_mesh_sdf_plot.py
+@@ -0,0 +1,85 @@
++"""Render exported benchmark meshes: uv run --locked --with matplotlib python tools/alpha_mesh_sdf_plot.py.
++
++Input/output directory defaults to target/alpha-sdf. Generate meshes with the
++alpha_mesh_profile Rust example's OUTPUT_DIRECTORY argument first.
++"""
++import argparse
++import csv
++import json
++from pathlib import Path
++
++import matplotlib
++
++matplotlib.use("Agg")
++import matplotlib.pyplot as plt
++from matplotlib.collections import LineCollection
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("directory", nargs="?", type=Path, default=Path("target/alpha-sdf"))
++    args = parser.parse_args()
++    cases = [
++        ("circle", "Circle", (0, 512, 0, 512)),
++        ("thin", "Curved thin strip", (0, 512, 120, 392)),
++        ("equal_margin", "Equal margin / boundary detail", (467, 493, 235, 277)),
++        ("diagonal_half_margin", "0.5 px margin / contact detail", (8, 16, 8, 16)),
++    ]
++    backends = [("vector", "Vector baseline"), ("sdf-1", "SDF / 1 px"), ("sdf-0.5", "SDF / 0.5 px"), ("interior-1", "Vector outline / SDF interior")]
++    fig, axes = plt.subplots(len(cases), len(backends), figsize=(16, 14), layout="constrained")
++    fig.set_facecolor("#f5f7fa")
++    fig.suptitle("Alpha mesh: vector vs raster distance fields", fontsize=19, weight="bold")
++    for row, (case, label, limits) in enumerate(cases):
++        for col, (backend, title) in enumerate(backends):
++            ax = axes[row, col]
++            data = json.loads((args.directory / "meshes" / f"{case}-{backend}.json").read_text())
++            for polygon in data["source"]:
++                for i, ring in enumerate(polygon):
++                    ax.fill(*zip(*ring), color="#ccd6df" if i == 0 else "white", zorder=0)
++            positions = data["positions"]
++            edges = set()
++            for triangle in data["triangles"]:
++                for i in range(3):
++                    a, b = triangle[i], triangle[(i + 1) % 3]
++                    edges.add((min(a, b), max(a, b)))
++            segments = [(positions[a], positions[b]) for a, b in sorted(edges)]
++            ax.add_collection(LineCollection(segments, colors="#245a83", linewidths=0.65))
++            if row >= 2:
++                ax.scatter(*zip(*positions), s=4, color="#de7143", zorder=3)
++            ax.set(xlim=limits[:2], ylim=limits[2:], aspect="equal")
++            ax.set_title((title + "\n" if row == 0 else "") + label, fontsize=10)
++            ax.text(0.02, 0.02, f"{len(positions):,} vertices / {len(data['triangles']):,} triangles (whole mesh)",
++                    transform=ax.transAxes, fontsize=8, bbox={"facecolor": "white", "alpha": 0.9, "edgecolor": "none"})
++            ax.tick_params(labelsize=7)
++            for spine in ax.spines.values():
++                spine.set_color("#cbd4dd")
++    fig.savefig(args.directory / "mesh-comparison.png", dpi=160)
++    plt.close(fig)
++
++    rows = []
++    for name in ["vector", "sdf-1", "sdf-0.5", "hybrid-1", "interior-1"]:
++        path = args.directory / f"{name}.csv"
++        if path.exists():
++            with path.open() as stream:
++                rows.extend(csv.DictReader(stream))
++    if not rows:
++        return
++    cases = ["rectangle", "circle", "curved_sharp", "islands", "holes", "thin", "equal_margin", "large_circle"]
++    fig, ax = plt.subplots(figsize=(12, 5), layout="constrained")
++    colors = ["#566477", "#468ac0", "#df9c59", "#459878", "#8666aa"]
++    for i, backend in enumerate(["vector", "sdf-1", "sdf-0.5", "hybrid-1", "interior-1"]):
++        timings = {row["case"]: float(row["median_ms"]) for row in rows if row["backend"] == backend and row["status"] == "ok"}
++        ax.bar([x + (i - 2) * 0.16 for x in range(len(cases))], [timings.get(case, 0) for case in cases],
++               width=0.16, label=backend, color=colors[i])
++    ax.set_xticks(range(len(cases)), [case.replace("_", " ") for case in cases], rotation=15)
++    ax.set_ylabel("Generation time / ms (median of 9 release runs)")
++    ax.set_title("Generation time; mask construction and quality checks excluded")
++    ax.legend(frameon=False)
++    ax.grid(axis="y", alpha=0.15)
++    ax.set_axisbelow(True)
++    fig.savefig(args.directory / "timing-comparison.png", dpi=160)
++    plt.close(fig)
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/modules/kasane-sdk/src/alpha_mesh/domain.rs b/modules/kasane-sdk/src/alpha_mesh/domain.rs
+--- a/modules/kasane-sdk/src/alpha_mesh/domain.rs
++++ b/modules/kasane-sdk/src/alpha_mesh/domain.rs
+@@ -1,6 +1,6 @@
+-use super::{error, limit, spatial, AlphaMask, AlphaMeshOptions};
++use super::{error, limit, offset::Offsets, spatial, AlphaMask, AlphaMeshOptions};
+ use crate::SdkError;
+-use geo::{unary_union, Area, BooleanOps, Buffer, Coord, MultiPolygon, Polygon, Rect};
++use geo::{unary_union, Area, BooleanOps, Coord, MultiPolygon, Polygon, Rect};
+ use std::collections::BTreeMap;
+
+ fn rectangle(left: u32, bottom: u32, right: u32, top: u32) -> Polygon<f64> {
+@@ -62,8 +62,12 @@
+     Ok(unary_union(&rectangles))
+ }
+
+-fn offset(source: &MultiPolygon<f64>, distance: f64) -> Result<MultiPolygon<f64>, SdkError> {
+-    let mut result = source.buffer(distance);
++fn offset(
++    source: &MultiPolygon<f64>,
++    distance: f64,
++    offsets: &mut Offsets,
++) -> Result<MultiPolygon<f64>, SdkError> {
++    let mut result = offsets.buffer(source, distance)?;
+     // Offsets can produce self-touching rings where pixel islands meet exactly
+     // at the requested margin. Normalize those rings before simplification;
+     // its conservative fallback must itself be a valid domain.
+@@ -82,6 +86,7 @@
+ pub(super) fn build(
+     mask: AlphaMask<'_>,
+     options: &AlphaMeshOptions,
++    offsets: &mut Offsets,
+ ) -> Result<(MultiPolygon<f64>, MultiPolygon<f64>), SdkError> {
+     let source = foreground(mask, options.alpha_threshold)?;
+     let envelope = if options.preserve_holes {
+@@ -99,14 +104,14 @@
+     let expanded = if options.outside_margin == 0.0 {
+         envelope.clone()
+     } else {
+-        offset(&envelope, options.outside_margin)?
++        offset(&envelope, options.outside_margin, offsets)?
+     };
+     let required = if options.minimum_margin == 0.0 {
+         envelope.clone()
+     } else if options.minimum_margin == options.outside_margin {
+         expanded.clone()
+     } else {
+-        offset(&envelope, options.minimum_margin)?
++        offset(&envelope, options.minimum_margin, offsets)?
+     };
+     // RDP alone can cut corners or collapse thin regions. Accept simplification
+     // only if topology is valid and the entire required padded area survives.
+@@ -115,7 +120,7 @@
+     // Simplify the complete offset before clipping. Clipping first creates long
+     // image-edge chords whose lost padding may be far from original vertices,
+     // making the local guard fall back to almost every raster corner.
+-    let outline = super::simplify::conservative(&expanded, &required, tolerance)?;
++    let outline = super::simplify::conservative(&expanded, &required, tolerance, offsets)?;
+     let redistributed = super::resample::smooth(
+         &outline,
+         &expanded,
+diff --git a/modules/kasane-sdk/src/alpha_mesh/mod.rs b/modules/kasane-sdk/src/alpha_mesh/mod.rs
+--- a/modules/kasane-sdk/src/alpha_mesh/mod.rs
++++ b/modules/kasane-sdk/src/alpha_mesh/mod.rs
+@@ -4,7 +4,10 @@
+ mod domain;
+ mod islands;
+ mod occupied;
++mod offset;
+ mod resample;
++#[cfg(feature = "experimental-alpha-sdf")]
++mod sdf;
+ mod simplify;
+ mod spatial;
+ mod support;
+@@ -140,6 +143,50 @@
+     mask: AlphaMask<'_>,
+     options: &AlphaMeshOptions,
+ ) -> Result<MeshGeometry, SdkError> {
++    generate(mask, options, &mut offset::Offsets::Vector, false)
++}
++
++/// Experimental raster-offset controls; not a replacement for the exact vector contract.
++#[cfg(feature = "experimental-alpha-sdf")]
++#[derive(Clone, Copy, Debug)]
++pub struct AlphaMeshSdfOptions {
++    /// Raster cell size in source pixels, in 0.25..=2.
++    pub grid_step: f64,
++    /// Use vector offsets when every ring has at most this many edges.
++    /// Zero selects pure SDF; 64 is the benchmark's hybrid setting.
++    pub vector_ring_limit: usize,
++    /// Keep all exterior construction/simplification offsets on the vector backend.
++    pub preserve_vector_outline: bool,
++}
++
++/// Experimental backend for benchmarks. Rasterization and contour interpolation
++/// may change coverage, margins, thin features and topology. No automatic fallback
++/// on errors; the production entry point continues to use vector offsets.
++/// Each field and the two-field cache are capped at 16 Mi samples. A field uses
++/// the source bounds plus the offset and two guard cells, not the whole image.
++#[cfg(feature = "experimental-alpha-sdf")]
++pub fn alpha_mesh_geometry_sdf(
++    mask: AlphaMask<'_>,
++    options: &AlphaMeshOptions,
++    experiment: AlphaMeshSdfOptions,
++) -> Result<MeshGeometry, SdkError> {
++    generate(
++        mask,
++        options,
++        &mut offset::Offsets::Sdf(sdf::Offsets::new(
++            experiment.grid_step,
++            experiment.vector_ring_limit,
++        )?),
++        experiment.preserve_vector_outline,
++    )
++}
++
++fn generate(
++    mask: AlphaMask<'_>,
++    options: &AlphaMeshOptions,
++    offsets: &mut offset::Offsets,
++    preserve_vector_outline: bool,
++) -> Result<MeshGeometry, SdkError> {
+     options.validate()?;
+     let count = (mask.width as usize).checked_mul(mask.height as usize);
+     if mask.width == 0 || mask.height == 0 || count != Some(mask.alpha.len()) {
+@@ -161,6 +208,10 @@
+     } else {
+         mask
+     };
+-    let (foreground, outline) = domain::build(mask, options)?;
+-    triangulate::generate(mask, options, &foreground, &outline)
+-}
++    let (foreground, outline) = if preserve_vector_outline {
++        domain::build(mask, options, &mut offset::Offsets::Vector)?
++    } else {
++        domain::build(mask, options, offsets)?
++    };
++    triangulate::generate(mask, options, &foreground, &outline, offsets)
++}
+diff --git a/modules/kasane-sdk/src/alpha_mesh/simplify.rs b/modules/kasane-sdk/src/alpha_mesh/simplify.rs
+--- a/modules/kasane-sdk/src/alpha_mesh/simplify.rs
++++ b/modules/kasane-sdk/src/alpha_mesh/simplify.rs
+@@ -1,8 +1,8 @@
+ //! Preserve difficult corners locally while simplifying smooth spans.
+-use super::spatial;
++use super::{offset::Offsets, spatial};
+ use crate::SdkError;
+ use geo::{
+-    Area, BooleanOps, Buffer, Coord, Intersects, LineString, MultiPolygon, Point, Polygon, Simplify,
++    Area, BooleanOps, Coord, Intersects, LineString, MultiPolygon, Point, Polygon, Simplify,
+ };
+
+ fn guarded_ring(
+@@ -38,6 +38,7 @@
+     expanded: &MultiPolygon<f64>,
+     required: &MultiPolygon<f64>,
+     mut tolerance: f64,
++    offsets: &mut Offsets,
+ ) -> Result<MultiPolygon<f64>, SdkError> {
+     for _ in 0..8 {
+         if tolerance <= 1e-6 {
+@@ -69,7 +70,7 @@
+             }
+             // Only protect raster corners near lost padding. Smooth spans keep
+             // the original tolerance, even if one sharp corner needs more detail.
+-            guard = guard.union(&missing.buffer(tolerance * 2.0));
++            guard = guard.union(&offsets.buffer(&missing, tolerance * 2.0)?);
+         }
+         tolerance *= 0.5;
+     }
+@@ -116,7 +117,7 @@
+         };
+         let expanded = MultiPolygon::new(vec![circle(100.0), tip(41.0, 0.0)]);
+         let required = MultiPolygon::new(vec![circle(97.0), tip(40.5, 1.0)]);
+-        let output = conservative(&expanded, &required, 2.0).unwrap();
++        let output = conservative(&expanded, &required, 2.0, &mut Offsets::Vector).unwrap();
+         assert!(output.is_valid());
+         assert_eq!(output.0.len(), 2);
+         assert!(required.difference(&output).unsigned_area() <= 1e-8);
+@@ -124,6 +125,9 @@
+             output.0[0].exterior().0.len() <= 20,
+             "a distant sharp feature forced dense sampling on the smooth circle"
+         );
+-        assert_eq!(output, conservative(&expanded, &required, 2.0).unwrap());
++        assert_eq!(
++            output,
++            conservative(&expanded, &required, 2.0, &mut Offsets::Vector).unwrap()
++        );
+     }
+ }
+diff --git a/modules/kasane-sdk/src/alpha_mesh/triangulate.rs b/modules/kasane-sdk/src/alpha_mesh/triangulate.rs
+--- a/modules/kasane-sdk/src/alpha_mesh/triangulate.rs
++++ b/modules/kasane-sdk/src/alpha_mesh/triangulate.rs
+@@ -2,13 +2,14 @@
+     classify::{self, Cdt},
+     error, limit,
+     occupied::Occupied,
++    offset::Offsets,
+     spatial::{self, PolygonIndex},
+     AlphaMask, AlphaMeshOptions,
+ };
+ use crate::{MeshGeometry, SdkError};
+ use geo::{
+-    unary_union, Area, BooleanOps, BoundingRect, Buffer, Contains, Coord, InteriorPoint,
+-    LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify,
++    unary_union, Area, BooleanOps, BoundingRect, Contains, Coord, InteriorPoint, LineString,
++    MultiLineString, MultiPolygon, Point, Polygon, Simplify,
+ };
+ use kasane_core::Vec2;
+ use spade::{handles::FixedVertexHandle, Point2, Triangulation};
+@@ -146,6 +147,7 @@
+     options: &AlphaMeshOptions,
+     foreground: &MultiPolygon<f64>,
+     outline: &MultiPolygon<f64>,
++    offsets: &mut Offsets,
+ ) -> Result<MeshGeometry, SdkError> {
+     let clearance = (options.inside_spacing * 0.3).max(0.001);
+     let mut sampler = Sampler {
+@@ -186,33 +188,37 @@
+     let support_foreground = if options.preserve_holes {
+         foreground.clone()
+     } else {
+-        let polygons: Vec<_> = foreground
+-            .0
+-            .iter()
+-            .map(|p| {
+-                Polygon::new(
+-                    p.exterior().clone(),
+-                    p.interiors()
+-                        .iter()
+-                        .filter(|ring| {
+-                            !Polygon::new((*ring).clone(), vec![])
+-                                .buffer(-options.inside_spacing * 0.5)
+-                                .0
+-                                .is_empty()
+-                        })
+-                        .cloned()
+-                        .collect(),
+-                )
+-            })
+-            .collect();
++        let mut polygons = Vec::new();
++        for p in &foreground.0 {
++            let mut holes = Vec::new();
++            for ring in p.interiors() {
++                if !offsets
++                    .polygon(
++                        &Polygon::new(ring.clone(), vec![]),
++                        -options.inside_spacing * 0.5,
++                    )?
++                    .0
++                    .is_empty()
++                {
++                    holes.push(ring.clone());
++                }
++            }
++            polygons.push(Polygon::new(p.exterior().clone(), holes));
++        }
+         unary_union(&polygons)
+     };
+     let inner = if options.inside_margin > 0.0 {
+-        let mut inset = support_foreground.buffer(-options.inside_margin);
++        let mut inset = offsets.buffer(&support_foreground, -options.inside_margin)?;
+         // A barely surviving inset makes two almost coincident support rows.
+         // Use the thin-feature chain instead for these sliver components.
+         let radius = (options.inside_spacing * 0.15).min(options.inside_margin * 0.5);
+-        inset.0.retain(|p| !p.buffer(-radius).0.is_empty());
++        let mut retained = Vec::new();
++        for p in inset.0 {
++            if !offsets.polygon(&p, -radius)?.0.is_empty() {
++                retained.push(p);
++            }
++        }
++        inset.0 = retained;
+         let mut simplified = inset.clone();
+         let mut tolerance = radius;
+         let mut required_inner = None;
+@@ -220,10 +226,14 @@
+             let candidate = inset.simplify(tolerance);
+             let redistributed =
+                 super::resample::smooth(&candidate, &inset, options.inside_spacing, 3);
++            if redistributed != candidate && required_inner.is_none() {
++                required_inner = Some(offsets.buffer(&inset, -radius)?);
++            }
+             let candidate = if redistributed != candidate
+                 && spatial::is_valid(&redistributed)?
+                 && required_inner
+-                    .get_or_insert_with(|| inset.buffer(-radius))
++                    .as_ref()
++                    .unwrap()
+                     .difference(&redistributed)
+                     .unsigned_area()
+                     <= 1e-8
+@@ -254,7 +264,7 @@
+         }
+         // A chordal-axis chain supplies support only outside the surviving core.
+         // Keep it away from the ring so a normal boundary band gains no extra row.
+-        let exclusion = inner.buffer(options.inside_margin * 0.5);
++        let exclusion = offsets.buffer(&inner, options.inside_margin * 0.5)?;
+         let support_domain = foreground.difference(&exclusion);
+         let clipped = support_domain.clip(&MultiLineString(chains), false);
+         let support_spacing = options
+@@ -330,7 +340,7 @@
+     // bounds only restrict enumeration; changing a bound must not shift sites.
+     let spacing = options.inside_spacing;
+     let dy = spacing * (3.0_f64).sqrt() * 0.5;
+-    let fill = inner.buffer(-clearance);
++    let fill = offsets.buffer(&inner, -clearance)?;
+     let fill_index = PolygonIndex::new(&fill);
+     for polygon in &inner.0 {
+         let bounds = polygon
+diff --git a/modules/kasane-sdk/src/alpha_mesh/offset.rs b/modules/kasane-sdk/src/alpha_mesh/offset.rs
+new file mode 100644
+--- /dev/null
++++ b/modules/kasane-sdk/src/alpha_mesh/offset.rs
+@@ -0,0 +1,31 @@
++//! Keep the vector implementation as the default and oracle for SDF experiments.
++use crate::SdkError;
++use geo::{Buffer, MultiPolygon, Polygon};
++
++pub(super) enum Offsets {
++    Vector,
++    #[cfg(feature = "experimental-alpha-sdf")]
++    Sdf(super::sdf::Offsets),
++}
++
++impl Offsets {
++    pub fn buffer(
++        &mut self,
++        source: &MultiPolygon<f64>,
++        distance: f64,
++    ) -> Result<MultiPolygon<f64>, SdkError> {
++        match self {
++            Self::Vector => Ok(source.buffer(distance)),
++            #[cfg(feature = "experimental-alpha-sdf")]
++            Self::Sdf(sdf) => sdf.buffer(source, distance),
++        }
++    }
++
++    pub fn polygon(
++        &mut self,
++        source: &Polygon<f64>,
++        distance: f64,
++    ) -> Result<MultiPolygon<f64>, SdkError> {
++        self.buffer(&MultiPolygon(vec![source.clone()]), distance)
++    }
++}
+diff --git a/modules/kasane-sdk/src/alpha_mesh/sdf.rs b/modules/kasane-sdk/src/alpha_mesh/sdf.rs
+new file mode 100644
+--- /dev/null
++++ b/modules/kasane-sdk/src/alpha_mesh/sdf.rs
+@@ -0,0 +1,459 @@
++//! Experimental raster offsets. Pixel-square boundaries seed an exact grid EDT;
++//! rasterization of non-raster polygons and contour interpolation remain approximate.
++use super::{error, limit};
++use crate::SdkError;
++use geo::{
++    Area, BoundingRect, Buffer, Contains, Coord, LineString, MultiPolygon, Point, Polygon, Simplify,
++};
++use std::collections::HashMap;
++
++const MAX_SAMPLES: usize = 16 * 1024 * 1024;
++
++pub(super) struct Offsets {
++    step: f64,
++    vector_ring_limit: usize,
++    cache: Vec<(MultiPolygon<f64>, Field)>,
++}
++
++impl Offsets {
++    pub fn new(step: f64, vector_ring_limit: usize) -> Result<Self, SdkError> {
++        if !step.is_finite() || !(0.25..=2.0).contains(&step) {
++            return Err(error(
++                "INVALID_ALPHA_SDF_STEP",
++                "Use an experimental SDF grid step in 0.25..=2 pixels",
++            ));
++        }
++        Ok(Self {
++            step,
++            vector_ring_limit,
++            cache: Vec::new(),
++        })
++    }
++
++    pub fn buffer(
++        &mut self,
++        source: &MultiPolygon<f64>,
++        distance: f64,
++    ) -> Result<MultiPolygon<f64>, SdkError> {
++        if distance == 0.0 || source.0.is_empty() {
++            return Ok(source.clone());
++        }
++        if self.vector_ring_limit > 0
++            && source
++                .0
++                .iter()
++                .flat_map(|p| std::iter::once(p.exterior()).chain(p.interiors()))
++                .all(|r| r.0.len().saturating_sub(1) <= self.vector_ring_limit)
++        {
++            return Ok(source.buffer(distance));
++        }
++        if let Some((_, field)) = self
++            .cache
++            .iter()
++            .find(|(shape, field)| shape == source && field.padding >= distance.max(0.0))
++        {
++            return field.contours(distance);
++        }
++        // Two recent fields reuse exterior/minimum and inset/guard queries.
++        // Bound retained storage independently of the number of small islands.
++        let field = Field::new(source, self.step, distance.max(0.0))?;
++        let result = field.contours(distance)?;
++        while self.cache.len() >= 2
++            || self
++                .cache
++                .iter()
++                .map(|(_, f)| f.values.len())
++                .sum::<usize>()
++                + field.values.len()
++                > MAX_SAMPLES
++        {
++            self.cache.remove(0);
++        }
++        self.cache.push((source.clone(), field));
++        Ok(result)
++    }
++}
++
++struct Field {
++    origin: [f64; 2],
++    step: f64,
++    nx: usize,
++    ny: usize,
++    padding: f64,
++    values: Vec<f32>,
++}
++
++impl Field {
++    fn new(source: &MultiPolygon<f64>, step: f64, padding: f64) -> Result<Self, SdkError> {
++        let bounds = source.bounding_rect().ok_or_else(limit)?;
++        let pad = (padding / step).ceil() + 2.0;
++        let origin = [
++            (bounds.min().x / step).floor() - pad,
++            (bounds.min().y / step).floor() - pad,
++        ];
++        let columns = (bounds.max().x / step).ceil() - origin[0] + pad;
++        let rows = (bounds.max().y / step).ceil() - origin[1] + pad;
++        if !columns.is_finite()
++            || !rows.is_finite()
++            || (columns + 1.0) * (rows + 1.0) > MAX_SAMPLES as f64
++        {
++            return Err(limit());
++        }
++        let (w, h) = (columns as usize, rows as usize);
++        let origin = [origin[0] * step, origin[1] * step];
++        let mut filled = vec![false; w * h];
++        let edges: Vec<_> = source
++            .0
++            .iter()
++            .flat_map(|p| std::iter::once(p.exterior()).chain(p.interiors()))
++            .flat_map(|r| r.0.windows(2).map(|s| (s[0], s[1])))
++            .filter(|(a, b)| a.y != b.y)
++            .collect();
++        if edges.len().saturating_mul(h) > 64 * 1024 * 1024 {
++            return Err(limit());
++        }
++        let mut crossings = Vec::new();
++        for y in 0..h {
++            let py = origin[1] + (y as f64 + 0.5) * step;
++            crossings.clear();
++            for &(a, b) in &edges {
++                if (a.y > py) != (b.y > py) {
++                    crossings.push(a.x + (py - a.y) * (b.x - a.x) / (b.y - a.y));
++                }
++            }
++            crossings.sort_by(f64::total_cmp);
++            for pair in crossings.chunks_exact(2) {
++                let left = ((pair[0] - origin[0]) / step - 0.5)
++                    .ceil()
++                    .clamp(0.0, w as f64) as usize;
++                let right = ((pair[1] - origin[0]) / step - 0.5)
++                    .ceil()
++                    .clamp(0.0, w as f64) as usize;
++                filled[y * w + left..y * w + right].fill(true);
++            }
++        }
++        let (nx, ny) = (w + 1, h + 1);
++        let mut values = vec![f32::INFINITY; nx * ny];
++        let pixel = |x: usize, y: usize| x < w && y < h && filled[y * w + x];
++        // At grid nodes the closest point on an axis-aligned raster edge is
++        // another grid node. Seeding all boundary nodes gives exact distances
++        // there, including pixel corners (unlike a center EDT minus 0.5).
++        for y in 0..ny {
++            for x in 0..nx {
++                let adjacent = [
++                    pixel(x, y),
++                    pixel(x.wrapping_sub(1), y),
++                    pixel(x, y.wrapping_sub(1)),
++                    pixel(x.wrapping_sub(1), y.wrapping_sub(1)),
++                ];
++                if adjacent.iter().any(|&v| v) && adjacent.iter().any(|&v| !v) {
++                    values[y * nx + x] = 0.0;
++                }
++            }
++        }
++        let mut transform = Transform::new(nx.max(ny));
++        for row in values.chunks_exact_mut(nx) {
++            transform.apply(row);
++        }
++        let mut column = vec![0.0; ny];
++        for x in 0..nx {
++            for y in 0..ny {
++                column[y] = values[y * nx + x];
++            }
++            transform.apply(&mut column);
++            for y in 0..ny {
++                let sign = if pixel(x, y) { -1.0 } else { 1.0 };
++                values[y * nx + x] = column[y].sqrt() * step as f32 * sign;
++            }
++        }
++        Ok(Self {
++            origin,
++            step,
++            nx,
++            ny,
++            padding,
++            values,
++        })
++    }
++
++    fn contours(&self, level: f64) -> Result<MultiPolygon<f64>, SdkError> {
++        // Resolve exact-on-node levels consistently. Remove resulting tiny
++        // segments before f32 export; this is part of the experimental error.
++        let level = level + self.step * 1e-7;
++        let mut nodes: HashMap<usize, (Coord<f64>, Vec<usize>)> = HashMap::new();
++        let mut order = Vec::new();
++        for y in 0..self.ny - 1 {
++            for x in 0..self.nx - 1 {
++                let indices = [
++                    y * self.nx + x,
++                    y * self.nx + x + 1,
++                    (y + 1) * self.nx + x + 1,
++                    (y + 1) * self.nx + x,
++                ];
++                let f = indices.map(|i| level - self.values[i] as f64);
++                let inside = f.map(|v| v >= 0.0);
++                if inside.iter().all(|&v| v) || inside.iter().all(|&v| !v) {
++                    continue;
++                }
++                let points = [(x, y), (x + 1, y), (x + 1, y + 1), (x, y + 1)];
++                let keys = [
++                    y * (self.nx - 1) + x,
++                    (self.nx - 1) * self.ny + y * self.nx + x + 1,
++                    (y + 1) * (self.nx - 1) + x,
++                    (self.nx - 1) * self.ny + y * self.nx + x,
++                ];
++                let mut crossings = Vec::with_capacity(4);
++                for i in 0..4 {
++                    let j = (i + 1) % 4;
++                    if inside[i] == inside[j] {
++                        continue;
++                    }
++                    let t = f[i] / (f[i] - f[j]);
++                    let p = Coord {
++                        x: self.origin[0]
++                            + (points[i].0 as f64 + t * (points[j].0 as f64 - points[i].0 as f64))
++                                * self.step,
++                        y: self.origin[1]
++                            + (points[i].1 as f64 + t * (points[j].1 as f64 - points[i].1 as f64))
++                                * self.step,
++                    };
++                    crossings.push(i);
++                    nodes.entry(keys[i]).or_insert_with(|| {
++                        order.push(keys[i]);
++                        (p, Vec::with_capacity(2))
++                    });
++                }
++                let pairs = if crossings.len() == 2 {
++                    vec![(crossings[0], crossings[1])]
++                } else if f[0] * f[2] >= f[1] * f[3] {
++                    vec![(0, 1), (2, 3)]
++                } else {
++                    vec![(0, 3), (1, 2)]
++                };
++                for (a, b) in pairs {
++                    nodes.get_mut(&keys[a]).unwrap().1.push(keys[b]);
++                    nodes.get_mut(&keys[b]).unwrap().1.push(keys[a]);
++                }
++                if nodes.len() > 1_048_576 {
++                    return Err(limit());
++                }
++            }
++        }
++        let mut rings = Vec::new();
++        for start in order {
++            if !nodes.contains_key(&start) {
++                continue;
++            }
++            let mut ring = Vec::new();
++            let (mut previous, mut current) = (usize::MAX, start);
++            loop {
++                let (p, neighbors) = nodes.remove(&current).ok_or_else(|| {
++                    error("ALPHA_SDF_CONTOUR", "Open or intersecting SDF contour")
++                })?;
++                if neighbors.len() != 2 {
++                    return Err(error(
++                        "ALPHA_SDF_CONTOUR",
++                        "SDF contour reaches the field boundary",
++                    ));
++                }
++                ring.push(p);
++                let next = if neighbors[0] == previous {
++                    neighbors[1]
++                } else {
++                    neighbors[0]
++                };
++                previous = current;
++                current = next;
++                if current == start {
++                    break;
++                }
++            }
++            ring.push(ring[0]);
++            let ring = LineString(ring).simplify(self.step * 0.001);
++            if ring.0.len() >= 4 {
++                rings.push(Polygon::new(ring, vec![]));
++            }
++        }
++        rings.sort_by(|a, b| b.unsigned_area().total_cmp(&a.unsigned_area()));
++        let mut depths = vec![0; rings.len()];
++        let mut owners = vec![0; rings.len()];
++        let mut output: Vec<Polygon<f64>> = Vec::new();
++        let mut checks = 0;
++        for i in 0..rings.len() {
++            let p = Point::from(rings[i].exterior().0[0]);
++            let mut parent = None;
++            for j in (0..i).rev() {
++                checks += 1;
++                if checks > 1_048_576 {
++                    return Err(limit());
++                }
++                if rings[j].contains(&p) {
++                    parent = Some(j);
++                    break;
++                }
++            }
++            depths[i] = parent.map_or(0, |j| depths[j] + 1);
++            if depths[i] % 2 == 0 {
++                owners[i] = output.len();
++                output.push(rings[i].clone());
++            } else {
++                owners[i] = owners[parent.unwrap()];
++                output[owners[i]].interiors_push(rings[i].exterior().clone());
++            }
++        }
++        Ok(MultiPolygon(output))
++    }
++}
++
++/// Separable squared EDT, lower envelope of parabolas (Felzenszwalb/Huttenlocher).
++/// https://theoryofcomputing.org/articles/v008a019/
++struct Transform {
++    sites: Vec<usize>,
++    limits: Vec<f64>,
++    input: Vec<f32>,
++}
++impl Transform {
++    fn new(n: usize) -> Self {
++        Self {
++            sites: Vec::with_capacity(n),
++            limits: Vec::with_capacity(n),
++            input: Vec::with_capacity(n),
++        }
++    }
++    fn apply(&mut self, values: &mut [f32]) {
++        self.input.clear();
++        self.input.extend_from_slice(values);
++        self.sites.clear();
++        self.limits.clear();
++        for (q, &cost) in self.input.iter().enumerate() {
++            if !cost.is_finite() {
++                continue;
++            }
++            let mut crossing = f64::NEG_INFINITY;
++            while let Some(&p) = self.sites.last() {
++                crossing = ((cost as f64 + (q * q) as f64)
++                    - (self.input[p] as f64 + (p * p) as f64))
++                    / (2.0 * (q - p) as f64);
++                if crossing > *self.limits.last().unwrap() {
++                    break;
++                }
++                self.sites.pop();
++                self.limits.pop();
++            }
++            if self.sites.is_empty() {
++                crossing = f64::NEG_INFINITY;
++            }
++            self.sites.push(q);
++            self.limits.push(crossing);
++        }
++        if self.sites.is_empty() {
++            return;
++        }
++        let mut k = 0;
++        for (q, value) in values.iter_mut().enumerate() {
++            while k + 1 < self.sites.len() && self.limits[k + 1] < q as f64 {
++                k += 1;
++            }
++            let p = self.sites[k];
++            *value = ((q as f64 - p as f64).powi(2) + self.input[p] as f64) as f32;
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use geo::Rect;
++
++    #[test]
++    fn transform_matches_brute_force_including_empty_scanlines() {
++        let mut transform = Transform::new(32);
++        for seed in 0..32 {
++            let input: Vec<_> = (0..32)
++                .map(|x| {
++                    if (x * 17 + seed * 7) % 11 < 3 {
++                        (x % 5) as f32
++                    } else {
++                        f32::INFINITY
++                    }
++                })
++                .collect();
++            let mut actual = input.clone();
++            transform.apply(&mut actual);
++            for (x, &distance) in actual.iter().enumerate() {
++                let expected = input
++                    .iter()
++                    .enumerate()
++                    .map(|(y, &v)| v + (x as f32 - y as f32).powi(2))
++                    .fold(f32::INFINITY, f32::min);
++                assert_eq!(distance, expected);
++            }
++        }
++        let mut empty = [f32::INFINITY; 32];
++        transform.apply(&mut empty);
++        assert!(empty.iter().all(|v| v.is_infinite()));
++    }
++
++    #[test]
++    fn grid_distances_match_pixel_square_edges_and_corners() {
++        let source = MultiPolygon(vec![Rect::new((0., 0.), (4., 6.)).to_polygon()]);
++        for step in [0.25, 0.5, 1., 2.] {
++            let field = Field::new(&source, step, 3.).unwrap();
++            for y in 0..field.ny {
++                for x in 0..field.nx {
++                    let px = field.origin[0] + x as f64 * step;
++                    let py = field.origin[1] + y as f64 * step;
++                    let dx = (-px).max(px - 4.).max(0.);
++                    let dy = (-py).max(py - 6.).max(0.);
++                    let expected = if dx > 0. || dy > 0. {
++                        dx.hypot(dy)
++                    } else {
++                        -px.min(4. - px).min(py).min(6. - py)
++                    };
++                    assert!((field.values[y * field.nx + x] as f64 - expected).abs() < 1e-5);
++                }
++            }
++            let inset = field.contours(-1.).unwrap();
++            assert!(inset.contains(&Point::new(2., 3.)));
++            assert!(!inset.contains(&Point::new(0.5, 3.)));
++            assert!(field.contours(-4.).unwrap().0.is_empty());
++        }
++    }
++
++    #[test]
++    fn zero_offsets_preserve_exact_geometry_and_large_fields_are_bounded() {
++        let source = MultiPolygon(vec![Rect::new((0., 0.), (1., 1.)).to_polygon()]);
++        let mut offsets = Offsets::new(0.5, 0).unwrap();
++        assert_eq!(offsets.buffer(&source, 0.).unwrap(), source);
++        assert!(offsets.buffer(&source, 1_000_000.).is_err());
++        for invalid in [0., f64::NAN, f64::INFINITY, 0.01] {
++            assert!(Offsets::new(invalid, 0).is_err());
++        }
++    }
++
++    #[test]
++    fn marching_squares_keeps_holes_nested_islands_and_deterministic_saddles() {
++        let rect = |a, b| Rect::new(a, b).to_polygon();
++        let source = MultiPolygon(vec![
++            Polygon::new(
++                rect((0., 0.), (20., 20.)).exterior().clone(),
++                vec![rect((4., 4.), (16., 16.)).exterior().clone()],
++            ),
++            rect((8., 8.), (12., 12.)),
++        ]);
++        let mut offsets = Offsets::new(0.5, 0).unwrap();
++        let expanded = offsets.buffer(&source, 1.).unwrap();
++        assert!(super::super::spatial::is_valid(&expanded).unwrap());
++        assert!(expanded.contains(&Point::new(1., 1.)));
++        assert!(!expanded.contains(&Point::new(6., 6.)));
++        assert!(expanded.contains(&Point::new(10., 10.)));
++        assert_eq!(expanded, offsets.buffer(&source, 1.).unwrap());
++        let saddle = MultiPolygon(vec![rect((0., 0.), (1., 1.)), rect((1., 1.), (2., 2.))]);
++        let a = offsets.buffer(&saddle, 0.5).unwrap();
++        assert!(super::super::spatial::is_valid(&a).unwrap());
++        assert_eq!(
++            a,
++            Offsets::new(0.5, 0).unwrap().buffer(&saddle, 0.5).unwrap()
++        );
++    }
++}

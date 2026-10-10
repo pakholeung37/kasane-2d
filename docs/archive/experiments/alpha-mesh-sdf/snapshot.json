@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-10",
+  "original_head": "8c7ce5509299aeb77e2f24f0f2f8f2aeccff2326",
+  "patch_base": "First-round optimization committed alongside this archive",
+  "files": {
+    "modules/kasane-sdk/Cargo.toml": {
+      "base_sha256": "5e00aabe19b2975c3a2c59eb56317b0018162bbbeb06c7376547838f3dc58049",
+      "experiment_sha256": "fcf2051a30b58c8ff0247884c3b5186f391b0c7c2bfbde9217b676ef2fa85c33"
+    },
+    "modules/kasane-sdk/src/lib.rs": {
+      "base_sha256": "db0ecb489be8871e95436b1e2790583327a7031f026b94df888966e787c712dd",
+      "experiment_sha256": "a06f5c3af270be25a22cd846439ff5b7b8ec7f0c84cb838f66d2fcbdfab3de8e"
+    },
+    "modules/kasane-sdk/tests/alpha_mesh.rs": {
+      "base_sha256": "47c71fc4a8e0efc0df59a9646af10d1e5f90190d57b3bc778e99642647372d97",
+      "experiment_sha256": "0c3a2acbcb09d39c8f628ad2bcb0be20c56f01aa742fc29758bacebe856f62ba"
+    },
+    "modules/kasane-sdk/examples/alpha_mesh_profile.rs": {
+      "base_sha256": "505b9b3dcfa1872f31745f9b1034e25db35fec15fe08a58f522c6f8987bec354",
+      "experiment_sha256": "2bd7829d4322e26436d9a35213d44243ed5e11d19d802286ffce736ba045591c"
+    },
+    "tools/alpha_mesh_sdf_bench.py": {
+      "base_sha256": null,
+      "experiment_sha256": "db6e072fad79ac7960b27bce65fc6c562dfc8445b414fae2eac6143346f6dd9a"
+    },
+    "tools/alpha_mesh_sdf_plot.py": {
+      "base_sha256": null,
+      "experiment_sha256": "b72659cc9cd91da1c097cad0ca941e278aa6a6e144820eb9c4367537319fd7fe"
+    },
+    "modules/kasane-sdk/src/alpha_mesh/domain.rs": {
+      "base_sha256": "11268e6491f71fb467bc9dbb4d684cd866ee1e3d35a7dc4dbe9053e84920a475",
+      "experiment_sha256": "6af0d408bc059b95b1fdece92198bcf79232dcf3c71290e836c13d7f6e92ce5e"
+    },
+    "modules/kasane-sdk/src/alpha_mesh/mod.rs": {
+      "base_sha256": "321992b0e696fabecf96c112951a16bb4cf3d43583726a0b4f05fe8093430b98",
+      "experiment_sha256": "1afcc98c78bfda130a5224ba0f379e6b0e084de7b81ac52d6e8412032a01c57f"
+    },
+    "modules/kasane-sdk/src/alpha_mesh/simplify.rs": {
+      "base_sha256": "b9d6834c6824b7d6c6290f0c79e959e46e61e69e7744b6e696e82b9d4573c507",
+      "experiment_sha256": "1c702bf0bc7d01c54c82c81677a7684846220fbaef9a0397adde33ca327d234c"
+    },
+    "modules/kasane-sdk/src/alpha_mesh/triangulate.rs": {
+      "base_sha256": "a049cb3e6fc80b6ed09e23a96188e7b57320b570fb3c6f87f077a8fc3a670c95",
+      "experiment_sha256": "196a0a3ad43e6fb9a635b4c74497b6c7d3518be698add90cf3ca16c15a9ecdc8"
+    },
+    "modules/kasane-sdk/src/alpha_mesh/offset.rs": {
+      "base_sha256": null,
+      "experiment_sha256": "4b8a67f2246a4a4c91ba09acba6bad3f20cc7a89bf3626f3bdf661618395f02b"
+    },
+    "modules/kasane-sdk/src/alpha_mesh/sdf.rs": {
+      "base_sha256": null,
+      "experiment_sha256": "ef3d6caa7b84605a1ab4dcaaff5f2d337e2a730dd46f0125d15a361df08eaea6"
+    }
+  }
+}

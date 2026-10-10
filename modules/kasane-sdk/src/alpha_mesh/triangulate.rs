@@ -1,5 +1,7 @@
 use super::{
+    classify::{self, Cdt},
     error, limit,
+    occupied::Occupied,
     spatial::{self, PolygonIndex},
     AlphaMask, AlphaMeshOptions,
 };
@@ -9,21 +11,19 @@ use geo::{
     LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify,
 };
 use kasane_core::Vec2;
-use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
-use std::collections::HashMap;
-
-type Cdt = ConstrainedDelaunayTriangulation<Point2<f64>>;
+use spade::{handles::FixedVertexHandle, Point2, Triangulation};
 
 struct Sampler {
     cdt: Cdt,
+    occupied: Occupied,
+    outline: Vec<(FixedVertexHandle, FixedVertexHandle)>,
     remaining: usize,
     max_vertices: usize,
     extent: Option<[f64; 2]>,
 }
 
 impl Sampler {
-    fn insert(&mut self, p: Coord<f64>) -> Result<spade::handles::FixedVertexHandle, SdkError> {
-        self.remaining = self.remaining.checked_sub(1).ok_or_else(limit)?;
+    fn point(&self, p: Coord<f64>) -> Point2<f64> {
         // Quantize before triangulation: f32 output must not collapse distinct
         // f64 vertices or turn a valid triangle inside out during conversion.
         let p = if let Some(extent) = self.extent {
@@ -34,7 +34,13 @@ impl Sampler {
         } else {
             p
         };
-        let p = Point2::new(p.x as f32 as f64, p.y as f32 as f64);
+        Point2::new(p.x as f32 as f64, p.y as f32 as f64)
+    }
+
+    fn insert(&mut self, p: Coord<f64>) -> Result<FixedVertexHandle, SdkError> {
+        self.remaining = self.remaining.checked_sub(1).ok_or_else(limit)?;
+        let p = self.point(p);
+        let before = self.cdt.num_vertices();
         let handle = self
             .cdt
             .insert(p)
@@ -42,7 +48,22 @@ impl Sampler {
         if self.cdt.num_vertices() > self.max_vertices {
             return Err(limit());
         }
+        if self.cdt.num_vertices() != before {
+            self.occupied.insert(p);
+        }
         Ok(handle)
+    }
+
+    fn insert_spaced(
+        &mut self,
+        p: Coord<f64>,
+        clearance: f64,
+    ) -> Result<Option<FixedVertexHandle>, SdkError> {
+        if self.occupied.nearby(self.point(p), clearance) {
+            self.remaining = self.remaining.checked_sub(1).ok_or_else(limit)?;
+            return Ok(None);
+        }
+        self.insert(p).map(Some)
     }
 
     fn ring(
@@ -50,7 +71,8 @@ impl Sampler {
         ring: &LineString<f64>,
         spacing: f64,
         minimum: usize,
-    ) -> Result<LineString<f64>, SdkError> {
+        boundary: bool,
+    ) -> Result<(), SdkError> {
         let perimeter: f64 = ring
             .0
             .windows(2)
@@ -111,15 +133,11 @@ impl Sampler {
                 ));
             }
         }
-        let mut coordinates: Vec<_> = handles
-            .iter()
-            .map(|&handle| {
-                let p = self.cdt.vertex(handle).position();
-                Coord { x: p.x, y: p.y }
-            })
-            .collect();
-        coordinates.push(coordinates[0]);
-        Ok(LineString::new(coordinates))
+        if boundary {
+            self.outline
+                .extend((0..handles.len()).map(|i| (handles[i], handles[(i + 1) % handles.len()])));
+        }
+        Ok(())
     }
 }
 
@@ -129,37 +147,34 @@ pub(super) fn generate(
     foreground: &MultiPolygon<f64>,
     outline: &MultiPolygon<f64>,
 ) -> Result<MeshGeometry, SdkError> {
+    let clearance = (options.inside_spacing * 0.3).max(0.001);
     let mut sampler = Sampler {
         cdt: Cdt::new(),
+        occupied: Occupied::new(clearance),
+        outline: Vec::new(),
         remaining: 1_048_576,
         max_vertices: options.max_vertices,
         extent: options
             .clip_to_image
             .then_some([mask.width as f64, mask.height as f64]),
     };
-    let mut quantized = Vec::new();
     for polygon in &outline.0 {
-        let mut rings = Vec::new();
         for ring in std::iter::once(polygon.exterior()).chain(polygon.interiors()) {
-            rings.push(sampler.ring(
+            sampler.ring(
                 ring,
                 options.outside_spacing,
                 options.minimum_boundary_points,
-            )?);
+                true,
+            )?;
         }
-        let exterior = rings.remove(0);
-        quantized.push(Polygon::new(exterior, rings));
     }
-    // Classify against the sampled f32 boundary. The pre-quantized outline can
-    // misclassify tiny outside slivers between nearly collinear samples.
-    let domain = MultiPolygon(quantized);
-    let domain_index = PolygonIndex::new(&domain);
     // Build the thin-feature support graph before adding internal constraints.
     let chains = if options.inside_margin > 0.0 {
+        // Classify the actual sampled f32 boundary, including any split edges.
+        let inside = classify::faces(&sampler.cdt, &sampler.outline)?;
         super::support::chains(
             &sampler.cdt,
-            &domain,
-            &domain_index,
+            &inside,
             (options.inside_margin + options.outside_margin).min(options.inside_spacing) * 0.15,
         )
     } else {
@@ -234,7 +249,7 @@ pub(super) fn generate(
     if options.inside_margin > 0.0 {
         for polygon in &inner.0 {
             for ring in std::iter::once(polygon.exterior()).chain(polygon.interiors()) {
-                sampler.ring(ring, options.inside_spacing, 3)?;
+                sampler.ring(ring, options.inside_spacing, 3, false)?;
             }
         }
         // A chordal-axis chain supplies support only outside the surviving core.
@@ -245,6 +260,8 @@ pub(super) fn generate(
         let support_spacing = options
             .inside_spacing
             .min(2.0 * (options.inside_margin + options.outside_margin));
+        let support_clearance = clearance.min(support_spacing * 0.3);
+        let mut supported_chains = Vec::new();
         for chain in clipped {
             let length: f64 = chain
                 .0
@@ -255,7 +272,17 @@ pub(super) fn generate(
             {
                 continue;
             }
-            for segment in chain.0.windows(2) {
+            // Branch tips and junctions are mandatory deformation sites, like
+            // ring vertices. Reserve them before filtering optional samples.
+            let endpoints = [
+                sampler.insert(chain.0[0])?,
+                sampler.insert(*chain.0.last().unwrap())?,
+            ];
+            supported_chains.push((chain, endpoints));
+        }
+        for (chain, endpoints) in supported_chains {
+            let mut previous = None;
+            for (segment_index, segment) in chain.0.windows(2).enumerate() {
                 let [a, b] = [segment[0], segment[1]];
                 let steps = ((b.x - a.x).hypot(b.y - a.y) / support_spacing)
                     .ceil()
@@ -263,13 +290,30 @@ pub(super) fn generate(
                 if steps + 1.0 > sampler.remaining as f64 {
                     return Err(limit());
                 }
-                let mut previous = None;
                 for i in 0..=steps as usize {
+                    if segment_index > 0 && i == 0 {
+                        continue;
+                    }
                     let t = i as f64 / steps;
-                    let handle = sampler.insert(Coord {
-                        x: a.x + (b.x - a.x) * t,
-                        y: a.y + (b.y - a.y) * t,
-                    })?;
+                    let handle = if segment_index == 0 && i == 0 {
+                        Some(endpoints[0])
+                    } else if segment_index + 2 == chain.0.len() && i == steps as usize {
+                        Some(endpoints[1])
+                    } else {
+                        sampler.insert_spaced(
+                            Coord {
+                                x: a.x + (b.x - a.x) * t,
+                                y: a.y + (b.y - a.y) * t,
+                            },
+                            support_clearance,
+                        )?
+                    };
+                    let Some(handle) = handle else {
+                        // Do not connect across a skipped site near another
+                        // branch or an authored ring.
+                        previous = None;
+                        continue;
+                    };
                     if let Some(prev) = previous {
                         if prev != handle {
                             // Simplified branches may cross. Keep their support
@@ -282,60 +326,38 @@ pub(super) fn generate(
             }
         }
     }
-    // Staggered lattice; enumerate component bounds instead of the image/atlas.
+    // Anchor the staggered lattice in source-image coordinates. Component
+    // bounds only restrict enumeration; changing a bound must not shift sites.
     let spacing = options.inside_spacing;
     let dy = spacing * (3.0_f64).sqrt() * 0.5;
-    // A lattice point almost coincident with a support/boundary point produces
-    // a tiny edge and a cascade of unnecessary refinement around that edge.
-    // Keep the authored rings intact, and give only fill points this clearance.
-    let clearance = (spacing * 0.3).max(0.001);
     let fill = inner.buffer(-clearance);
     let fill_index = PolygonIndex::new(&fill);
-    let bucket = |x: f64, y: f64| {
-        (
-            (x / clearance).floor() as i64,
-            (y / clearance).floor() as i64,
-        )
-    };
-    let mut occupied: HashMap<_, Vec<Point2<f64>>> = HashMap::new();
-    for vertex in sampler.cdt.vertices() {
-        let p = vertex.position();
-        occupied.entry(bucket(p.x, p.y)).or_default().push(p);
-    }
     for polygon in &inner.0 {
         let bounds = polygon
             .bounding_rect()
             .ok_or_else(|| error("ALPHA_MESH_GEOMETRY", "Empty boundary"))?;
         let rows = (bounds.height() / dy).ceil();
         let columns = (bounds.width() / spacing).ceil();
-        if rows * columns > sampler.remaining as f64 {
+        // Check floating-point bounds before converting indices: tiny spacing
+        // must hit the work limit, not saturate both ends to the same integer.
+        if rows * columns > sampler.remaining as f64
+            || bounds.max().y / dy >= i64::MAX as f64
+            || bounds.max().x / spacing >= i64::MAX as f64
+        {
             return Err(limit());
         }
-        for row in 0..rows as usize {
-            let y = bounds.min().y + (row as f64 + 0.5) * dy;
-            for col in 0..columns as usize {
-                let x = bounds.min().x
-                    + (col as f64 + if row % 2 == 0 { 0.25 } else { 0.75 }) * spacing;
+        let first_row = (bounds.min().y / dy - 0.5).ceil() as i64;
+        let last_row = (bounds.max().y / dy - 0.5).ceil() as i64;
+        for row in first_row..last_row {
+            let y = (row as f64 + 0.5) * dy;
+            let offset = if row.rem_euclid(2) == 0 { 0.25 } else { 0.75 };
+            let first_col = (bounds.min().x / spacing - offset).ceil() as i64;
+            let last_col = (bounds.max().x / spacing - offset).ceil() as i64;
+            for col in first_col..last_col {
+                let x = (col as f64 + offset) * spacing;
                 sampler.remaining = sampler.remaining.checked_sub(1).ok_or_else(limit)?;
                 if polygon.contains(&Point::new(x, y)) && fill_index.contains(&Point::new(x, y)) {
-                    let (bx, by) = bucket(x, y);
-                    let nearby = (-1..=1).any(|dx| {
-                        (-1..=1).any(|dy| {
-                            occupied.get(&(bx + dx, by + dy)).is_some_and(|points| {
-                                points.iter().any(|p| {
-                                    (p.x - x).powi(2) + (p.y - y).powi(2) < clearance * clearance
-                                })
-                            })
-                        })
-                    });
-                    if nearby {
-                        continue;
-                    }
-                    sampler.insert(Coord { x, y })?;
-                    occupied
-                        .entry((bx, by))
-                        .or_default()
-                        .push(Point2::new(x, y));
+                    sampler.insert_spaced(Coord { x, y }, clearance)?;
                 }
             }
         }
@@ -371,16 +393,16 @@ pub(super) fn generate(
             }
         }
     }
-    // Internal rings and chains are structural edges, not holes. Classify faces
-    // against the actual outline instead of odd/even nesting of all constraints.
+    // Only outline constraints toggle inside/outside; support rings and chains
+    // remain traversable. Rebuild boundary flags after any edge splits.
     // No global angle refinement: it can destroy the regular interior lattice
     // and add cascades of tiny triangles around intentional narrow features.
     let cdt = &sampler.cdt;
+    let inside = classify::faces(cdt, &sampler.outline)?;
     let mut triangles = Vec::new();
     let mut used = vec![false; cdt.num_vertices()];
     for face in cdt.inner_faces() {
-        let center = face.center();
-        if !domain_index.contains(&Point::new(center.x, center.y)) {
+        if !inside[face.index()] {
             continue;
         }
         let ids = face.vertices().map(|v| v.index());

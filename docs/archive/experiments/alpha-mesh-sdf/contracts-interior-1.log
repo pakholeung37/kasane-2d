@@ -1,0 +1,41 @@
+    Finished `release` profile [optimized] target(s) in 0.04s
+     Running tests/alpha_mesh.rs (target/release/deps/alpha_mesh-15ac834ca69298ee)
+
+running 35 tests
+test collapsed_inner_offset_does_not_delete_thin_artwork ... ok
+test continuous_inner_ring_separates_boundary_from_deep_vertices ... ok
+test denser_settings_add_vertices_and_generation_is_repeatable ... ok
+test generated_geometry_is_accepted_by_sdk_and_undo_redo_restores_it ... ok
+test faint_island_filter_preserves_small_opaque_and_connected_faint_artwork ... ok
+test diagonal_contacts_and_checkerboards_keep_their_pixel_area ... ok
+test changing_component_bounds_keeps_the_common_interior_lattice ... ok
+test dense_interior_retains_equilateral_lattice ... ok
+test malformed_empty_and_excessive_inputs_return_errors ... ok
+test collapsed_insets_have_distributed_support_in_isolated_and_attached_strips ... ok
+test margin_expands_coverage_and_clips_at_image_edges ... ok
+test holes_and_nested_islands_are_preserved_or_explicitly_filled ... ok
+test inner_support_rings_do_not_cut_out_the_middle ... ok
+test minimum_points_applies_even_to_tiny_boundaries ... ok
+test minimum_margin_survives_simplification_at_sharp_corners ... ok
+test opaque_rectangle_has_correct_area_uvs_and_closed_topology ... ok
+test pixel_rows_are_flipped_once_and_rectangular_images_keep_pixel_aspect ... ok
+test padding_can_merge_islands_and_close_holes_without_losing_foreground ... ok
+test internal_constraints_preserve_real_holes_and_nested_islands ... ok
+test single_pixel_thin_lines_concavity_and_separate_islands_survive ... ok
+test shared_clearance_preserves_support_on_every_thin_branch ... ok
+test sub_spacing_holes_do_not_add_dense_internal_rings ... ok
+test target_spacing_does_not_bisect_every_slightly_longer_edge ... ok
+test spanned_large_holes_keep_island_support_without_a_void_lattice ... ok
+test threshold_is_inclusive_and_filters_dust_without_removing_opaque_specks ... ok
+test tiny_island_in_a_spanned_hole_gets_a_local_support_vertex ... ok
+test unbounded_margins_cover_edge_artwork_without_flattening_the_ring ... ok
+test large_asymmetric_image_uses_local_pixel_geometry_without_atlas_scaling ... ok
+test curved_and_sharp_shapes_keep_coverage_with_all_presets ... ok
+test many_small_masks_preserve_area_and_foreground_without_panics ... ok
+test half_pixel_padding_repairs_self_touching_offset_contours ... ok
+test cropped_diagonal_artwork_does_not_densify_the_whole_boundary ... ok
+test smooth_circle_samples_follow_spacing_without_losing_padding ... ok
+test padded_fragmented_masks_do_not_create_degenerate_meshes ... ok
+test separated_islands_at_vertex_budget_keep_exact_pixel_coverage ... ok
+
+test result: ok. 35 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.22s

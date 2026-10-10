@@ -1,0 +1,33 @@
+{
+  "runs": 9,
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)",
+  "contracts": {
+    "vector": {
+      "passed": 35,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "sdf-1": {
+      "passed": 35,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "sdf-0.5": {
+      "passed": 34,
+      "failed": 1,
+      "exit_code": 101
+    },
+    "hybrid-1": {
+      "passed": 35,
+      "failed": 0,
+      "exit_code": 0
+    },
+    "interior-1": {
+      "passed": 35,
+      "failed": 0,
+      "exit_code": 0
+    }
+  }
+}

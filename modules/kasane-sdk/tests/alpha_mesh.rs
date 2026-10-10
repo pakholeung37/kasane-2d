@@ -506,18 +506,20 @@ fn malformed_empty_and_excessive_inputs_return_errors() {
         ),
         "ALPHA_MESH_LIMIT"
     );
-    assert_eq!(
-        call(
-            1,
-            1,
-            &[255],
-            &AlphaMeshOptions {
-                inside_spacing: 1e-10,
-                ..options()
-            }
-        ),
-        "ALPHA_MESH_LIMIT"
-    );
+    for inside_spacing in [1e-10, 1e-30, 1e-300] {
+        assert_eq!(
+            call(
+                1,
+                1,
+                &[255],
+                &AlphaMeshOptions {
+                    inside_spacing,
+                    ..options()
+                }
+            ),
+            "ALPHA_MESH_LIMIT"
+        );
+    }
 }
 
 #[test]
@@ -865,6 +867,84 @@ fn dense_interior_retains_equilateral_lattice() {
         count > 300,
         "dense core has only {count} equilateral triangles"
     );
+}
+
+#[test]
+fn changing_component_bounds_keeps_the_common_interior_lattice() {
+    let core = |left| {
+        let alpha = pixels(256, 256, |x, y| {
+            u8::from((left..240).contains(&x) && (left..240).contains(&y)) * 255
+        });
+        let mesh = generate(
+            256,
+            256,
+            &alpha,
+            &AlphaMeshOptions {
+                inside_spacing: 20.0,
+                preserve_holes: true,
+                ..AlphaMeshOptions::standard()
+            },
+        );
+        valid(&mesh, 256, 256);
+        mesh.positions
+            .iter()
+            .filter(|p| (64.0..192.0).contains(&p.x) && (64.0..192.0).contains(&p.y))
+            .map(|p| (p.x.to_bits(), p.y.to_bits()))
+            .collect::<BTreeSet<_>>()
+    };
+    let original = core(16);
+    assert!(original.len() > 30);
+    assert_eq!(original, core(19));
+}
+
+#[test]
+fn shared_clearance_preserves_support_on_every_thin_branch() {
+    let alpha = pixels(256, 256, |x, y| {
+        u8::from(
+            ((20..236).contains(&x) && (124..132).contains(&y))
+                || ((124..132).contains(&x) && (20..236).contains(&y)),
+        ) * 255
+    });
+    let mesh = generate(
+        256,
+        256,
+        &alpha,
+        &AlphaMeshOptions {
+            inside_spacing: 40.0,
+            preserve_holes: true,
+            ..AlphaMeshOptions::standard()
+        },
+    );
+    valid(&mesh, 256, 256);
+    coverage(&mesh, 256, 256, &alpha, 0, false);
+    let boundary: BTreeSet<_> = mesh_edges(&mesh)
+        .into_iter()
+        .filter(|(_, n)| *n == 1)
+        .flat_map(|((a, b), _)| [a, b])
+        .collect();
+    let support: Vec<_> = mesh
+        .vertex_ids
+        .iter()
+        .filter(|id| !boundary.contains(id))
+        .collect();
+    assert!(support.len() >= 8, "thin branches lost their support");
+    // Required endpoints may be closer than the optional-site clearance.
+    // Verify that filtering still leaves local support on all four branches.
+    for (horizontal, low, high) in [
+        (true, 20., 100.),
+        (true, 156., 236.),
+        (false, 20., 100.),
+        (false, 156., 236.),
+    ] {
+        assert!(
+            support.iter().any(|&&id| {
+                let p = mesh.positions[id as usize];
+                let (along, across) = if horizontal { (p.x, p.y) } else { (p.y, p.x) };
+                along > low && along < high && across > 124. && across < 132.
+            }),
+            "unsupported branch: horizontal={horizontal}, {low}..{high}"
+        );
+    }
 }
 
 #[test]

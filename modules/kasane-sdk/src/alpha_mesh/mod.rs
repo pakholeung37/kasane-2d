@@ -1,7 +1,9 @@
 //! Alpha-driven authoring geometry. All calculations use source-image pixels;
 //! this module neither reads a document nor migrates existing deformation data.
+mod classify;
 mod domain;
 mod islands;
+mod occupied;
 mod resample;
 mod simplify;
 mod spatial;
