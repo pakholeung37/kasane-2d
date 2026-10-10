@@ -1,5 +1,6 @@
 //! Chordal-axis support for branches that disappear under the requested inset.
 //! This is a polygon triangulation heuristic, not an exact medial axis.
+use super::spatial::PolygonIndex;
 use geo::{Contains, Coord, LineString, MultiPolygon, Point, Simplify};
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
 use std::collections::BTreeMap;
@@ -7,6 +8,7 @@ use std::collections::BTreeMap;
 pub(super) fn chains(
     cdt: &ConstrainedDelaunayTriangulation<Point2<f64>>,
     outline: &MultiPolygon<f64>,
+    index: &PolygonIndex<'_>,
     tolerance: f64,
 ) -> Vec<LineString<f64>> {
     let mut nodes = Vec::<Coord<f64>>::new();
@@ -14,7 +16,7 @@ pub(super) fn chains(
     let mut links = Vec::new();
     for face in cdt.inner_faces() {
         let center = face.center();
-        if !outline.contains(&Point::new(center.x, center.y)) {
+        if !index.contains(&Point::new(center.x, center.y)) {
             continue;
         }
         let mut neighbors = Vec::new();

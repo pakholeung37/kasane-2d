@@ -1,6 +1,6 @@
-use super::{error, limit, AlphaMask, AlphaMeshOptions};
+use super::{error, limit, spatial, AlphaMask, AlphaMeshOptions};
 use crate::SdkError;
-use geo::{unary_union, Area, BooleanOps, Buffer, Coord, MultiPolygon, Polygon, Rect, Validation};
+use geo::{unary_union, Area, BooleanOps, Buffer, Coord, MultiPolygon, Polygon, Rect};
 use std::collections::BTreeMap;
 
 fn rectangle(left: u32, bottom: u32, right: u32, top: u32) -> Polygon<f64> {
@@ -62,6 +62,23 @@ fn foreground(mask: AlphaMask<'_>, threshold: u8) -> Result<MultiPolygon<f64>, S
     Ok(unary_union(&rectangles))
 }
 
+fn offset(source: &MultiPolygon<f64>, distance: f64) -> Result<MultiPolygon<f64>, SdkError> {
+    let mut result = source.buffer(distance);
+    // Offsets can produce self-touching rings where pixel islands meet exactly
+    // at the requested margin. Normalize those rings before simplification;
+    // its conservative fallback must itself be a valid domain.
+    if !spatial::is_valid(&result)? {
+        result = unary_union(&result.0);
+        if !spatial::is_valid(&result)? {
+            return Err(error(
+                "ALPHA_MESH_GEOMETRY",
+                "Could not construct a valid alpha offset",
+            ));
+        }
+    }
+    Ok(result)
+}
+
 pub(super) fn build(
     mask: AlphaMask<'_>,
     options: &AlphaMeshOptions,
@@ -82,12 +99,14 @@ pub(super) fn build(
     let expanded = if options.outside_margin == 0.0 {
         envelope.clone()
     } else {
-        envelope.buffer(options.outside_margin)
+        offset(&envelope, options.outside_margin)?
     };
     let required = if options.minimum_margin == 0.0 {
         envelope.clone()
+    } else if options.minimum_margin == options.outside_margin {
+        expanded.clone()
     } else {
-        envelope.buffer(options.minimum_margin)
+        offset(&envelope, options.minimum_margin)?
     };
     // RDP alone can cut corners or collapse thin regions. Accept simplification
     // only if topology is valid and the entire required padded area survives.
@@ -96,7 +115,7 @@ pub(super) fn build(
     // Simplify the complete offset before clipping. Clipping first creates long
     // image-edge chords whose lost padding may be far from original vertices,
     // making the local guard fall back to almost every raster corner.
-    let outline = super::simplify::conservative(&expanded, &required, tolerance);
+    let outline = super::simplify::conservative(&expanded, &required, tolerance)?;
     let redistributed = super::resample::smooth(
         &outline,
         &expanded,
@@ -104,7 +123,7 @@ pub(super) fn build(
         options.minimum_boundary_points,
     );
     let outline = if redistributed != outline
-        && redistributed.is_valid()
+        && spatial::is_valid(&redistributed)?
         && required.difference(&redistributed).unsigned_area() <= 1e-8
     {
         redistributed
@@ -116,7 +135,7 @@ pub(super) fn build(
     } else {
         outline
     };
-    if outline.0.is_empty() || !outline.is_valid() {
+    if outline.0.is_empty() || !spatial::is_valid(&outline)? {
         return Err(error(
             "ALPHA_MESH_GEOMETRY",
             "Could not construct a valid closed alpha boundary",

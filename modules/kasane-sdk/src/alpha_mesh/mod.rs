@@ -4,6 +4,7 @@ mod domain;
 mod islands;
 mod resample;
 mod simplify;
+mod spatial;
 mod support;
 mod triangulate;
 
@@ -130,7 +131,8 @@ pub(super) fn limit() -> SdkError {
 /// IDs; replacing an authored mesh still requires explicit dependency handling.
 ///
 /// Limits: at most 16384 pixels per axis, 64 Mi pixels, 262144 merged foreground
-/// rectangles, and 1048576 attempted samples. Empty foreground is an explicit
+/// rectangles, 1048576 attempted samples, and 1048576 candidate polygon pairs
+/// per topology validation pass. Empty foreground is an explicit
 /// EMPTY_ALPHA_MASK error. No file IO, GPU, model mutation or random seed is used.
 pub fn alpha_mesh_geometry(
     mask: AlphaMask<'_>,

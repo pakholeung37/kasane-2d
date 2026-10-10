@@ -1,8 +1,12 @@
-use super::{error, limit, AlphaMask, AlphaMeshOptions};
+use super::{
+    error, limit,
+    spatial::{self, PolygonIndex},
+    AlphaMask, AlphaMeshOptions,
+};
 use crate::{MeshGeometry, SdkError};
 use geo::{
     unary_union, Area, BooleanOps, BoundingRect, Buffer, Contains, Coord, InteriorPoint,
-    LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify, Validation,
+    LineString, MultiLineString, MultiPolygon, Point, Polygon, Simplify,
 };
 use kasane_core::Vec2;
 use spade::{ConstrainedDelaunayTriangulation, Point2, Triangulation};
@@ -149,11 +153,13 @@ pub(super) fn generate(
     // Classify against the sampled f32 boundary. The pre-quantized outline can
     // misclassify tiny outside slivers between nearly collinear samples.
     let domain = MultiPolygon(quantized);
+    let domain_index = PolygonIndex::new(&domain);
     // Build the thin-feature support graph before adding internal constraints.
     let chains = if options.inside_margin > 0.0 {
         super::support::chains(
             &sampler.cdt,
             &domain,
+            &domain_index,
             (options.inside_margin + options.outside_margin).min(options.inside_spacing) * 0.15,
         )
     } else {
@@ -200,7 +206,7 @@ pub(super) fn generate(
             let redistributed =
                 super::resample::smooth(&candidate, &inset, options.inside_spacing, 3);
             let candidate = if redistributed != candidate
-                && redistributed.is_valid()
+                && spatial::is_valid(&redistributed)?
                 && required_inner
                     .get_or_insert_with(|| inset.buffer(-radius))
                     .difference(&redistributed)
@@ -211,7 +217,9 @@ pub(super) fn generate(
             } else {
                 candidate
             };
-            if candidate.is_valid() && candidate.difference(outline).unsigned_area() <= 1e-8 {
+            if spatial::is_valid(&candidate)?
+                && candidate.difference(outline).unsigned_area() <= 1e-8
+            {
                 simplified = candidate;
                 break;
             }
@@ -282,6 +290,7 @@ pub(super) fn generate(
     // Keep the authored rings intact, and give only fill points this clearance.
     let clearance = (spacing * 0.3).max(0.001);
     let fill = inner.buffer(-clearance);
+    let fill_index = PolygonIndex::new(&fill);
     let bucket = |x: f64, y: f64| {
         (
             (x / clearance).floor() as i64,
@@ -308,7 +317,7 @@ pub(super) fn generate(
                 let x = bounds.min().x
                     + (col as f64 + if row % 2 == 0 { 0.25 } else { 0.75 }) * spacing;
                 sampler.remaining = sampler.remaining.checked_sub(1).ok_or_else(limit)?;
-                if polygon.contains(&Point::new(x, y)) && fill.contains(&Point::new(x, y)) {
+                if polygon.contains(&Point::new(x, y)) && fill_index.contains(&Point::new(x, y)) {
                     let (bx, by) = bucket(x, y);
                     let nearby = (-1..=1).any(|dx| {
                         (-1..=1).any(|dy| {
@@ -371,7 +380,7 @@ pub(super) fn generate(
     let mut used = vec![false; cdt.num_vertices()];
     for face in cdt.inner_faces() {
         let center = face.center();
-        if !domain.contains(&Point::new(center.x, center.y)) {
+        if !domain_index.contains(&Point::new(center.x, center.y)) {
             continue;
         }
         let ids = face.vertices().map(|v| v.index());

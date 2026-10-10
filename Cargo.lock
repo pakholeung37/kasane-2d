@@ -864,6 +864,7 @@ dependencies = [
  "kasane-core",
  "kasane-project",
  "png",
+ "rstar",
  "serde",
  "serde_json",
  "spade",

@@ -1,7 +1,8 @@
 //! Preserve difficult corners locally while simplifying smooth spans.
+use super::spatial;
+use crate::SdkError;
 use geo::{
-    Area, BooleanOps, Buffer, Coord, Intersects, LineString, MultiPolygon, Point, Polygon,
-    Simplify, Validation,
+    Area, BooleanOps, Buffer, Coord, Intersects, LineString, MultiPolygon, Point, Polygon, Simplify,
 };
 
 fn guarded_ring(
@@ -37,7 +38,7 @@ pub(super) fn conservative(
     expanded: &MultiPolygon<f64>,
     required: &MultiPolygon<f64>,
     mut tolerance: f64,
-) -> MultiPolygon<f64> {
+) -> Result<MultiPolygon<f64>, SdkError> {
     for _ in 0..8 {
         if tolerance <= 1e-6 {
             break;
@@ -59,12 +60,12 @@ pub(super) fn conservative(
                     })
                     .collect(),
             );
-            if !candidate.is_valid() {
+            if !spatial::is_valid(&candidate)? {
                 break;
             }
             let missing = required.difference(&candidate);
             if missing.unsigned_area() <= 1e-8 {
-                return candidate;
+                return Ok(candidate);
             }
             // Only protect raster corners near lost padding. Smooth spans keep
             // the original tolerance, even if one sharp corner needs more detail.
@@ -72,12 +73,13 @@ pub(super) fn conservative(
         }
         tolerance *= 0.5;
     }
-    expanded.clone()
+    Ok(expanded.clone())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use geo::Validation;
 
     #[test]
     fn a_required_tip_does_not_densify_a_separate_smooth_boundary() {
@@ -114,7 +116,7 @@ mod tests {
         };
         let expanded = MultiPolygon::new(vec![circle(100.0), tip(41.0, 0.0)]);
         let required = MultiPolygon::new(vec![circle(97.0), tip(40.5, 1.0)]);
-        let output = conservative(&expanded, &required, 2.0);
+        let output = conservative(&expanded, &required, 2.0).unwrap();
         assert!(output.is_valid());
         assert_eq!(output.0.len(), 2);
         assert!(required.difference(&output).unsigned_area() <= 1e-8);
@@ -122,6 +124,6 @@ mod tests {
             output.0[0].exterior().0.len() <= 20,
             "a distant sharp feature forced dense sampling on the smooth circle"
         );
-        assert_eq!(output, conservative(&expanded, &required, 2.0));
+        assert_eq!(output, conservative(&expanded, &required, 2.0).unwrap());
     }
 }

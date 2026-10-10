@@ -13,6 +13,7 @@ kasane-project = { path = "../kasane-project" }
 serde = { workspace = true }
 geo = { version = "0.33.1", default-features = false }
 spade = "2.15.1"
+rstar = "0.12.2"
 
 [dev-dependencies]
 png = { workspace = true }

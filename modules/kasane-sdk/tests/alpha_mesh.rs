@@ -138,6 +138,86 @@ fn opaque_rectangle_has_correct_area_uvs_and_closed_topology() {
 }
 
 #[test]
+fn half_pixel_padding_repairs_self_touching_offset_contours() {
+    let mut alpha = vec![0; 32 * 32];
+    for (x, y) in [
+        (9, 20),
+        (11, 20),
+        (14, 21),
+        (11, 22),
+        (12, 22),
+        (30, 22),
+        (14, 23),
+        (16, 23),
+        (28, 23),
+        (11, 24),
+        (29, 24),
+        (11, 25),
+        (13, 25),
+        (14, 25),
+        (8, 27),
+        (10, 27),
+        (11, 27),
+    ] {
+        alpha[y * 32 + x] = 255;
+    }
+    for preserve_holes in [false, true] {
+        for minimum_margin in [0.0, 0.5] {
+            let opts = AlphaMeshOptions {
+                outside_spacing: 8.0,
+                inside_spacing: 8.0,
+                outside_margin: 0.5,
+                minimum_margin,
+                inside_margin: 0.0,
+                clip_to_image: false,
+                preserve_holes,
+                ..AlphaMeshOptions::standard()
+            };
+            let mesh = generate(32, 32, &alpha, &opts);
+            valid(&mesh, 32, 32);
+            coverage(&mesh, 32, 32, &alpha, 0, false);
+            assert_eq!(mesh, generate(32, 32, &alpha, &opts));
+        }
+    }
+}
+
+#[test]
+fn separated_islands_at_vertex_budget_keep_exact_pixel_coverage() {
+    let alpha = pixels(
+        512,
+        512,
+        |x, y| if x % 4 == 0 && y % 4 == 0 { 255 } else { 0 },
+    );
+    let opts = AlphaMeshOptions {
+        outside_spacing: 85.0,
+        inside_spacing: 85.0,
+        ..options()
+    };
+    let start = std::time::Instant::now();
+    let mesh = generate(512, 512, &alpha, &opts);
+    eprintln!("16384 islands: {:?}", start.elapsed());
+    assert_eq!(mesh.positions.len(), 65_536);
+    assert_eq!(mesh.triangles.len(), 32_768);
+    valid(&mesh, 512, 512);
+    assert_eq!(area(&mesh), 16_384.0);
+    // Each unit square gets exactly two triangles, with no bridges across gaps.
+    let mut faces_per_pixel = BTreeMap::new();
+    for t in &mesh.triangles {
+        let p = t.map(|i| mesh.positions[i as usize]);
+        let x = ((p[0].x + p[1].x + p[2].x) / 3.0).floor() as u32;
+        let y = ((p[0].y + p[1].y + p[2].y) / 3.0).floor() as u32;
+        assert_eq!(alpha[((511 - y) * 512 + x) as usize], 255);
+        assert!(p.iter().all(|p| p.x >= x as f32
+            && p.x <= (x + 1) as f32
+            && p.y >= y as f32
+            && p.y <= (y + 1) as f32));
+        *faces_per_pixel.entry((x, y)).or_insert(0) += 1;
+    }
+    assert_eq!(faces_per_pixel.len(), 16_384);
+    assert!(faces_per_pixel.values().all(|&count| count == 2));
+}
+
+#[test]
 fn single_pixel_thin_lines_concavity_and_separate_islands_survive() {
     let alpha = pixels(24, 24, |x, y| {
         u8::from(
