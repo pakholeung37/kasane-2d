@@ -35,6 +35,7 @@ pub struct WgpuTextureCatalog<'a> {
     textures: HashMap<String, WgpuTexture<'a>>,
     revisions: HashMap<String, u64>,
     repeating: HashSet<String>,
+    premultiplied: HashSet<String>,
 }
 
 impl<'a> WgpuTextureCatalog<'a> {
@@ -43,6 +44,7 @@ impl<'a> WgpuTextureCatalog<'a> {
             textures,
             revisions: HashMap::new(),
             repeating: HashSet::new(),
+            premultiplied: HashSet::new(),
         }
     }
 
@@ -63,6 +65,23 @@ impl<'a> WgpuTextureCatalog<'a> {
 
     pub fn repeats(&self, id: &str) -> bool {
         self.repeating.contains(id)
+    }
+
+    /// Declare premultiplied GPU storage for a source texture. Premultiplying
+    /// pixels before upload prevents transparent RGB from bleeding through
+    /// linear/trilinear filtering. Unmarked textures use straight RGBA.
+    /// This metadata does not change the texture's alpha or mask coverage.
+    pub fn set_premultiplied(&mut self, id: impl Into<String>, premultiplied: bool) {
+        let id = id.into();
+        if premultiplied {
+            self.premultiplied.insert(id);
+        } else {
+            self.premultiplied.remove(&id);
+        }
+    }
+
+    pub fn is_premultiplied(&self, id: &str) -> bool {
+        self.premultiplied.contains(id)
     }
 
     /// Declare the content revision of a host texture. Reusing a revision

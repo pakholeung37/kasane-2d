@@ -52,17 +52,21 @@ fn vs_main(input: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let source = textureSample(main_texture, main_sampler, input.uv);
+    var source = textureSample(main_texture, main_sampler, input.uv);
+    if (draw.blend_modes.w == 0u) {
+        source = vec4<f32>(source.rgb * source.a, source.a);
+    }
     let multiplied = source.rgb * draw.multiply_color.rgb;
-    let rgb = multiplied + draw.screen_color.rgb - multiplied * draw.screen_color.rgb;
-    let alpha = source.a * draw.opacity;
+    let rgb = multiplied + draw.screen_color.rgb * source.a - multiplied * draw.screen_color.rgb;
+    let factor = draw.opacity;
+    let alpha = source.a * factor;
     if (draw.blend_modes.z == 1u) {
-        return vec4<f32>(rgb * alpha, 0.0);
+        return vec4<f32>(rgb * factor, 0.0);
     }
     if (draw.blend_modes.z == 2u) {
-        return vec4<f32>(rgb * alpha + vec3<f32>(1.0 - alpha), 1.0);
+        return vec4<f32>(rgb * factor + vec3<f32>(1.0 - alpha), 1.0);
     }
-    return vec4<f32>(rgb * alpha, alpha);
+    return vec4<f32>(rgb * factor, alpha);
 }
 "#;
 
@@ -193,17 +197,21 @@ fn mask_alpha(point: vec2<f32>) -> f32 {
 
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
-    let source = textureSample(main_texture, main_sampler, input.uv);
+    var source = textureSample(main_texture, main_sampler, input.uv);
+    if (draw.blend_modes.w == 0u) {
+        source = vec4<f32>(source.rgb * source.a, source.a);
+    }
     let multiplied = source.rgb * draw.multiply_color.rgb;
-    let rgb = multiplied + draw.screen_color.rgb - multiplied * draw.screen_color.rgb;
-    let alpha = source.a * draw.opacity * mask_alpha(input.mask_point);
+    let rgb = multiplied + draw.screen_color.rgb * source.a - multiplied * draw.screen_color.rgb;
+    let factor = draw.opacity * mask_alpha(input.mask_point);
+    let alpha = source.a * factor;
     if (draw.blend_modes.z == 1u) {
-        return vec4<f32>(rgb * alpha, 0.0);
+        return vec4<f32>(rgb * factor, 0.0);
     }
     if (draw.blend_modes.z == 2u) {
-        return vec4<f32>(rgb * alpha + vec3<f32>(1.0 - alpha), 1.0);
+        return vec4<f32>(rgb * factor + vec3<f32>(1.0 - alpha), 1.0);
     }
-    return vec4<f32>(rgb * alpha, alpha);
+    return vec4<f32>(rgb * factor, alpha);
 }
 "#;
 
@@ -415,6 +423,9 @@ pub(super) const EXTENDED_DRAW_BODY: &str = r#"
 @fragment
 fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     var source = textureSample(main_texture, main_sampler, input.uv);
+    if (draw.blend_modes.w != 0u) {
+        source = to_straight(source);
+    }
     source = vec4<f32>(source.rgb * draw.multiply_color.rgb, source.a);
     source = vec4<f32>(source.rgb + draw.screen_color.rgb - source.rgb * draw.screen_color.rgb, source.a * draw.opacity);
     if (draw.mask_flags.x != 0u) {

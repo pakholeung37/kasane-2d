@@ -452,6 +452,8 @@ impl<'renderer, 'context, 'frame, 'texture> SceneEncoder<'renderer, 'context, 'f
                 } else {
                     uniform = with_fixed_blend_mode(uniform, drawable.blend_mode);
                 }
+                uniform.blend_modes[3] =
+                    u32::from(self.textures.is_premultiplied(&drawable.texture_asset_id));
                 let mask_binding = mask_data.as_ref().map(|(view, _, _)| MaskBinding { view });
                 let destination_binding = if destination_read {
                     Some(DestinationBinding {

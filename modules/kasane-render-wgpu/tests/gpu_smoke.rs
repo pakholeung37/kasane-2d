@@ -195,6 +195,14 @@ fn render_fixture_with_texture_change(
     frame: &DrawableFrame,
     texture_change: Option<(&str, [u8; 4])>,
 ) -> (Vec<u8>, kasane_render_wgpu::WgpuRenderStats) {
+    render_fixture_with_texture_storage(frame, texture_change, false)
+}
+
+fn render_fixture_with_texture_storage(
+    frame: &DrawableFrame,
+    texture_change: Option<(&str, [u8; 4])>,
+    premultiplied: bool,
+) -> (Vec<u8>, kasane_render_wgpu::WgpuRenderStats) {
     let instance = wgpu::Instance::default();
     let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
         .expect("GPU adapter required for the WGPU acceptance test");
@@ -209,6 +217,11 @@ fn render_fixture_with_texture_change(
     let sources: Vec<_> = colors
         .iter()
         .map(|(name, rgba)| {
+            let rgba = if premultiplied {
+                kasane_render::texture::premultiply_rgba8(rgba)
+            } else {
+                rgba.to_vec()
+            };
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some(name),
                 size: wgpu::Extent3d {
@@ -225,7 +238,7 @@ fn render_fixture_with_texture_change(
             });
             queue.write_texture(
                 texture.as_image_copy(),
-                rgba,
+                &rgba,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4),
@@ -262,6 +275,7 @@ fn render_fixture_with_texture_change(
     );
     for (name, _) in colors {
         textures.set_revision(name, 1);
+        textures.set_premultiplied(name, premultiplied);
     }
     let output = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("output"),
@@ -414,6 +428,11 @@ fn render_fixture_with_texture_change(
         "MISSING_TEXTURE"
     );
     if let Some((name, rgba)) = texture_change {
+        let rgba = if premultiplied {
+            kasane_render::texture::premultiply_rgba8(&rgba)
+        } else {
+            rgba.to_vec()
+        };
         let index = colors.iter().position(|(id, _)| *id == name).unwrap();
         queue.write_texture(
             sources[index].as_image_copy(),
@@ -499,6 +518,42 @@ fn render_fixture_with_texture_change(
 fn center(pixels: &[u8]) -> [u8; 4] {
     let offset = 32 * 256 + 32 * 4;
     pixels[offset..offset + 4].try_into().unwrap()
+}
+
+#[test]
+fn premultiplied_sources_match_straight_sources_across_blends_and_masks() {
+    for masked in [false, true] {
+        for (blend_mode, raw_blend_mode) in [
+            (BlendMode::Normal, None),
+            (BlendMode::Additive, None),
+            (BlendMode::Multiplicative, None),
+            (BlendMode::Normal, Some(0)),
+            (BlendMode::Normal, Some(1)),
+            (BlendMode::Normal, Some(3)),
+        ] {
+            let mut foreground = quad("foreground", "half");
+            foreground.blend_mode = blend_mode;
+            foreground.raw_blend_mode = raw_blend_mode;
+            foreground.opacity = 0.6;
+            foreground.multiply_color = [0.75, 0.5, 0.25, 1.0];
+            foreground.screen_color = [0.1, 0.2, 0.3, 1.0];
+            let mut mask = quad("mask", "half");
+            mask.visible = false;
+            if masked {
+                foreground.masks.push("mask".into());
+            }
+            let frame = DrawableFrame {
+                canvas: Canvas::new(64.0, 64.0, Vec2::default(), 1.0),
+                drawables: vec![quad("background", "red"), mask, foreground],
+                ..Default::default()
+            };
+            let (straight, _) = render_fixture_with_texture_storage(&frame, None, false);
+            let (premultiplied, _) = render_fixture_with_texture_storage(&frame, None, true);
+            assert!(straight.iter().zip(&premultiplied).all(|(a, b)| a.abs_diff(*b) <= 1),
+                "masked={masked}, blend={blend_mode:?}, raw={raw_blend_mode:?}, straight={:?}, premultiplied={:?}",
+                center(&straight), center(&premultiplied));
+        }
+    }
 }
 
 #[test]
